@@ -1,10 +1,12 @@
 # abeiplinux
 
 `abeiplinux` is a small declarative geo firewall for `nftables` on Debian and
-Ubuntu. You describe, per port, which countries or regions are allowed, and the
-tool builds and maintains the `nftables` rules for you:
+Ubuntu. You describe, per port and direction, which countries or regions are
+allowed, and the tool builds and maintains the `nftables` rules for you:
 
-- per-port, per-country/region allow and deny rules from a simple `rules.conf`,
+- per-port, per-direction, per-country/region allow and deny rules from a simple
+  `rules.conf` (inbound and outbound, tcp/udp/all),
+- stateful: replies to your own requests are always allowed,
 - blocks addresses from the AbuseIPDB blacklist on every managed port,
 - always allows a configurable whitelist of trusted IPs,
 - downloads only the country zones your rules actually use, with a local cache,
@@ -16,20 +18,20 @@ tool builds and maintains the `nftables` rules for you:
 You write rules like sentences in `/etc/abeiplinux/rules.conf`:
 
 ```text
-# action  proto  port   geo
-allow      tcp    22     europe
-allow      tcp    5060   de
-allow      udp    5060   de
-allow      tcp    5061   us
-deny       tcp    5060   ru,cn
-allow      tcp    443    any
+# action  dir  proto  port   geo
+allow      in   tcp    22     europe
+allow      in   all    5060   de
+deny       in   tcp    5060   ru,cn
+allow      in   tcp    443    any
+allow      out  tcp    443    europe,us
+allow      out  udp    53     any
 ```
 
 Two simple guarantees:
 
-- A port that appears in any `allow` rule is **closed by default**: only the
-  listed sources get in, everyone else is dropped.
-- A port you never mention is **left untouched**.
+- A port that appears in any `allow` rule (for that direction) is **closed by
+  default**: only the listed geos get through, everyone else is dropped.
+- A port/direction you never mention is **left untouched**.
 
 On top of every managed port, the whitelist always wins and the AbuseIPDB
 blacklist is always dropped.
@@ -38,10 +40,26 @@ blacklist is always dropped.
 
 - `action` - `allow` or `deny`. `deny` drops a geo without closing the port for
   everyone else, and is evaluated before `allow`.
-- `proto` - `tcp` or `udp`.
+- `dir` - `in` (incoming, matches the source country) or `out` (outgoing,
+  matches the destination country).
+- `proto` - `tcp`, `udp`, or `all` (both).
 - `port` - a single port number.
 - `geo` - one or more country codes (ISO 3166-1 alpha-2, lowercase), region
   names, comma-separated, or `any`.
+
+### Replies and "inbound only as a response"
+
+Each chain accepts `established,related` connections first, so a reply to a
+request you made is always allowed. That means inbound traffic is permitted only
+as a response to a request *unless* an `allow in` rule explicitly opens the port
+for new connections. To run a client that may talk out and receive answers back,
+write only an `allow out` rule; the return packets flow automatically.
+
+### Built-in regions
+
+`europe`, `north_america`, `caribbean`, `south_america`, `middle_east`, `asia`,
+`africa`, `oceania`. Override any of them or add your own `REGION_<NAME>` in
+`abeiplinux.conf`.
 
 ## Requirements
 
@@ -156,38 +174,55 @@ ls /var/lib/abeiplinux/zones
 
 ## How the rules are built
 
-For the example `rules.conf` above, the generated chain looks like this
+For the example `rules.conf` above, the generated chains look like this
 (IPv6 lines omitted for brevity):
 
 ```text
 chain input {
     type filter hook input priority -100; policy accept;
-    ct state established,related accept
+    ct state established,related accept                # replies always allowed
 
-    ip saddr @whitelist4 accept                       # whitelist wins first
-    tcp dport { 22, 443, 5060, 5061 } ip saddr @abuse4 drop
+    ip saddr @whitelist4 accept                        # whitelist wins first
+    tcp dport { 22, 443, 5060 } ip saddr @abuse4 drop
     udp dport { 5060 } ip saddr @abuse4 drop
 
-    tcp dport 5060 ip saddr @g_ru_cn4 drop            # explicit deny
+    tcp dport 5060 ip saddr @g_ru_cn4 drop             # explicit deny
 
-    tcp dport 22   ip saddr @g_europe4 accept         # geo allows
+    tcp dport 22   ip saddr @g_europe4 accept          # geo allows (source)
     tcp dport 5060 ip saddr @g_de4     accept
     udp dport 5060 ip saddr @g_de4     accept
-    tcp dport 5061 ip saddr @g_us4     accept
-    tcp dport 443  accept                             # "any"
+    tcp dport 443  accept                              # "any"
 
-    tcp dport { 22, 5060, 5061 } drop                 # deny-by-default
+    tcp dport { 22, 5060 } drop                        # deny-by-default
+}
+
+chain output {
+    type filter hook output priority -100; policy accept;
+    ct state established,related accept
+
+    ip daddr @whitelist4 accept
+    tcp dport { 443 } ip daddr @abuse4 drop
+    udp dport { 53 } ip daddr @abuse4 drop
+
+    tcp dport 443 ip daddr @g_europe_us4 accept        # geo allows (destination)
+    udp dport 53  accept                               # "any"
+
+    tcp dport { 443 } drop                             # egress deny-by-default
 }
 ```
 
-The table is replaced atomically: the generated file recreates the table in a
-single `nft -f` load, so there is no moment in which the rules are missing. The
-chain hooks `input` at priority `-100` and the chain policy is `accept`, so only
-the ports you manage are affected; nothing else is touched.
+Only chains for the directions you actually use are emitted. The table is
+replaced atomically: the generated file recreates the table in a single `nft -f`
+load, so there is no moment in which the rules are missing. The chain policy is
+`accept`, so only the ports you manage are affected; nothing else is touched.
 
 The tool fails safe: if a required country zone cannot be downloaded and there is
 no cached copy, the update aborts and leaves the previous ruleset in place rather
 than risk closing a port with an empty allow set.
+
+> **Egress note:** if you geo-fence outbound `tcp 443` (or `80`), make sure the
+> allowed regions cover the AbuseIPDB and ipdeny.com servers, or add their IPs to
+> `WHITELIST` - otherwise the next update cannot download its data.
 
 ## Access safety
 

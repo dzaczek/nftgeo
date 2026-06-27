@@ -1,30 +1,38 @@
 # abeiplinux rule set.
 #
-# One rule per line:  <action> <proto> <port> <geo>
+# One rule per line:  <action> <dir> <proto> <port> <geo>
 #   action : allow | deny
-#   proto  : tcp | udp
+#   dir    : in  (incoming, matches source country)
+#            out (outgoing, matches destination country)
+#   proto  : tcp | udp | all   (all = both tcp and udp)
 #   port   : single port number
 #   geo    : country code(s), region name(s), comma-separated, or "any"
 #
 # How it behaves:
-#   - A port that appears in any "allow" rule becomes closed by default:
-#     only the listed sources get in, everyone else is dropped.
-#   - A port you never mention is left untouched.
-#   - "deny" rules drop a geo without closing the port for everyone else,
-#     and are evaluated before "allow" rules.
-#   - The whitelist (abeiplinux.conf) and the AbuseIPDB blacklist always
-#     apply on top, on every managed port.
+#   - A port that appears in any "allow" rule (for that direction) becomes
+#     closed by default: only the listed geos get through, the rest are dropped.
+#   - A port/direction you never mention is left untouched.
+#   - "deny" drops a geo without closing the port for everyone else, and is
+#     evaluated before "allow".
+#   - Replies are always allowed: each chain accepts established/related first,
+#     so inbound is permitted only as a response to a request unless an
+#     "allow in" rule opens the port for new connections. To allow a service
+#     outbound and let its replies back in, write only an "allow out" rule.
+#   - The whitelist (abeiplinux.conf) and the AbuseIPDB blacklist apply on top,
+#     on every managed port.
 #
-# Regions are defined in abeiplinux.conf via REGION_<NAME> variables.
-# Built-in: europe, north_america, south_america, oceania. Add your own freely.
+# Regions are defined in abeiplinux.conf via REGION_<NAME> variables. Built-in:
+# europe, north_america, caribbean, south_america, middle_east, asia, africa,
+# oceania. Add your own freely.
 
-# Allow SSH from Europe only.
-allow tcp 22 europe
+# Allow inbound SSH from Europe only.
+allow in tcp 22 europe
 
 # Examples - uncomment and adapt:
-# allow tcp 5060 de            # SIP/TCP open only to Germany
-# allow udp 5060 de            # SIP/UDP open only to Germany
-# allow tcp 5061 us            # SIPS open only to the United States
-# allow tcp 443  any           # HTTPS open to the world (still abuse-filtered)
-# deny  tcp 5060 ru,cn         # block Russia and China on 5060
-# allow tcp 22   europe,us     # SSH from Europe plus the United States
+# allow in  tcp 5060 de            # SIP/TCP reachable only from Germany
+# allow in  all 5060 de            # SIP over TCP and UDP from Germany
+# allow in  tcp 5061 us            # SIPS reachable only from the US
+# allow in  tcp 443  any           # HTTPS open to the world (still abuse-filtered)
+# deny  in  tcp 5060 ru,cn         # block Russia and China on inbound 5060
+# allow out tcp 443  europe,us     # only allow outbound HTTPS to Europe and US
+# allow out udp 53   any           # allow outbound DNS anywhere
