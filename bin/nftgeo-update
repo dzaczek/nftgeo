@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+NFTGEO_VERSION="1.0.0"
+
+case "${1:-}" in
+	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
+esac
+
 CONFIG_FILE="${CONFIG_FILE:-/etc/nftgeo/config}"
 RULES_FILE="${RULES_FILE:-/etc/nftgeo/rules.conf}"
 RULES_DIR="${RULES_DIR:-/etc/nftgeo/rules.d}"
@@ -694,8 +700,8 @@ install -m 0644 "${TMP_DIR}/abuse4.set" "${STATE_DIR}/abuse4.set"
 install -m 0644 "${TMP_DIR}/abuse6.set" "${STATE_DIR}/abuse6.set"
 [ -f "${TMP_DIR}/abuseipdb.tsv" ] && install -m 0644 "${TMP_DIR}/abuseipdb.tsv" "$ABUSEIPDB_STATE_FILE"
 
-printf 'Loaded %s/%s: rules=%s geo_groups=%s whitelist4=%s whitelist6=%s abuse4=%s abuse6=%s\n' \
-	"$TABLE_FAMILY" "$TABLE_NAME" \
+printf 'nftgeo %s loaded %s/%s: rules=%s geo_groups=%s whitelist4=%s whitelist6=%s abuse4=%s abuse6=%s\n' \
+	"$NFTGEO_VERSION" "$TABLE_FAMILY" "$TABLE_NAME" \
 	"$(wc -l < "$RULES_NORM")" \
 	"$(wc -l < "$GEO_FINAL")" \
 	"$(wc -l < "${TMP_DIR}/whitelist4.set")" \
