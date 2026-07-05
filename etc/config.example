@@ -14,6 +14,19 @@ ABUSEIPDB_DAYS="30"
 # ABUSEIPDB_DAYS when omitted.
 ABUSEIPDB_RETENTION_DAYS="30"
 
+# Extra plaintext IP/CIDR blocklists merged into the same "abuse" sets, so any
+# "deny ... abuse" rule covers them too. Space- or newline-separated URLs, only
+# fetched when a rule targets "abuse". Each feed's last good copy is cached and
+# reused if a later download fails. Mind feed quality: conservative lists
+# (FireHOL level1, Spamhaus DROP) have few false positives; broader ones
+# (blocklist.de, GreenSnow) block more but can catch legitimate traffic - the
+# WHITELIST always wins over abuse. Example:
+# ABUSE_FEEDS="https://iplists.firehol.org/files/firehol_level1.netset
+# https://www.spamhaus.org/drop/drop.txt
+# https://lists.blocklist.de/lists/all.txt
+# https://blocklist.greensnow.co/greensnow.txt"
+ABUSE_FEEDS=""
+
 # Always-allow list. These addresses can reach any port even when they are
 # outside an allowed geo or appear on the AbuseIPDB blacklist. Space-separated,
 # IPv4 and IPv6, single addresses or CIDR ranges. Example:

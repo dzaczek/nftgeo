@@ -207,6 +207,29 @@ deny out tcp 443     abuse   # block outbound HTTPS to abuse IPs
 IPs in the same rule). It is dropped after the whitelist, so whitelisted
 addresses are never blocked by it.
 
+#### Extra blocklist feeds
+
+The `abuse` sets are not limited to AbuseIPDB. Point `ABUSE_FEEDS` at any
+plaintext IP/CIDR blocklists and they are merged into the same `abuse4`/`abuse6`
+sets, so every `deny ... abuse` rule covers them too:
+
+```sh
+ABUSE_FEEDS="https://iplists.firehol.org/files/firehol_level1.netset
+https://www.spamhaus.org/drop/drop.txt"
+```
+
+Space- or newline-separated URLs, fetched only when a rule targets `abuse`.
+Comment markers (`#`, `;`) and any text after the address are stripped, which
+covers the common feed formats (FireHOL, Spamhaus DROP, blocklist.de, GreenSnow).
+Each feed's last good copy is cached under `/var/lib/nftgeo/feeds` and reused if a
+later download fails, so a feed outage never shrinks the blocklist. Feeds work
+with or without an AbuseIPDB key.
+
+Mind feed quality: conservative lists (FireHOL level1, Spamhaus DROP) have few
+false positives, while broader ones (blocklist.de, GreenSnow) block more but can
+catch legitimate traffic. The `WHITELIST` always wins over `abuse`, so keep your
+own networks there.
+
 ### Whitelist (always-allow IPs)
 
 `WHITELIST` keeps trusted addresses connected no matter what. Whitelisted IPs
