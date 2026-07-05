@@ -166,12 +166,21 @@ ABUSEIPDB_API_KEY="your-api-key"
 ABUSEIPDB_CONFIDENCE_MINIMUM="90"
 ABUSEIPDB_LIMIT="10000"
 ABUSEIPDB_DAYS="30"
+ABUSEIPDB_RETENTION_DAYS="30"
 ```
 
 - `ABUSEIPDB_API_KEY` - AbuseIPDB API key.
 - `ABUSEIPDB_CONFIDENCE_MINIMUM` - minimum abuse confidence score.
 - `ABUSEIPDB_LIMIT` - maximum number of entries to download.
 - `ABUSEIPDB_DAYS` - how many days of AbuseIPDB history to consider.
+- `ABUSEIPDB_RETENTION_DAYS` - how many days to keep locally retained
+  AbuseIPDB addresses after they were last seen in a successful API response.
+  For example, set it to `30` or `60` to carry older downloaded addresses into
+  later firewall sets and automatically drop entries older than that.
+
+Retained AbuseIPDB state is stored in `/var/lib/nftgeo/abuseipdb.tsv`.
+When an AbuseIPDB download fails, `nftgeo` uses the retained state instead of
+loading empty `abuse` sets.
 
 The blacklist is applied through the reserved `abuse` target in `rules.conf`,
 and only downloaded when at least one rule uses it. You decide its scope exactly
@@ -245,6 +254,7 @@ Active rules with per-rule counters, and cached data:
 nft list table inet nftgeo
 nft list chain inet nftgeo input    # or output / forward
 ls /var/lib/nftgeo/zones
+ls /var/lib/nftgeo/abuseipdb.tsv
 ```
 
 ## How the rules are built
