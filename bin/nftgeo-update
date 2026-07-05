@@ -368,8 +368,11 @@ build_geo_sets() {
 		awk -F'\t' -v g="$geosan" '$1==g{print $2"\t"$3}' "$GEO_TOKENS" | while IFS="$TAB" read -r kind value; do
 			case "$kind" in
 				cc)
-					[ -f "${ZONE_DIR}/${value}.v4" ] && cat "${ZONE_DIR}/${value}.v4" >> "$out4"
-					[ -f "${ZONE_DIR}/${value}.v6" ] && cat "${ZONE_DIR}/${value}.v6" >> "$out6"
+					# Use if/fi (not "&& cat"): a missing zone file makes the last
+					# "[ -f ] &&" return non-zero, which under set -e would abort the
+					# whole run before the empty-set check below can decide.
+					if [ -f "${ZONE_DIR}/${value}.v4" ]; then cat "${ZONE_DIR}/${value}.v4" >> "$out4"; fi
+					if [ -f "${ZONE_DIR}/${value}.v6" ]; then cat "${ZONE_DIR}/${value}.v6" >> "$out6"; fi
 					;;
 				v4) echo "$value" >> "$out4" ;;
 				v6) echo "$value" >> "$out6" ;;
@@ -378,8 +381,16 @@ build_geo_sets() {
 		sort -u "$out4" -o "$out4"
 		sort -u "$out6" -o "$out6"
 		if [ ! -s "$out4" ] && [ ! -s "$out6" ]; then
-			echo "Geo group '${geosan}' produced no addresses; aborting." >&2
-			exit 1
+			# An empty set only closes a port when it backs an "allow" rule (the
+			# port is then dropped for everyone). There we keep the fail-safe and
+			# abort, leaving the previous ruleset in place. When the group is used
+			# only in "deny" rules an empty set drops nothing, so one unresolvable
+			# country must not freeze every other rule's update: skip it instead.
+			if awk -F' ' -v g="$geosan" '$1=="allow" && $6==g{f=1} END{exit !f}' "$RULES_NORM"; then
+				echo "Geo group '${geosan}' produced no addresses and backs an allow rule; aborting to avoid closing a port with an empty allow set." >&2
+				exit 1
+			fi
+			echo "Geo group '${geosan}' produced no addresses; used only in deny rules, so skipping it (it would drop nothing)." >&2
 		fi
 	done < "$GEO_FINAL"
 }
