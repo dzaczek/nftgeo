@@ -4,6 +4,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.1.1] - 2026-07-05
+
+### Fixed
+- Add `auto-merge` to the address sets so overlapping/adjacent entries no longer
+  fail to load with "conflicting intervals" - which happened once `ABUSE_FEEDS`
+  CIDRs were merged with AbuseIPDB single IPs, and could also affect a whitelist
+  or geo target that mixed an address with a subnet containing it.
+
 ## [1.1.0] - 2026-07-05
 
 ### Added
@@ -38,5 +46,6 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.1.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.1.1
 [1.1.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.0.0

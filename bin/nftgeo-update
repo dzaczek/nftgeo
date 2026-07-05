@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.1.0"
+NFTGEO_VERSION="1.1.1"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -617,7 +617,10 @@ write_addr_set() {
 	type="$2"
 	file="$3"
 
-	printf '\tset %s {\n\t\ttype %s\n\t\tflags interval\n' "$name" "$type"
+	# auto-merge lets overlapping/adjacent entries coexist (e.g. an AbuseIPDB
+	# single IP inside a feed's CIDR, or a whitelisted host inside a whitelisted
+	# subnet); without it nft rejects them as "conflicting intervals".
+	printf '\tset %s {\n\t\ttype %s\n\t\tflags interval\n\t\tauto-merge\n' "$name" "$type"
 	if [ -s "$file" ]; then
 		printf '\t\telements = {\n'
 		write_set_elements "$file"
