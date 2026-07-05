@@ -40,6 +40,15 @@ Two simple guarantees:
   default**: only the listed geos get through, everyone else is dropped.
 - A port/direction you never mention is **left untouched**.
 
+> **The `any` protocol is the exception to "left untouched".** An
+> `allow <dir> any - <target>` rule matches *every* protocol and port in that
+> direction, so its deny-by-default closes the whole direction: everything that
+> is not established, not whitelisted, and not from `<target>` is dropped -
+> including ports you never named. Use `any` in an `allow` only when you mean
+> "default-deny this entire direction except `<target>`"; use per-port rules
+> otherwise. (In a `deny` rule, `any` just scopes the drop to every port and is
+> not affected by this.)
+
 On top of every managed port, the whitelist always wins. The AbuseIPDB
 blacklist is opt-in: it is dropped only where you write a `deny ... abuse`
 rule, so you choose its exact scope (see below).
