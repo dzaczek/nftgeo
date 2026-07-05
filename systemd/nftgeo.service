@@ -1,5 +1,5 @@
 [Unit]
-Description=Update nftables SSH rules from AbuseIPDB and Europe IP ranges
+Description=Rebuild the nftgeo geo firewall from rules.conf, country zones, and AbuseIPDB
 Wants=network-online.target
 After=network-online.target
 

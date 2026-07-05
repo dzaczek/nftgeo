@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily update of nftgeo nftables SSH rules
+Description=Scheduled refresh of the nftgeo geo firewall rules
 
 [Timer]
 OnBootSec=2min

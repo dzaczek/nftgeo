@@ -257,6 +257,10 @@ ls /var/lib/nftgeo/zones
 ls /var/lib/nftgeo/abuseipdb.tsv
 ```
 
+Each run also persists the sets it loaded under `/var/lib/nftgeo`
+(`whitelist4.set`, `whitelist6.set`, `abuse4.set`, `abuse6.set`) alongside the
+retained `abuseipdb.tsv`.
+
 ## How the rules are built
 
 For the example `rules.conf` above, the generated chains look like this
