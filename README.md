@@ -219,6 +219,24 @@ WHITELIST="203.0.113.10 198.51.100.0/24 2001:db8::/48"
 Space-separated, IPv4 and IPv6, single addresses or CIDR ranges. This is the
 recommended way to protect your own admin IP from accidental lockout.
 
+`WHITELIST` only accepts literal addresses. To whitelist something by name -
+typically a dynamic-DNS admin endpoint such as a WireGuard box - list it in
+`WHITELIST_HOSTS` instead:
+
+```sh
+WHITELIST_HOSTS="wireguard.example.ch vpn.example.net"
+WHITELIST_HOSTS_RETENTION_DAYS="7"
+```
+
+Each hostname is resolved (via `getent`, honouring `/etc/hosts` and
+`resolv.conf`) on every run and the resulting IPs are merged into the whitelist.
+Because the `systemd` timer runs the update, the names are re-resolved
+periodically; if the address changes, the next successful lookup replaces the
+old one. A host's last successfully resolved addresses are retained in
+`/var/lib/nftgeo/whitelist_hosts.tsv` for `WHITELIST_HOSTS_RETENTION_DAYS`, so a
+transient DNS failure cannot drop your access, and addresses that stop resolving
+age out after that window. IPv4-mapped IPv6 results (`::ffff:...`) are ignored.
+
 ### Regions
 
 Regions are macros that expand to a list of country codes. The following are

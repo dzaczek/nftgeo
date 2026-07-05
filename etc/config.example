@@ -20,6 +20,19 @@ ABUSEIPDB_RETENTION_DAYS="30"
 # WHITELIST="203.0.113.10 198.51.100.0/24 2001:db8::/48"
 WHITELIST=""
 
+# Hostnames to keep whitelisted by name (WHITELIST only accepts literal IPs).
+# Each is resolved to its IPs on every run, so the systemd timer re-resolves them
+# periodically, and the addresses are merged into the whitelist above. Handy for
+# a dynamic-DNS admin endpoint (e.g. a WireGuard box). Space-separated. Example:
+# WHITELIST_HOSTS="wireguard.example.ch vpn.example.net"
+WHITELIST_HOSTS=""
+
+# Keep a whitelist host's last successfully resolved addresses for this many days
+# when a lookup fails, so a transient DNS outage cannot drop your access. A
+# successful lookup replaces the old addresses; unresolved ones age out after
+# this window.
+WHITELIST_HOSTS_RETENTION_DAYS="7"
+
 # How long a downloaded country zone is reused before being refreshed, in hours.
 # The systemd timer runs twice a day; with 20h the early run downloads and the
 # later run reuses the cache.

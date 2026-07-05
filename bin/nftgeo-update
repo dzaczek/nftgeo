@@ -11,6 +11,9 @@ NFT_FILE="${NFT_FILE:-/etc/nftables.d/nftgeo.nft}"
 TABLE_FAMILY="${TABLE_FAMILY:-inet}"
 TABLE_NAME="${TABLE_NAME:-nftgeo}"
 WHITELIST="${WHITELIST:-}"
+WHITELIST_HOSTS="${WHITELIST_HOSTS:-}"
+WHITELIST_HOSTS_RETENTION_DAYS="${WHITELIST_HOSTS_RETENTION_DAYS:-7}"
+WHITELIST_HOSTS_STATE_FILE="${WHITELIST_HOSTS_STATE_FILE:-${STATE_DIR}/whitelist_hosts.tsv}"
 ZONE_CACHE_HOURS="${ZONE_CACHE_HOURS:-20}"
 
 ABUSEIPDB_API_KEY="${ABUSEIPDB_API_KEY:-}"
@@ -481,6 +484,67 @@ fetch_abuseipdb() {
 	grep -Ei "$IPV6_RE" "${TMP_DIR}/abuse.current" > "${TMP_DIR}/abuse6.set" || true
 }
 
+resolve_host() {
+	# $1 hostname. Echo its literal IPv4 and IPv6 addresses, one per line, using
+	# getent (glibc NSS: honours /etc/hosts and resolv.conf, no extra deps). The
+	# three databases are combined because none is reliable alone: ahostsv4/v6
+	# cover DNS A/AAAA, while "hosts" also returns IPv6-only /etc/hosts entries
+	# that getaddrinfo can miss. IPv4-mapped v6 results (::ffff:...) are dropped -
+	# they are not real IPv6 - and the union is de-duplicated.
+	# "|| true": a database with no matching record exits non-zero, which under
+	# set -e would abort the group before the other lookups run.
+	{
+		getent ahostsv4 "$1" || true
+		getent ahostsv6 "$1" || true
+		getent hosts "$1" || true
+	} 2>/dev/null | awk '{print $1}' | grep -v '^::ffff:' | sort -u
+}
+
+resolve_whitelist_hosts() {
+	# Resolve WHITELIST_HOSTS to IPs and append them to the raw whitelist files.
+	# State (host<TAB>ip<TAB>last_seen) is kept in WHITELIST_HOSTS_STATE_FILE: a
+	# successful lookup replaces a host's addresses, a failed one retains the last
+	# known ones for WHITELIST_HOSTS_RETENTION_DAYS so a DNS blip cannot drop
+	# access, and stale addresses age out after that window.
+	[ -n "$WHITELIST_HOSTS" ] || return 0
+	if ! valid_nonnegative_int "$WHITELIST_HOSTS_RETENTION_DAYS"; then
+		echo "WHITELIST_HOSTS_RETENTION_DAYS must be a non-negative integer." >&2
+		exit 1
+	fi
+
+	now="$(date +%s)"
+	cutoff="$((now - WHITELIST_HOSTS_RETENTION_DAYS * 86400))"
+	new_state="${TMP_DIR}/wlhosts.new"
+	: > "$new_state"
+
+	for host in $WHITELIST_HOSTS; do
+		resolved="$(resolve_host "$host" | sort -u)"
+		if [ -n "$resolved" ]; then
+			printf '%s\n' "$resolved" | while read -r ip; do
+				[ -n "$ip" ] && printf '%s\t%s\t%s\n' "$host" "$ip" "$now" >> "$new_state"
+			done
+		else
+			echo "Whitelist host '${host}' did not resolve; retaining last known addresses (if any)." >&2
+			if [ -s "$WHITELIST_HOSTS_STATE_FILE" ]; then
+				awk -F'\t' -v h="$host" -v cutoff="$cutoff" \
+					'$1==h && $3 ~ /^[0-9]+$/ && $3 >= cutoff' \
+					"$WHITELIST_HOSTS_STATE_FILE" >> "$new_state"
+			fi
+		fi
+	done
+
+	sort -u "$new_state" -o "$new_state"
+	install -m 0644 "$new_state" "$WHITELIST_HOSTS_STATE_FILE"
+
+	awk -F'\t' '{print $2}' "$new_state" | while read -r ip; do
+		[ -n "$ip" ] || continue
+		case "$ip" in
+			*:*) echo "$ip" >> "${TMP_DIR}/wl6.raw" ;;
+			*)   echo "$ip" >> "${TMP_DIR}/wl4.raw" ;;
+		esac
+	done
+}
+
 build_whitelist() {
 	: > "${TMP_DIR}/wl4.raw"
 	: > "${TMP_DIR}/wl6.raw"
@@ -491,6 +555,8 @@ build_whitelist() {
 			*)   echo "$entry" >> "${TMP_DIR}/wl4.raw" ;;
 		esac
 	done
+
+	resolve_whitelist_hosts
 
 	sort -u "${TMP_DIR}/wl4.raw" | grep -E "$IPV4_RE" > "${TMP_DIR}/whitelist4.set" || true
 	sort -u "${TMP_DIR}/wl6.raw" | grep -Ei "$IPV6_RE" > "${TMP_DIR}/whitelist6.set" || true
