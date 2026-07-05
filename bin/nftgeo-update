@@ -60,6 +60,17 @@ fi
 
 mkdir -p "$STATE_DIR" "$ZONE_DIR" "$(dirname "$NFT_FILE")"
 
+# Serialize runs: the systemd timer and a manual invocation must not rebuild and
+# load the ruleset at the same time. Wait briefly for an in-flight run, then give
+# up rather than race it.
+LOCK_FILE="${LOCK_FILE:-${STATE_DIR}/.lock}"
+LOCK_WAIT="${LOCK_WAIT:-60}"
+exec 9>"$LOCK_FILE"
+if ! flock -w "$LOCK_WAIT" 9; then
+	echo "Another nftgeo-update is running (lock ${LOCK_FILE}); giving up." >&2
+	exit 1
+fi
+
 IPV4_RE='^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'
 IPV6_RE='^[0-9a-fA-F:]+(/[0-9]{1,3})?$'
 TAB="$(printf '\t')"
