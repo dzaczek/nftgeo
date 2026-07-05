@@ -46,11 +46,13 @@
 # europe, north_america, caribbean, south_america, middle_east, asia, africa,
 # oceania. Add your own freely.
 
-# Allow inbound SSH from Europe only.
-# WARNING: this closes port 22 to every source outside Europe, including your
-# own admin host if it is elsewhere. Add your admin IP to WHITELIST in config
-# first - the whitelist is checked before this rule and prevents a lockout.
-allow in tcp 22 europe
+# Example: allow inbound SSH from Europe only. Commented out by default so a
+# fresh install never locks anyone out - uncomment and adapt before applying.
+# WARNING: uncommenting this closes port 22 to every source outside Europe,
+# including your own admin host if it is elsewhere. Add your admin IP to
+# WHITELIST in config first - the whitelist is checked before this rule and
+# prevents a lockout.
+# allow in tcp 22 europe
 
 # Examples - uncomment and adapt:
 # allow in      all 5060-5070 de       # SIP (tcp+udp) port range, only from Germany
