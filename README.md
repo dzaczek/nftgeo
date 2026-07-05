@@ -11,7 +11,8 @@ allowed, and the tool builds and maintains the `nftables` rules for you:
 - stateful: replies to your own requests are always allowed,
 - blocks the AbuseIPDB blacklist where you ask it to, with the same
   direction/protocol/port granularity as any other rule,
-- always allows a configurable whitelist of trusted IPs,
+- always allows a configurable whitelist of trusted IPs or hostnames (the latter
+  re-resolved on each run),
 - a counter on every rule, so `nft list` shows per-rule packet/byte totals,
 - downloads only the country zones your rules actually use, with a local cache,
 - refreshes the rules twice a day through a `systemd` timer,
@@ -144,7 +145,7 @@ Everything lives in `/etc/nftgeo`:
 
 ```text
 /etc/nftgeo/
-  config            # settings: AbuseIPDB key, WHITELIST, ZONE_CACHE_HOURS, regions, groups
+  config            # settings: AbuseIPDB key, WHITELIST, WHITELIST_HOSTS, ZONE_CACHE_HOURS, regions, groups
   rules.conf        # rules (optional if you only use rules.d)
   rules.d/*.conf    # rule fragments, included in sorted filename order
   groups.d/*.conf   # GROUP_*/REGION_* definitions, sourced after config
@@ -266,14 +267,22 @@ Downloaded country zones are reused for this many hours before being refreshed.
 sudo /usr/local/sbin/nftgeo-update
 ```
 
+Runs are serialized by a lock (`/var/lib/nftgeo/.lock`), so a manual run and the
+scheduled one cannot overlap; a run that cannot take the lock within
+`LOCK_WAIT` seconds (default 60) exits without touching the ruleset.
+
 ## Status checks
 
 ```sh
+nftgeo-update --version                       # installed version
 systemctl status nftgeo.timer
 systemctl list-timers --all nftgeo.timer
 systemctl status nftgeo.service
 journalctl -u nftgeo.service -n 100 --no-pager
 ```
+
+Each run logs its version in the `Loaded` line, e.g.
+`nftgeo 1.0.0 loaded inet/nftgeo: rules=3 ...`.
 
 Active rules with per-rule counters, and cached data:
 
@@ -332,9 +341,12 @@ replaced atomically: the generated file recreates the table in a single `nft -f`
 load, so there is no moment in which the rules are missing. The chain policy is
 `accept`, so only the ports you manage are affected; nothing else is touched.
 
-The tool fails safe: if a required country zone cannot be downloaded and there is
-no cached copy, the update aborts and leaves the previous ruleset in place rather
-than risk closing a port with an empty allow set.
+The tool fails safe: if a country used in an `allow` rule resolves to no
+addresses (its zone cannot be downloaded and there is no cached copy), the update
+aborts and leaves the previous ruleset in place rather than risk closing a port
+with an empty allow set. A country used only in `deny` rules is skipped instead -
+an empty deny set drops nothing - so one unresolvable code cannot freeze the
+whole update.
 
 > **Egress note:** if you geo-fence outbound `tcp 443` (or `80`), make sure the
 > allowed regions cover the AbuseIPDB and ipdeny.com servers, or add their IPs to
@@ -382,6 +394,13 @@ sudo ./uninstall.sh
 Removes the active `nftables` table, the systemd units, the script, and
 `/etc/nftables.d/nftgeo.nft`. Leaves `/etc/nftgeo` and
 `/var/lib/nftgeo` in place.
+
+## Versioning
+
+Releases follow [Semantic Versioning](https://semver.org/) and are tagged
+`vMAJOR.MINOR.PATCH`. `nftgeo-update --version` reports the installed version and
+each run logs it. See [CHANGELOG.md](CHANGELOG.md) for what changed between
+releases.
 
 ## Data sources
 
