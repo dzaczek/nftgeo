@@ -9,6 +9,11 @@ ABUSEIPDB_CONFIDENCE_MINIMUM="90"
 ABUSEIPDB_LIMIT="10000"
 ABUSEIPDB_DAYS="30"
 
+# Keep IPs previously downloaded from AbuseIPDB for this many days after they
+# were last seen in a successful API response. Set to 30, 60, etc. Defaults to
+# ABUSEIPDB_DAYS when omitted.
+ABUSEIPDB_RETENTION_DAYS="30"
+
 # Always-allow list. These addresses can reach any port even when they are
 # outside an allowed geo or appear on the AbuseIPDB blacklist. Space-separated,
 # IPv4 and IPv6, single addresses or CIDR ranges. Example:
