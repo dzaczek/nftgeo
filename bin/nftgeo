@@ -6,6 +6,7 @@ set -eu
 FAM="${TABLE_FAMILY:-inet}"
 TABLE="${TABLE_NAME:-nftgeo}"
 STATE_DIR="${STATE_DIR:-/var/lib/nftgeo}"
+NFT_FILE="${NFT_FILE:-/etc/nftables.d/nftgeo.nft}"
 ABUSE_FEEDS_CACHE_DIR="${ABUSE_FEEDS_CACHE_DIR:-${STATE_DIR}/feeds}"
 
 # Locate the update engine (for `apply` and `version`).
@@ -24,6 +25,10 @@ Usage: nftgeo <command> [args]
                  geo sets, the rules that match it, and the resulting verdict).
   status         One-screen summary: version, last run, set sizes, drop
                  counters, feed health, and the next scheduled run.
+  validate       Render the ruleset from the current config and check it, without
+                 loading it. Exits non-zero if the config is invalid. (root)
+  plan           Show how the rendered ruleset differs from what is loaded, as a
+                 policy diff (set contents elided). (root)
   apply          Rebuild and load the ruleset now (runs the update engine).
   version        Print the nftgeo version.
   help           Show this help.
@@ -128,11 +133,60 @@ cmd_status() {
 	return 0
 }
 
+cmd_validate() {
+	[ -n "$ENGINE" ] || { echo "nftgeo-update not found" >&2; exit 1; }
+	if out="$(RENDER_ONLY=1 "$ENGINE" 2>&1)"; then
+		echo "OK: ${out}"
+	else
+		echo "INVALID:" >&2
+		echo "$out" >&2
+		exit 1
+	fi
+}
+
+# Drop set element bodies so a policy diff isn't buried under thousands of
+# changing abuse/geo addresses (and so an elided empty set matches a populated
+# one - only the rules and set definitions are compared).
+strip_elements() {
+	awk '
+		/elements = \{/ { if (/\}/) next; inblk=1; next }
+		inblk && /\}/   { inblk=0; next }
+		inblk           { next }
+		                { print }
+	' "$1"
+}
+
+cmd_plan() {
+	[ -n "$ENGINE" ] || { echo "nftgeo-update not found" >&2; exit 1; }
+	rendered="$(mktemp)"; err="$(mktemp)"
+	if ! RENDER_ONLY=1 RENDER_OUT="$rendered" "$ENGINE" >/dev/null 2>"$err"; then
+		echo "render failed:" >&2; cat "$err" >&2; rm -f "$rendered" "$err"; exit 1
+	fi
+	rm -f "$err"
+	if [ ! -f "$NFT_FILE" ]; then
+		echo "no current ruleset at ${NFT_FILE}; this would be the first load."
+		rm -f "$rendered"; return 0
+	fi
+	a="$(mktemp)"; b="$(mktemp)"
+	strip_elements "$NFT_FILE" > "$a"
+	strip_elements "$rendered" > "$b"
+	d="$(diff -u "$a" "$b" || true)"
+	rm -f "$a" "$b" "$rendered"
+	if [ -z "$d" ]; then
+		echo "no policy changes (set contents such as abuse/geo addresses may still differ)."
+	else
+		echo "policy changes (loaded -> rendered; set contents elided):"
+		echo "$d"
+	fi
+}
+
 cmd="${1:-help}"
 [ $# -gt 0 ] && shift || true
 case "$cmd" in
 	check)             cmd_check "$@" ;;
 	status)            cmd_status ;;
+	validate)          cmd_validate ;;
+	plan)              cmd_plan ;;
 	apply)             [ -n "$ENGINE" ] || { echo "nftgeo-update not found" >&2; exit 1; }; exec "$ENGINE" ;;
 	version|--version|-V) [ -n "$ENGINE" ] && exec "$ENGINE" --version || { echo "nftgeo (engine not found)"; exit 1; } ;;
 	help|-h|--help)    usage ;;

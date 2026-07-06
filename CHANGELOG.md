@@ -4,6 +4,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.3.0] - 2026-07-06
+
+### Added
+- `nftgeo validate` - render the ruleset from the current config and check it
+  with `nft -c` without loading it; exits non-zero on an invalid config.
+- `nftgeo plan` - show how the rendered ruleset differs from what is loaded, as a
+  policy diff with set contents (abuse/geo addresses) elided so only rule changes
+  show. Backed by a new `RENDER_ONLY` mode in the engine that skips the lock, the
+  network fetches, and the live load.
+
 ## [1.2.0] - 2026-07-06
 
 ### Added
@@ -56,6 +66,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.3.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.3.0
 [1.2.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.2.0
 [1.1.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.1.1
 [1.1.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.1.0

@@ -310,8 +310,15 @@ The `nftgeo` command wraps the common day-to-day checks:
 ```sh
 nftgeo check 203.0.113.7   # what does the firewall do to this address?
 nftgeo status              # version, last run, set sizes, drop counters, next run
+nftgeo validate            # check the current config renders/loads, without applying
+nftgeo plan                # show how the rendered ruleset differs from what is loaded
 nftgeo apply               # rebuild and load now (same as the update engine)
 ```
+
+`nftgeo validate` and `nftgeo plan` let you check an edit before applying it:
+`validate` exits non-zero if the config is invalid, and `plan` prints a policy
+diff (set contents such as abuse/geo addresses are elided, so only your rule
+changes show). Both need root and neither touches the live ruleset.
 
 `nftgeo check <ip>` reports whether the address is whitelisted, on the abuse
 list, or in any geo set, prints the rules that match it, and gives a plain verdict
