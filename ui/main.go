@@ -366,6 +366,89 @@ type PolicyRule struct {
 	Iface   string `json:"iface"`
 	Comment string `json:"comment"`
 	File    string `json:"file"`
+	Hits    int64  `json:"hits"`
+	Matches []Rule `json:"matches"`
+}
+
+// sanitize mirrors the engine's sanitize_lower: lowercase, non-alphanumeric runs
+// collapsed to '_', edges trimmed - so a target maps to its "g_<name>" set.
+func sanitize(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	prevU := false
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevU = false
+		} else if !prevU {
+			b.WriteByte('_')
+			prevU = true
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+// annotate joins each policy rule to the loaded chain rules that implement it,
+// summing their live counters (best-effort: by hook, verdict, port, side, and the
+// target's set name).
+func annotate(rules []PolicyRule, chs []Chain) {
+	byHook := map[string]Chain{}
+	for _, c := range chs {
+		byHook[c.Name] = c
+	}
+	for i := range rules {
+		r := &rules[i]
+		hook := "input"
+		switch r.Dir {
+		case "out":
+			hook = "output"
+		case "fwd-in", "fwd-out":
+			hook = "forward"
+		}
+		verdict := "accept"
+		if r.Action == "deny" {
+			verdict = "drop"
+		}
+		side := "saddr"
+		if r.Dir == "out" || r.Dir == "fwd-out" {
+			side = "daddr"
+		}
+		portTok := ""
+		if r.Port != "-" {
+			portTok = "dport " + r.Port
+		}
+		var sets []string
+		switch r.Target {
+		case "any":
+		case "abuse":
+			sets = []string{"@abuse4", "@abuse6"}
+		default:
+			b := sanitize(r.Target)
+			sets = []string{"@g_" + b + "4", "@g_" + b + "6"}
+		}
+		for _, cr := range byHook[hook].Rules {
+			if cr.Verdict != verdict {
+				continue
+			}
+			if portTok != "" && !strings.Contains(cr.Text, portTok) {
+				continue
+			}
+			ok := false
+			if r.Target == "any" {
+				ok = !strings.Contains(cr.Text, "@")
+			} else {
+				for _, s := range sets {
+					if strings.Contains(cr.Text, s) && strings.Contains(cr.Text, side) {
+						ok = true
+					}
+				}
+			}
+			if ok {
+				r.Matches = append(r.Matches, cr)
+				r.Hits += cr.Packets
+			}
+		}
+	}
 }
 
 func ruleFiles() []string {
@@ -539,7 +622,9 @@ func main() {
 		writeJSON(w, sets())
 	})
 	http.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, policy())
+		p := policy()
+		annotate(p, chains())
+		writeJSON(w, p)
 	})
 	http.HandleFunc("/api/objects", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, objects())

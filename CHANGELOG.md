@@ -9,6 +9,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.13.0] - 2026-07-06
+
+### Added
+- nftgeo-ui Policy view: live hit counts per rule (each `rules.conf` rule is
+  joined to the chain rules that implement it - by hook, verdict, port, address
+  side, and the target's set name - and their counters summed), sortable columns,
+  and a click-through rule drawer showing the generated nft lines with counters.
+  The side match cleanly separates ingress vs egress rules that share a set (e.g.
+  `deny in ... abuse` vs `deny out ... abuse`).
+
 ## [1.12.0] - 2026-07-06
 
 ### Added
@@ -225,6 +235,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.13.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.13.0
 [1.12.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.12.0
 [1.11.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.11.1
 [1.11.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.11.0

@@ -48,6 +48,9 @@
   th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
   th{color:var(--mut);font-weight:600;position:sticky;top:0;background:var(--card)}
   tbody tr:hover{background:#ffffff08}
+  #pol-head th[data-k]{cursor:pointer;user-select:none}
+  #pol-head th[data-k]:hover{color:var(--fg)}
+  .prow{cursor:pointer}
   .pill{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
   .pill.allow{background:#0e3a2a;color:var(--ok)}.pill.deny{background:#3a1420;color:var(--drop)}
   .pill.dir{background:#16233d;color:var(--acc2)}
@@ -115,7 +118,7 @@
       <div class="warn">Read-only view of your rules. Editing lands in roadmap P6 phase B; for now edit <code>/etc/nftgeo/rules.conf</code> and <code>nftgeo apply</code>.</div>
       <div class="filters"><input id="pf" placeholder="filter rules…" oninput="renderPolicy()"></div>
       <div class="card"><div class="tablewrap"><table>
-        <thead><tr><th>#</th><th>Action</th><th>Dir</th><th>Service</th><th>Target</th><th>Interface</th><th>Source file</th><th>Comment</th></tr></thead>
+        <thead id="pol-head"><tr><th data-k="num">#</th><th data-k="action">Action</th><th data-k="dir">Dir</th><th data-k="port">Service</th><th data-k="target">Target</th><th data-k="iface">Interface</th><th data-k="hits">Hits ▾</th><th data-k="file">Source</th><th>Comment</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
     </section>
 
@@ -201,10 +204,29 @@ function renderLogs(){
 }
 
 async function loadPolicy(){ RULES=await j('/api/rules'); renderPolicy(); }
+let polSort={key:'num',dir:1};
 function renderPolicy(){
   const f=$('#pf').value.toLowerCase();
-  const rows=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
-  $('#policy').innerHTML=rows.map(r=>`<tr><td class="muted">${r.num}</td><td><span class="pill ${r.action}">${esc(r.action)}</span></td><td><span class="pill dir">${esc(r.dir)}</span></td><td>${esc(r.proto)} ${esc(r.port==='-'?'':r.port)}</td><td class="mono">${esc(r.target)}</td><td>${esc(r.iface||'')}</td><td class="muted">${esc(r.file)}</td><td class="muted">${esc(r.comment)}</td></tr>`).join('')||'<tr><td colspan="8" class="muted">no rules</td></tr>';
+  let rows=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
+  const k=polSort.key,dir=polSort.dir;
+  rows.sort((a,b)=>{let x=a[k],y=b[k];if(typeof x==='string')return dir*x.localeCompare(String(y));return dir*((x||0)-(y||0));});
+  $('#policy').innerHTML=rows.map(r=>`<tr class="prow" data-num="${r.num}"><td class="muted">${r.num}</td><td><span class="pill ${r.action}">${esc(r.action)}</span></td><td><span class="pill dir">${esc(r.dir)}</span></td><td>${esc(r.proto)} ${esc(r.port==='-'?'':r.port)}</td><td class="mono">${esc(r.target)}</td><td>${esc(r.iface||'')}</td><td><b>${r.hits||0}</b></td><td class="muted">${esc(r.file)}</td><td class="muted">${esc(r.comment)}</td></tr>`).join('')||'<tr><td colspan="9" class="muted">no rules</td></tr>';
+}
+document.addEventListener('click',e=>{
+  const th=e.target.closest('#pol-head th[data-k]');
+  if(th){polSort.dir=(polSort.key===th.dataset.k)?-polSort.dir:1;polSort.key=th.dataset.k;renderPolicy();return;}
+  const row=e.target.closest('.prow'); if(row) showRule(+row.dataset.num);
+});
+function showRule(num){
+  const r=(RULES||[]).find(x=>x.num===num); if(!r)return;
+  let h=`<h3>#${r.num} · ${esc(r.action)} ${esc(r.dir)} ${esc(r.proto)} ${esc(r.port==='-'?'':r.port)} ${esc(r.target)}${r.iface?' on '+esc(r.iface):''}</h3>`;
+  if(r.comment)h+=`<div class="muted" style="margin-bottom:10px">${esc(r.comment)} · <code>${esc(r.file)}</code></div>`;
+  h+=`<div class="lk"><b>Total hits</b><div style="font-size:22px">${r.hits||0}</div></div>`;
+  h+='<div class="lk"><b>Generated nft rules</b><table>';
+  (r.matches||[]).forEach(m=>{h+=`<tr><td class="mono" style="width:auto">${esc(m.text.replace(/counter packets.*/,'').trim())}</td><td style="text-align:right">${m.packets}</td></tr>`;});
+  if(!(r.matches||[]).length)h+='<tr><td class="muted">no matching loaded rules (target may resolve to nothing, or counters reset on reload)</td></tr>';
+  h+='</table></div>';
+  $('#modalbody').innerHTML=h; $('#modal').style.display='flex';
 }
 
 async function loadObjects(){
