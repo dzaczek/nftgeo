@@ -91,8 +91,14 @@ cmd_check() {
 set_count() {
 	# Element count of set $1, or "-" if absent. Counts comma/newline separated
 	# elements without choking on interval ranges.
-	nft list set "$FAM" "$TABLE" "$1" 2>/dev/null \
-		| awk '/elements = {/{f=1} f{n+=gsub(/,/,",")} /}/{if(f){print n+1; exit}} END{if(!f)print 0}'
+	nft list set "$FAM" "$TABLE" "$1" 2>/dev/null | awk '
+		/elements = \{/ { cap=1; sub(/.*elements = \{/, "") }
+		cap {
+			line=$0; sub(/\}.*/, "", line); gsub(/[ \t]/, "", line); body=body line
+			if ($0 ~ /\}/) { if (body=="") print 0; else print gsub(/,/,",",body)+1; exit }
+		}
+		END { if (!cap) print 0 }
+	'
 }
 
 cmd_status() {

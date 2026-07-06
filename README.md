@@ -481,6 +481,12 @@ releases.
 - AbuseIPDB blacklist API: `https://api.abuseipdb.com/api/v2/blacklist`
 - Country IP prefixes: `https://www.ipdeny.com`
 
+The source URLs (`ABUSEIPDB_URL`, `IPDENY_V4_URL`, `IPDENY_V6_URL`) and all paths,
+state-file, cache, and table names (`CONFIG_FILE`, `RULES_FILE`, `RULES_DIR`,
+`GROUPS_DIR`, `STATE_DIR`, `ZONE_DIR`, `NFT_FILE`, `TABLE_FAMILY`, `TABLE_NAME`,
+`LOCK_WAIT`, ...) are environment-variable overrides on `nftgeo-update`, mainly
+for testing; the defaults are what a normal install uses.
+
 ## Notes
 
 `nftgeo` only touches the ports listed in `rules.conf`. It does not set a
