@@ -10,6 +10,8 @@ STATE_DIR="${STATE_DIR:-/var/lib/nftgeo}"
 NFT_FILE="${NFT_FILE:-/etc/nftables.d/nftgeo.nft}"
 ABUSE_FEEDS_CACHE_DIR="${ABUSE_FEEDS_CACHE_DIR:-${STATE_DIR}/feeds}"
 DYN_STATE="${DYN_STATE:-${STATE_DIR}/dynblock.tsv}"
+GEN_DIR="${GEN_DIR:-${STATE_DIR}/generations}"
+SENTINEL="${SENTINEL:-${STATE_DIR}/.pending-confirm}"
 TAB="$(printf '\t')"
 
 # Locate the update engine (for `apply` and `version`).
@@ -38,6 +40,11 @@ Usage: nftgeo <command> [args]
   unblock <ip>   Remove a dynamic block. (root)
   blocklist      List the current dynamic blocks and their remaining TTL.
   apply          Rebuild and load the ruleset now (runs the update engine).
+  apply --confirm [T]  Apply, then auto-roll-back after T seconds (default 120)
+                 unless you run 'nftgeo apply --commit' - a deadman against a
+                 change that locks you out. (root)
+  apply --commit / confirm   Keep a --confirm apply (cancel the rollback). (root)
+  rollback       Restore the previous ruleset generation. (root)
   version        Print the nftgeo version.
   help           Show this help.
 EOF
@@ -298,6 +305,69 @@ cmd_restore_dyn() {
 	mv "${DYN_STATE}.n" "$DYN_STATE"
 }
 
+snapshot_current() {
+	# Save the currently loaded ruleset (the installed NFT_FILE, or a delete-table
+	# stub if there is none yet) as a generation, point `previous` at it, keep the
+	# last 10. Echoes the snapshot path.
+	mkdir -p "$GEN_DIR"
+	snap="${GEN_DIR}/$(date +%s).nft"
+	if [ -f "$NFT_FILE" ]; then
+		cp "$NFT_FILE" "$snap"
+	else
+		printf 'table %s %s\ndelete table %s %s\n' "$FAM" "$TABLE" "$FAM" "$TABLE" > "$snap"
+	fi
+	echo "$snap" > "${GEN_DIR}/previous"
+	ls -1t "$GEN_DIR"/*.nft 2>/dev/null | tail -n +11 | while read -r f; do rm -f "$f"; done
+	echo "$snap"
+}
+
+cmd_confirm() {
+	[ -f "$SENTINEL" ] || { echo "nothing to confirm"; return 0; }
+	pid="$(cat "$SENTINEL" 2>/dev/null || true)"
+	[ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+	rm -f "$SENTINEL"
+	echo "confirmed; the change is kept."
+}
+
+cmd_rollback() {
+	prev="$(cat "${GEN_DIR}/previous" 2>/dev/null || true)"
+	{ [ -n "$prev" ] && [ -f "$prev" ]; } || { echo "no previous generation to roll back to" >&2; exit 1; }
+	nft -f "$prev"
+	cp "$prev" "$NFT_FILE" 2>/dev/null || true
+	if [ -f "$SENTINEL" ]; then
+		pid="$(cat "$SENTINEL" 2>/dev/null || true)"
+		[ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+		rm -f "$SENTINEL"
+	fi
+	echo "rolled back to ${prev}"
+}
+
+cmd_apply() {
+	case "${1:-}" in
+		--commit)
+			cmd_confirm ;;
+		--confirm)
+			shift; T="${1:-120}"
+			case "$T" in ''|*[!0-9]*) echo "bad confirm timeout '${T}' (seconds)" >&2; exit 2 ;; esac
+			[ -n "$ENGINE" ] || { echo "nftgeo-update not found" >&2; exit 1; }
+			[ -f "$SENTINEL" ] && { echo "a confirm is already pending; run 'nftgeo apply --commit' or 'nftgeo rollback' first" >&2; exit 1; }
+			snap="$(snapshot_current)"
+			"$ENGINE"
+			# Detached deadman: rolls back to the snapshot unless the sentinel is
+			# removed (by --commit) within T seconds. Survives this process exiting.
+			nohup sh -c "sleep ${T}; [ -f '${SENTINEL}' ] && { nft -f '${snap}' 2>/dev/null; cp '${snap}' '${NFT_FILE}' 2>/dev/null; logger -t nftgeo 'deadman: apply not confirmed in ${T}s, rolled back' 2>/dev/null; rm -f '${SENTINEL}'; }" >/dev/null 2>&1 &
+			echo "$!" > "$SENTINEL"
+			echo "Applied with a ${T}s deadman. If you still have access, keep it with:"
+			echo "    nftgeo apply --commit"
+			echo "Otherwise it auto-rolls-back to the previous ruleset in ${T}s." ;;
+		"")
+			[ -n "$ENGINE" ] || { echo "nftgeo-update not found" >&2; exit 1; }
+			exec "$ENGINE" ;;
+		*)
+			echo "usage: nftgeo apply [--confirm [seconds] | --commit]" >&2; exit 2 ;;
+	esac
+}
+
 cmd="${1:-help}"
 [ $# -gt 0 ] && shift || true
 case "$cmd" in
@@ -309,7 +379,9 @@ case "$cmd" in
 	unblock)           cmd_unblock "$@" ;;
 	blocklist|blocks)  cmd_blocklist ;;
 	restore-dyn)       cmd_restore_dyn ;;
-	apply)             [ -n "$ENGINE" ] || { echo "nftgeo-update not found" >&2; exit 1; }; exec "$ENGINE" ;;
+	apply)             cmd_apply "$@" ;;
+	confirm)           cmd_confirm ;;
+	rollback)          cmd_rollback ;;
 	version|--version|-V) [ -n "$ENGINE" ] && exec "$ENGINE" --version || { echo "nftgeo (engine not found)"; exit 1; } ;;
 	help|-h|--help)    usage ;;
 	*)                 echo "unknown command: ${cmd}" >&2; usage >&2; exit 2 ;;

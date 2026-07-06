@@ -4,6 +4,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.8.0] - 2026-07-06
+
+### Added
+- Safe-apply deadman and rollback. `nftgeo apply --confirm [T]` snapshots the
+  loaded ruleset, applies the new one, and auto-rolls-back after T seconds
+  (default 120) unless you run `nftgeo apply --commit` (alias `nftgeo confirm`) -
+  a guard against a rule change that locks you out. `nftgeo rollback` restores the
+  previous generation. Ruleset generations are kept under
+  `/var/lib/nftgeo/generations/` (last 10) with a `previous` pointer; the deadman
+  is a detached process that survives the CLI exiting and cleans up after itself.
+
 ## [1.7.0] - 2026-07-06
 
 ### Added
@@ -129,6 +140,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.8.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.0
 [1.7.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.7.0
 [1.6.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.6.0
 [1.5.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.5.1

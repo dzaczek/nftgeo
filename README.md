@@ -365,6 +365,19 @@ pass `--force`, so you cannot lock yourself out by mistake.
 diff (set contents such as abuse/geo addresses are elided, so only your rule
 changes show). Both need root and neither touches the live ruleset.
 
+When a change might lock you out, apply it with a deadman:
+
+```sh
+nftgeo apply --confirm      # apply, then auto-roll-back in 120s unless confirmed
+# ... verify you still have access ...
+nftgeo apply --commit       # keep it (cancels the rollback); or 'nftgeo confirm'
+```
+
+If you lose access, do nothing and the previous ruleset is restored after the
+timeout (default 120s; `nftgeo apply --confirm 300` for longer). `nftgeo rollback`
+restores the previous generation at any time. Generations are kept under
+`/var/lib/nftgeo/generations/`.
+
 `nftgeo check <ip>` reports whether the address is whitelisted, on the abuse
 list, or in any geo set, prints the rules that match it, and gives a plain verdict
 (allowed / dropped / where). `nftgeo status` is a one-screen summary pulled from
