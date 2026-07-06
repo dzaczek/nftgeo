@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.3.0"
+NFTGEO_VERSION="1.3.1"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -543,11 +543,21 @@ resolve_host() {
 	# that getaddrinfo can miss. IPv4-mapped v6 results (::ffff:...) are dropped -
 	# they are not real IPv6 - and the union is de-duplicated.
 	# "|| true": a database with no matching record exits non-zero, which under
-	# set -e would abort the group before the other lookups run.
+	# set -e would abort the group before the other lookups run. Each lookup is
+	# bounded by RESOLVE_TIMEOUT so a hung resolver cannot stall the whole update
+	# (the systemd timer run included); a timeout just yields no address, and the
+	# caller then falls back to the retained state.
+	g() {
+		if command -v timeout >/dev/null 2>&1; then
+			timeout "${RESOLVE_TIMEOUT:-5}" getent "$@"
+		else
+			getent "$@"
+		fi
+	}
 	{
-		getent ahostsv4 "$1" || true
-		getent ahostsv6 "$1" || true
-		getent hosts "$1" || true
+		g ahostsv4 "$1" || true
+		g ahostsv6 "$1" || true
+		g hosts "$1" || true
 	} 2>/dev/null | awk '{print $1}' | grep -v '^::ffff:' | sort -u
 }
 
@@ -558,6 +568,21 @@ resolve_whitelist_hosts() {
 	# known ones for WHITELIST_HOSTS_RETENTION_DAYS so a DNS blip cannot drop
 	# access, and stale addresses age out after that window.
 	[ -n "$WHITELIST_HOSTS" ] || return 0
+
+	# In render/dry-run mode don't touch DNS or mutate state: reuse the last
+	# resolved addresses so validate/plan stay fast and side-effect-free.
+	if [ -n "$RENDER_ONLY" ]; then
+		[ -s "$WHITELIST_HOSTS_STATE_FILE" ] || return 0
+		awk -F'\t' '{print $2}' "$WHITELIST_HOSTS_STATE_FILE" | while read -r ip; do
+			[ -n "$ip" ] || continue
+			case "$ip" in
+				*:*) echo "$ip" >> "${TMP_DIR}/wl6.raw" ;;
+				*)   echo "$ip" >> "${TMP_DIR}/wl4.raw" ;;
+			esac
+		done
+		return 0
+	fi
+
 	if ! valid_nonnegative_int "$WHITELIST_HOSTS_RETENTION_DAYS"; then
 		echo "WHITELIST_HOSTS_RETENTION_DAYS must be a non-negative integer." >&2
 		exit 1

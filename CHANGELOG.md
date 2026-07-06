@@ -4,6 +4,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.3.1] - 2026-07-06
+
+### Fixed
+- Bound each `WHITELIST_HOSTS` lookup with `RESOLVE_TIMEOUT` (default 5s) so a
+  hung resolver can no longer stall the whole update, including the scheduled
+  timer run; a timed-out lookup just falls back to the retained address.
+- `nftgeo validate`/`plan` (RENDER_ONLY) no longer re-resolve hostnames or mutate
+  state - they reuse the last resolved addresses, staying fast and side-effect
+  free even when DNS is down.
+
 ## [1.3.0] - 2026-07-06
 
 ### Added
@@ -66,6 +76,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.3.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.3.1
 [1.3.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.3.0
 [1.2.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.2.0
 [1.1.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.1.1
