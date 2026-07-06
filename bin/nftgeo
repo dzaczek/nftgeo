@@ -254,7 +254,7 @@ cmd_block() {
 	nft add element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip timeout ${sec}s }"
 	now="$(date +%s)"; exp="$((now + sec))"
 	mkdir -p "$STATE_DIR"; touch "$DYN_STATE"
-	grep -v "^${ip}${TAB}" "$DYN_STATE" > "${DYN_STATE}.n" 2>/dev/null || true
+	awk -F"$TAB" -v ip="$ip" '$1!=ip' "$DYN_STATE" > "${DYN_STATE}.n" 2>/dev/null || true
 	mv "${DYN_STATE}.n" "$DYN_STATE"
 	printf '%s\t%s\t%s\n' "$ip" "$fam" "$exp" >> "$DYN_STATE"
 	echo "blocked ${ip} for ${ttl} (until $(date -d "@${exp}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "@${exp}"))"
@@ -265,7 +265,7 @@ cmd_unblock() {
 	case "$ip" in *:*) fam=6 ;; *) fam=4 ;; esac
 	nft delete element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip }" 2>/dev/null || true
 	if [ -f "$DYN_STATE" ]; then
-		grep -v "^${ip}${TAB}" "$DYN_STATE" > "${DYN_STATE}.n" 2>/dev/null || true
+		awk -F"$TAB" -v ip="$ip" '$1!=ip' "$DYN_STATE" > "${DYN_STATE}.n" 2>/dev/null || true
 		mv "${DYN_STATE}.n" "$DYN_STATE"
 	fi
 	echo "unblocked ${ip}"
@@ -321,11 +321,17 @@ snapshot_current() {
 	echo "$snap"
 }
 
+kill_deadman() {
+	# Cancel a pending deadman: group-kill (reaps the detached sh and its sleep),
+	# falling back to a plain pid kill, then drop the sentinel.
+	pid="$(cat "$SENTINEL" 2>/dev/null || true)"
+	[ -n "$pid" ] && { kill -- "-${pid}" 2>/dev/null || kill "$pid" 2>/dev/null || true; }
+	rm -f "$SENTINEL"
+}
+
 cmd_confirm() {
 	[ -f "$SENTINEL" ] || { echo "nothing to confirm"; return 0; }
-	pid="$(cat "$SENTINEL" 2>/dev/null || true)"
-	[ -n "$pid" ] && kill "$pid" 2>/dev/null || true
-	rm -f "$SENTINEL"
+	kill_deadman
 	echo "confirmed; the change is kept."
 }
 
@@ -334,11 +340,7 @@ cmd_rollback() {
 	{ [ -n "$prev" ] && [ -f "$prev" ]; } || { echo "no previous generation to roll back to" >&2; exit 1; }
 	nft -f "$prev"
 	cp "$prev" "$NFT_FILE" 2>/dev/null || true
-	if [ -f "$SENTINEL" ]; then
-		pid="$(cat "$SENTINEL" 2>/dev/null || true)"
-		[ -n "$pid" ] && kill "$pid" 2>/dev/null || true
-		rm -f "$SENTINEL"
-	fi
+	[ -f "$SENTINEL" ] && kill_deadman
 	echo "rolled back to ${prev}"
 }
 
@@ -354,8 +356,14 @@ cmd_apply() {
 			snap="$(snapshot_current)"
 			"$ENGINE"
 			# Detached deadman: rolls back to the snapshot unless the sentinel is
-			# removed (by --commit) within T seconds. Survives this process exiting.
-			nohup sh -c "sleep ${T}; [ -f '${SENTINEL}' ] && { nft -f '${snap}' 2>/dev/null; cp '${snap}' '${NFT_FILE}' 2>/dev/null; logger -t nftgeo 'deadman: apply not confirmed in ${T}s, rolled back' 2>/dev/null; rm -f '${SENTINEL}'; }" >/dev/null 2>&1 &
+			# removed (by --commit) within T seconds. Runs in its own session
+			# (setsid) so cancelling can group-kill it cleanly; survives this exit.
+			dm="sleep ${T}; [ -f '${SENTINEL}' ] && { nft -f '${snap}' 2>/dev/null; cp '${snap}' '${NFT_FILE}' 2>/dev/null; logger -t nftgeo 'deadman: apply not confirmed in ${T}s, rolled back' 2>/dev/null; rm -f '${SENTINEL}'; }"
+			if command -v setsid >/dev/null 2>&1; then
+				setsid sh -c "$dm" >/dev/null 2>&1 &
+			else
+				nohup sh -c "$dm" >/dev/null 2>&1 &
+			fi
 			echo "$!" > "$SENTINEL"
 			echo "Applied with a ${T}s deadman. If you still have access, keep it with:"
 			echo "    nftgeo apply --commit"
@@ -377,7 +385,7 @@ case "$cmd" in
 	plan)              cmd_plan ;;
 	block)             cmd_block "$@" ;;
 	unblock)           cmd_unblock "$@" ;;
-	blocklist|blocks)  cmd_blocklist ;;
+	blocklist)         cmd_blocklist ;;
 	restore-dyn)       cmd_restore_dyn ;;
 	apply)             cmd_apply "$@" ;;
 	confirm)           cmd_confirm ;;

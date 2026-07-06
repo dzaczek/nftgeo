@@ -340,6 +340,9 @@ scheduled one cannot overlap; a run that cannot take the lock within
 
 ## Operator CLI
 
+For a one-page reference of every command grouped by task (enabling, blocking,
+analysis, disabling), see [CHEATSHEET.md](CHEATSHEET.md).
+
 The `nftgeo` command wraps the common day-to-day checks:
 
 ```sh
