@@ -114,6 +114,14 @@ write only an `allow out` rule; the return packets flow automatically.
 `africa`, `oceania`. Override any of them or add your own `REGION_<NAME>` in
 `config`.
 
+## Examples
+
+The [`examples/`](examples/) directory has ready-to-adapt `rules.d` fragments for
+common services - SSH, a public web server, mail, a Prometheus exporter, a
+WireGuard endpoint, a gateway, egress control, and a global abuse blocklist. Each
+file explains every line; copy the ones you need into `/etc/nftgeo/rules.d/` and
+edit the countries/IPs. See [`examples/README.md`](examples/README.md).
+
 ## Requirements
 
 - Debian or Ubuntu
