@@ -4,6 +4,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.10.0] - 2026-07-06
+
+### Added
+- Per-interface rules: an optional `on <iface>` qualifier on any rule, e.g.
+  `allow in tcp 22 europe on eth0` or `deny fwd-out any - abuse on wan0`. It maps
+  to `iifname` on the source side (`in`/`fwd-in`) and `oifname` on the
+  destination side (`out`/`fwd-out`), so you can scope a rule to one interface.
+  Deny-by-default stays interface-agnostic (it closes the port on all interfaces
+  except where an allow admits it). Foundation for NAT (P3/P4).
+
 ## [1.9.0] - 2026-07-06
 
 ### Added
@@ -168,6 +178,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.10.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.10.0
 [1.9.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.9.0
 [1.8.2]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.2
 [1.8.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.1

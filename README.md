@@ -83,6 +83,12 @@ rule, so you choose its exact scope (see below).
   targets can be combined in one rule
   (`allow in tcp 80 198.51.100.0/24,de,office`); `any` and `abuse` stand alone.
 
+A rule may end with an optional `on <iface>` to scope it to one interface -
+`allow in tcp 22 europe on eth0`, `masquerade`-style edge rules, etc. `on` maps
+to `iifname` on the source side (`in`/`fwd-in`) and `oifname` on the destination
+side (`out`/`fwd-out`). Deny-by-default stays interface-agnostic: it closes the
+port on every interface except where an allow admits it.
+
 Define reusable address groups in `config` as `GROUP_<NAME>` variables;
 a group may itself mix IPs, subnets, country codes, and region names:
 
