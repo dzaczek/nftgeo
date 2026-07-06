@@ -4,6 +4,15 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.4.1] - 2026-07-06
+
+### Fixed
+- Strip bogon / private / reserved ranges (RFC1918, loopback, link-local, CGNAT,
+  multicast, documentation) from the abuse sets. Feeds such as FireHOL level1
+  include these, and with a `deny ... abuse` egress rule they dropped traffic to
+  the local resolver `127.0.0.53`, the LAN, and a VPN resolver - breaking DNS on
+  the host. The abuse sets now only ever hold public, routable addresses.
+
 ## [1.4.0] - 2026-07-06
 
 ### Added
@@ -87,6 +96,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.4.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.4.1
 [1.4.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.4.0
 [1.3.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.3.1
 [1.3.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.3.0

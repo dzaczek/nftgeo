@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.4.0"
+NFTGEO_VERSION="1.4.1"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -539,6 +539,24 @@ fetch_abuse_feeds() {
 	sort -u "${TMP_DIR}/abuse6.set" -o "${TMP_DIR}/abuse6.set"
 }
 
+scrub_abuse() {
+	# Blocklist feeds (e.g. FireHOL level1) and, rarely, APIs include bogon /
+	# private / reserved ranges. With a "deny ... abuse" egress rule those would
+	# drop traffic to your own loopback resolver (127.0.0.53), LAN, and VPN -
+	# silently breaking DNS and local connectivity. Strip every non-public address
+	# so the abuse sets only ever hold public, routable addresses.
+	v4b='^(0|10|127)\.|^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|^169\.254\.|^172\.(1[6-9]|2[0-9]|3[01])\.|^192\.0\.[02]\.|^192\.88\.99\.|^192\.168\.|^198\.1[89]\.|^198\.51\.100\.|^203\.0\.113\.|^(22[4-9]|2[3-5][0-9])\.'
+	v6b='^::($|1|/|ffff:)|^(fc|fd|fe[89ab]|ff|64:ff9b:|2001:db8:)'
+	if [ -s "${TMP_DIR}/abuse4.set" ]; then
+		grep -Ev "$v4b" "${TMP_DIR}/abuse4.set" > "${TMP_DIR}/abuse4.scrub" || true
+		mv "${TMP_DIR}/abuse4.scrub" "${TMP_DIR}/abuse4.set"
+	fi
+	if [ -s "${TMP_DIR}/abuse6.set" ]; then
+		grep -Evi "$v6b" "${TMP_DIR}/abuse6.set" > "${TMP_DIR}/abuse6.scrub" || true
+		mv "${TMP_DIR}/abuse6.scrub" "${TMP_DIR}/abuse6.set"
+	fi
+}
+
 getent_t() {
 	# getent, bounded by RESOLVE_TIMEOUT so a hung resolver cannot stall the whole
 	# update (the systemd timer run included); a timeout just yields no address.
@@ -800,6 +818,8 @@ if [ -z "$RENDER_ONLY" ] && awk '$6=="abuse"{found=1} END{exit !found}' "$RULES_
 	fetch_abuseipdb
 	fetch_abuse_feeds
 fi
+# Always scrub: covers fresh, cached, and retained abuse data alike.
+scrub_abuse
 build_whitelist
 generate
 

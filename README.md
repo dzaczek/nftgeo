@@ -239,6 +239,12 @@ false positives, while broader ones (blocklist.de, GreenSnow) block more but can
 catch legitimate traffic. The `WHITELIST` always wins over `abuse`, so keep your
 own networks there.
 
+Bogon, private, and reserved ranges (RFC1918, loopback, link-local, CGNAT,
+multicast, documentation) are stripped from the abuse sets automatically - some
+feeds include them, and with a `deny out ... abuse` rule they would otherwise
+drop traffic to your own LAN, VPN, or local resolver. The abuse sets only ever
+hold public, routable addresses.
+
 ### Whitelist (always-allow IPs)
 
 `WHITELIST` keeps trusted addresses connected no matter what. Whitelisted IPs
