@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.6.0"
+NFTGEO_VERSION="1.7.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -25,6 +25,10 @@ RESOLVERS="${RESOLVERS:-local}"
 RESOLVE_TIMEOUT="${RESOLVE_TIMEOUT:-5}"
 WHITELIST_HOSTS_STATE_FILE="${WHITELIST_HOSTS_STATE_FILE:-${STATE_DIR}/whitelist_hosts.tsv}"
 ZONE_CACHE_HOURS="${ZONE_CACHE_HOURS:-20}"
+# Optional: log dropped packets (rate-limited) to the kernel log / journald.
+LOG_DROPS="${LOG_DROPS:-}"
+LOG_PREFIX="${LOG_PREFIX:-nftgeo-drop }"
+LOG_LIMIT="${LOG_LIMIT:-limit rate 10/second}"
 
 ABUSEIPDB_API_KEY="${ABUSEIPDB_API_KEY:-}"
 ABUSEIPDB_CONFIDENCE_MINIMUM="${ABUSEIPDB_CONFIDENCE_MINIMUM:-90}"
@@ -242,10 +246,29 @@ emit_set_match() {
 	# nothing when the l4 match is empty (protocol absent on this family).
 	[ -n "$1" ] || return 0
 	if [ "$1" = any ]; then
-		printf '\t\t%s %s @%s counter %s\n' "$2" "$3" "$4" "$5"
+		mpfx="$2 $3 @$4"
 	else
-		printf '\t\t%s %s %s @%s counter %s\n' "$1" "$2" "$3" "$4" "$5"
+		mpfx="$1 $2 $3 @$4"
 	fi
+	if [ "$5" = drop ] && [ -n "$LOG_DROPS" ]; then
+		printf '\t\t%s %s log prefix "%s"\n' "$mpfx" "$LOG_LIMIT" "$LOG_PREFIX"
+	fi
+	printf '\t\t%s counter %s\n' "$mpfx" "$5"
+}
+
+emit_drop() {
+	# Emit a drop, optionally preceded by a rate-limited log twin (LOG_DROPS).
+	# $1 = match clause ("any" or "" for a bare drop, otherwise a clause).
+	case "$1" in
+		any|'')
+			[ -n "$LOG_DROPS" ] && printf '\t\t%s log prefix "%s"\n' "$LOG_LIMIT" "$LOG_PREFIX"
+			printf '\t\tcounter drop\n'
+			;;
+		*)
+			[ -n "$LOG_DROPS" ] && printf '\t\t%s %s log prefix "%s"\n' "$1" "$LOG_LIMIT" "$LOG_PREFIX"
+			printf '\t\t%s counter drop\n' "$1"
+			;;
+	esac
 }
 
 emit_norm() {
@@ -772,7 +795,7 @@ emit_chain() {
 				[ -n "$m" ] || continue
 				case "$printed" in *"|${m}|"*) continue ;; esac
 				printed="${printed}|${m}|"
-				[ "$m" = any ] && printf '\t\tcounter drop\n' || printf '\t\t%s counter drop\n' "$m"
+				emit_drop "$m"
 			done
 		done
 	done

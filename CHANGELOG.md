@@ -4,6 +4,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.7.0] - 2026-07-06
+
+### Added
+- Optional drop logging: set `LOG_DROPS=1` to emit a rate-limited
+  `log prefix "nftgeo-drop "` before every drop rule, so dropped packets appear
+  in the kernel log / journald (`journalctl -k | grep nftgeo-drop`). Off by
+  default; `LOG_PREFIX` and `LOG_LIMIT` are configurable.
+
 ## [1.6.0] - 2026-07-06
 
 ### Added
@@ -121,6 +129,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.7.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.7.0
 [1.6.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.6.0
 [1.5.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.5.1
 [1.5.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.5.0

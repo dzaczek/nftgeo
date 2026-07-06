@@ -61,6 +61,11 @@ RESOLVE_TIMEOUT="5"
 # later run reuses the cache.
 ZONE_CACHE_HOURS="20"
 
+# Log dropped packets to the kernel log / journald. Set to any non-empty value to
+# emit a rate-limited 'log prefix "nftgeo-drop "' before every drop rule; view
+# with: journalctl -k | grep nftgeo-drop. Off by default.
+LOG_DROPS=""
+
 # Region macros referenced by name in rules.conf. Values are ISO 3166-1 alpha-2
 # lowercase codes. The following regions are built in and need no entry here:
 #   europe, north_america, caribbean, south_america, middle_east, asia,

@@ -311,6 +311,23 @@ ZONE_CACHE_HOURS="20"
 
 Downloaded country zones are reused for this many hours before being refreshed.
 
+### Logging dropped packets
+
+```sh
+LOG_DROPS="1"
+```
+
+With `LOG_DROPS` set, a rate-limited `log prefix "nftgeo-drop "` is emitted before
+every drop rule, so dropped packets show up in the kernel log:
+
+```sh
+journalctl -k | grep nftgeo-drop
+```
+
+Off by default. `LOG_PREFIX` and `LOG_LIMIT` (default `limit rate 10/second`)
+tune the label and rate. Because per-rule counters reset on reload, this is the
+way to keep a durable record of what is being blocked.
+
 ## Manual run
 
 ```sh
