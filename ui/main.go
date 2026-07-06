@@ -105,7 +105,10 @@ func geoFetchAll() {
 	geo.load()
 }
 
-func runV(name string, args ...string) string { out, _ := run(name, args...); return strings.TrimSpace(out) }
+func runV(name string, args ...string) string {
+	out, _ := run(name, args...)
+	return strings.TrimSpace(out)
+}
 
 func shortFeed(f string) string {
 	for _, k := range []string{"firehol", "spamhaus", "blocklist", "greensnow"} {
@@ -420,22 +423,22 @@ func be32(b []byte) uint32 {
 // ---- drops from journald ----------------------------------------------------
 
 type Drop struct {
-	Time   string `json:"time"`
-	Src    string `json:"src"`
-	Dst    string `json:"dst"`
-	Dport  string `json:"dport"`
-	Proto  string `json:"proto"`
-	Dir    string `json:"dir"` // ingress|egress|forward
-	CC     string `json:"cc"`
+	Time  string `json:"time"`
+	Src   string `json:"src"`
+	Dst   string `json:"dst"`
+	Dport string `json:"dport"`
+	Proto string `json:"proto"`
+	Dir   string `json:"dir"` // ingress|egress|forward
+	CC    string `json:"cc"`
 }
 type DropsResp struct {
-	Enabled       bool           `json:"enabled"`
-	Total         int            `json:"total"`
-	IngressByCC   map[string]int `json:"ingressByCC"`
-	EgressByCC    map[string]int `json:"egressByCC"`
-	TopPorts      map[string]int `json:"topPorts"`
-	Timeline      []int          `json:"timeline"` // last 24h, hourly buckets (oldest first)
-	Recent        []Drop         `json:"recent"`
+	Enabled     bool           `json:"enabled"`
+	Total       int            `json:"total"`
+	IngressByCC map[string]int `json:"ingressByCC"`
+	EgressByCC  map[string]int `json:"egressByCC"`
+	TopPorts    map[string]int `json:"topPorts"`
+	Timeline    []int          `json:"timeline"` // last 24h, hourly buckets (oldest first)
+	Recent      []Drop         `json:"recent"`
 }
 
 var reKV = regexp.MustCompile(`(\w+)=(\S+)`)

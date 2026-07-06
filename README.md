@@ -565,6 +565,9 @@ complete. Set `GEO_FULL=1` (env, e.g. a `nftgeo-ui.service` drop-in) to have
 the UI fetch every ipdeny country zone into `GEO_CACHE_DIR` on startup and daily,
 making the map global (~240 outbound requests; off by default).
 
+The read-only JSON API it serves: `/api/status`, `/api/sets`, `/api/rules`,
+`/api/objects`, `/api/drops`, `/api/lookup`, `/api/geo`.
+
 ## Roadmap / TODO
 
 nftgeo is growing from a geo/abuse edge filter into a single-tool declarative
