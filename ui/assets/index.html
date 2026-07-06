@@ -69,6 +69,19 @@
   .modalcard .x{position:absolute;top:12px;right:14px;cursor:pointer;color:var(--mut)}
   .lk{margin-bottom:14px}.lk b{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:1px}
   .lk td:first-child{color:var(--mut);width:90px}
+  /* objects */
+  .objitem{padding:8px 0;border-bottom:1px solid var(--line)}.objitem:last-child{border:0}
+  .objhead{font-weight:600}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+  .chip{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:2px 9px;font-size:11px;font-family:ui-monospace,monospace}
+  .chip.ipl{cursor:pointer}.chip.ipl:hover{border-color:var(--acc2);color:var(--acc2)}
+  /* theme toggle + responsive + light theme (dark sidebar stays, FortiGate-style) */
+  .themebtn{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:5px 10px;cursor:pointer;margin-top:8px;font:inherit}
+  .themebtn:hover{color:var(--fg)}
+  body.light{--bg:#eef1f7;--card:#ffffff;--line:#dde3ee;--fg:#1a2233;--mut:#5c6678}
+  @media(max-width:760px){.app{grid-template-columns:1fr}.side{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px}
+    .brand{border:0;padding:12px 14px}.nav{display:flex;flex-wrap:wrap;padding:0 8px}.nav a{padding:8px 10px}
+    .sidefoot{margin:0 0 0 auto;border:0}.g2,.g3{grid-template-columns:1fr!important}}
 </style>
 </head>
 <body>
@@ -84,6 +97,7 @@
     <div class="sidefoot">
       <div><span class="dot" id="loaddot"></span><span id="loadtxt">…</span></div>
       <div>v<span id="ver">?</span></div>
+      <button class="themebtn" id="themebtn" onclick="toggleTheme()" title="Toggle light / dark">◐ theme</button>
     </div>
   </aside>
 
@@ -246,15 +260,20 @@ function showRule(num){
   $('#modalbody').innerHTML=h; $('#modal').style.display='flex';
 }
 
+function chip(m){const ipish=/[.:]/.test(m);return `<span class="chip ${ipish?'ipl':''}"${ipish?` data-ip="${esc(m.split('/')[0])}"`:''}>${esc(m)}</span>`;}
+function objBlock(arr){return arr&&arr.length?arr.map(g=>{const mem=(g.value||'').split(/[ ,]+/).filter(Boolean);
+  return `<div class="objitem"><div class="objhead">${esc(g.name)} <span class="muted">(${mem.length})</span></div><div class="chips">${mem.map(chip).join('')}</div></div>`;}).join(''):'<span class="muted">none</span>';}
 async function loadObjects(){
   const o=await j('/api/objects');
-  const list=(arr,fmt)=>arr&&arr.length?arr.map(fmt).join(''):'<span class="muted">none</span>';
-  $('#o-groups').innerHTML=list(o.groups,g=>`<div class="row"><b>${esc(g.name)}</b><span class="mono muted">${esc(g.value)}</span></div>`);
-  $('#o-regions').innerHTML=list(o.regions,g=>`<div class="row"><b>${esc(g.name)}</b><span class="mono muted">${esc((g.value||'').slice(0,60))}</span></div>`);
-  $('#o-wl').innerHTML=list([...(o.whitelist||[]).map(x=>['ip',x]),...(o.whitelistHosts||[]).map(x=>['host',x])],([t,x])=>`<div class="row"><span class="mono">${esc(x)}</span><span class="muted">${t}</span></div>`);
-  $('#o-feeds').innerHTML=list(o.feeds,x=>`<div class="row"><span class="mono" style="font-size:11px">${esc(x)}</span></div>`);
-  $('#o-sets').innerHTML=list(window.SETS,x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`);
+  $('#o-groups').innerHTML=objBlock(o.groups);
+  $('#o-regions').innerHTML=objBlock(o.regions);
+  const wl=[...(o.whitelist||[]).map(x=>['ip',x]),...(o.whitelistHosts||[]).map(x=>['host',x])];
+  $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
+  $('#o-feeds').innerHTML=(o.feeds||[]).length?o.feeds.map(x=>`<div class="row"><span class="mono" style="font-size:11px">${esc(x)}</span></div>`).join(''):'<span class="muted">none</span>';
+  $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
 }
+function toggleTheme(){document.body.classList.toggle('light');localStorage.setItem('nftgeo-theme',document.body.classList.contains('light')?'light':'dark');}
+if(localStorage.getItem('nftgeo-theme')==='light')document.body.classList.add('light');
 
 // lookup modal
 function closeModal(){$('#modal').style.display='none';}
