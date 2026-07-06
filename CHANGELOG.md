@@ -4,6 +4,15 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.9.0] - 2026-07-06
+
+### Added
+- `HARDEN=1` — baseline firewall hardening on every managed chain: accept
+  loopback (`iifname lo` / `oifname lo`), drop `ct state invalid`, and always
+  permit the essential ICMPv6 types (NDP, PTB, echo, errors) so locking down IPv6
+  cannot break it. Off by default; `ICMPV6_ESSENTIAL` is configurable. First step
+  of growing nftgeo from a geo overlay toward a complete edge firewall.
+
 ## [1.8.2] - 2026-07-06
 
 ### Fixed
@@ -159,6 +168,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.9.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.9.0
 [1.8.2]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.2
 [1.8.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.1
 [1.8.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.0

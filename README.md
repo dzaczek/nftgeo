@@ -328,6 +328,18 @@ Off by default. `LOG_PREFIX` and `LOG_LIMIT` (default `limit rate 10/second`)
 tune the label and rate. Because per-rule counters reset on reload, this is the
 way to keep a durable record of what is being blocked.
 
+### Hardening
+
+```sh
+HARDEN="1"
+```
+
+Adds a baseline every firewall should have to each managed chain: accept
+loopback traffic (`iifname lo` / `oifname lo`), drop `ct state invalid` packets,
+and always permit the essential ICMPv6 types (Neighbor Discovery, packet-too-big,
+echo, errors) so fencing IPv6 can't break it. Off by default; the ICMPv6 type
+list is overridable via `ICMPV6_ESSENTIAL`.
+
 ## Manual run
 
 ```sh
