@@ -261,8 +261,20 @@ WHITELIST_HOSTS="wireguard.example.ch vpn.example.net"
 WHITELIST_HOSTS_RETENTION_DAYS="7"
 ```
 
-Each hostname is resolved (via `getent`, honouring `/etc/hosts` and
-`resolv.conf`) on every run and the resulting IPs are merged into the whitelist.
+Each hostname is resolved on every run and the resulting IPs are merged into the
+whitelist. By default resolution uses the system resolver (`getent`, honouring
+`/etc/hosts` and `resolv.conf`). Set `RESOLVERS` to a list tried in order - the
+first that answers wins - where `local` is the system resolver and an IP queries
+that DNS server directly (via `dig`/`host`/`nslookup`):
+
+```sh
+RESOLVERS="1.1.1.1 8.8.8.8 local"
+```
+
+Listing public servers before `local` keeps hostname whitelisting working even
+when the local (e.g. VPN) resolver is down, and returns the public-facing address
+- usually the source the box actually sees. `RESOLVE_TIMEOUT` (default 5s) bounds
+each lookup so a hung resolver cannot stall the update.
 Because the `systemd` timer runs the update, the names are re-resolved
 periodically; if the address changes, the next successful lookup replaces the
 old one. A host's last successfully resolved addresses are retained in

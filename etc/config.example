@@ -46,6 +46,16 @@ WHITELIST_HOSTS=""
 # this window.
 WHITELIST_HOSTS_RETENTION_DAYS="7"
 
+# Resolvers tried for WHITELIST_HOSTS, in order; the first that returns an address
+# wins. "local" is the system resolver (getent); an IP queries that DNS server
+# directly (needs dig, host, or nslookup installed). Listing public servers
+# before "local" keeps hostname whitelisting working even when the local/VPN
+# resolver is down, and gives the public-facing address (usually what the box
+# sees as your source). Example:
+# RESOLVERS="1.1.1.1 8.8.8.8 local"
+RESOLVERS="local"
+RESOLVE_TIMEOUT="5"
+
 # How long a downloaded country zone is reused before being refreshed, in hours.
 # The systemd timer runs twice a day; with 20h the early run downloads and the
 # later run reuses the cache.

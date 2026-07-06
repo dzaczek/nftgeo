@@ -4,6 +4,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.4.0] - 2026-07-06
+
+### Added
+- `RESOLVERS` for `WHITELIST_HOSTS`: a list of resolvers tried in order (the first
+  that answers wins). `local` uses the system resolver (getent); an IP queries
+  that DNS server directly via dig/host/nslookup. Listing public servers before
+  `local` (e.g. `RESOLVERS="1.1.1.1 8.8.8.8 local"`) keeps hostname whitelisting
+  working when the local/VPN resolver is down and yields the public-facing
+  address. `RESOLVE_TIMEOUT` (default 5s) bounds each lookup. Default `local`
+  keeps prior behaviour.
+
 ## [1.3.1] - 2026-07-06
 
 ### Fixed
@@ -76,6 +87,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.4.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.4.0
 [1.3.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.3.1
 [1.3.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.3.0
 [1.2.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.2.0
