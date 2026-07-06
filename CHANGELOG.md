@@ -9,6 +9,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.12.0] - 2026-07-06
+
+### Added
+- nftgeo-ui: a FortiGate-style navigation shell for ergonomics - a left sidebar
+  with Dashboard / Policy / Logs & Drops / Objects views:
+  - **Policy** — your `rules.conf` (+ `rules.d`) as a readable policy table
+    (action/dir/service/target/interface/file/comment), from `/api/rules`.
+  - **Logs & Drops** — the drop feed as a filterable table (direction, country,
+    port, IP search) with click-to-lookup.
+  - **Objects** — address groups, custom regions, whitelist/hosts, abuse feeds,
+    and live set sizes, from `/api/objects`.
+  Still read-only; editing is roadmap P6 phase B.
+
 ## [1.11.1] - 2026-07-06
 
 ### Added
@@ -212,6 +225,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.12.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.12.0
 [1.11.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.11.1
 [1.11.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.11.0
 [1.10.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.10.1

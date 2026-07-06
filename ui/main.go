@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -29,10 +30,13 @@ import (
 var assetsFS embed.FS
 
 var (
-	fam      = env("TABLE_FAMILY", "inet")
-	table    = env("TABLE_NAME", "nftgeo")
-	zoneDir  = env("ZONE_DIR", "/var/lib/nftgeo/zones")
-	engine   = env("NFTGEO_UPDATE", "/usr/local/sbin/nftgeo-update")
+	fam        = env("TABLE_FAMILY", "inet")
+	table      = env("TABLE_NAME", "nftgeo")
+	zoneDir    = env("ZONE_DIR", "/var/lib/nftgeo/zones")
+	engine     = env("NFTGEO_UPDATE", "/usr/local/sbin/nftgeo-update")
+	configFile = env("CONFIG_FILE", "/etc/nftgeo/config")
+	rulesFile  = env("RULES_FILE", "/etc/nftgeo/rules.conf")
+	rulesDir   = env("RULES_DIR", "/etc/nftgeo/rules.d")
 )
 
 func env(k, def string) string {
@@ -350,6 +354,103 @@ func logDropsOn() bool {
 	return strings.Contains(out, `log prefix "nftgeo-drop`)
 }
 
+// ---- policy (rules.conf) & objects (config) --------------------------------
+
+type PolicyRule struct {
+	Num     int    `json:"num"`
+	Action  string `json:"action"`
+	Dir     string `json:"dir"`
+	Proto   string `json:"proto"`
+	Port    string `json:"port"`
+	Target  string `json:"target"`
+	Iface   string `json:"iface"`
+	Comment string `json:"comment"`
+	File    string `json:"file"`
+}
+
+func ruleFiles() []string {
+	files := []string{rulesFile}
+	if ents, err := os.ReadDir(rulesDir); err == nil {
+		var ds []string
+		for _, e := range ents {
+			if strings.HasSuffix(e.Name(), ".conf") {
+				ds = append(ds, e.Name())
+			}
+		}
+		sort.Strings(ds)
+		for _, d := range ds {
+			files = append(files, rulesDir+"/"+d)
+		}
+	}
+	return files
+}
+
+func policy() []PolicyRule {
+	var out []PolicyRule
+	n := 0
+	for _, f := range ruleFiles() {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		base := filepath.Base(f)
+		for _, line := range strings.Split(string(data), "\n") {
+			comment := ""
+			if i := strings.Index(line, "#"); i >= 0 {
+				comment = strings.TrimSpace(line[i+1:])
+				line = line[:i]
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 5 || (fields[0] != "allow" && fields[0] != "deny") {
+				continue
+			}
+			n++
+			pr := PolicyRule{Num: n, Action: fields[0], Dir: fields[1], Proto: fields[2],
+				Port: fields[3], Target: fields[4], Comment: comment, File: base}
+			for i := 5; i < len(fields)-1; i++ {
+				if fields[i] == "on" {
+					pr.Iface = fields[i+1]
+				}
+			}
+			out = append(out, pr)
+		}
+	}
+	return out
+}
+
+func objects() map[string]interface{} {
+	groups := []map[string]string{}
+	regions := []map[string]string{}
+	var wl, wlh, feeds []string
+	data, _ := os.ReadFile(configFile)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		eq := strings.Index(line, "=")
+		if eq < 0 {
+			continue
+		}
+		k := strings.TrimSpace(line[:eq])
+		v := strings.Trim(strings.TrimSpace(line[eq+1:]), `"`)
+		switch {
+		case strings.HasPrefix(k, "GROUP_"):
+			groups = append(groups, map[string]string{"name": strings.ToLower(k[6:]), "value": v})
+		case strings.HasPrefix(k, "REGION_"):
+			regions = append(regions, map[string]string{"name": strings.ToLower(k[7:]), "value": v})
+		case k == "WHITELIST":
+			wl = strings.Fields(v)
+		case k == "WHITELIST_HOSTS":
+			wlh = strings.Fields(v)
+		case k == "ABUSE_FEEDS":
+			feeds = strings.Fields(v)
+		}
+	}
+	return map[string]interface{}{"groups": groups, "regions": regions,
+		"whitelist": wl, "whitelistHosts": wlh, "feeds": feeds}
+}
+
 // ---- per-IP lookup: reverse DNS + RDAP (whois) -----------------------------
 
 func rdapOrg(m map[string]interface{}) string {
@@ -436,6 +537,12 @@ func main() {
 	})
 	http.HandleFunc("/api/sets", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, sets())
+	})
+	http.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, policy())
+	})
+	http.HandleFunc("/api/objects", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, objects())
 	})
 	http.HandleFunc("/api/drops", func(w http.ResponseWriter, r *http.Request) {
 		since := r.URL.Query().Get("since")

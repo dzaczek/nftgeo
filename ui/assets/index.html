@@ -6,183 +6,231 @@
 <title>nftgeo-ui</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/css/jsvectormap.min.css">
 <style>
-  :root{--bg:#0f1220;--card:#171a2b;--line:#262a40;--fg:#e6e8f0;--mut:#8b90a8;--acc:#5b9dff;--drop:#ff5d5d;--ok:#3ddc84}
+  :root{
+    --bg:#0c1020;--nav:#0a1c2b;--nav2:#0e2740;--card:#141a2e;--line:#243049;
+    --fg:#e7eaf3;--mut:#8a93ad;--acc:#17b6a6;--acc2:#3d8bfd;--drop:#ff5568;--ok:#38d996;--warnc:#ffcf8a}
   *{box-sizing:border-box}
-  body{margin:0;font:14px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
-  header{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
-  header h1{font-size:16px;margin:0;letter-spacing:.5px}
-  header .tag{color:var(--mut)}
-  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}
-  .grid{display:grid;grid-template-columns:2fr 1fr;gap:14px;padding:14px}
-  @media(max-width:900px){.grid{grid-template-columns:1fr}}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
-  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);margin:0 0 10px}
-  #map{height:420px}
-  .row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--line)}
-  .row:last-child{border:0}
-  .bar{height:6px;background:var(--acc);border-radius:3px;margin-top:3px}
-  .bar.drop{background:var(--drop)}
-  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-  .kpi{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center}
-  .kpi b{font-size:22px;display:block}
-  .kpi span{color:var(--mut);font-size:11px}
-  table{width:100%;border-collapse:collapse;font-size:12px}
-  td,th{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
-  th{color:var(--mut);font-weight:600}
-  code{color:var(--mut);font-size:12px}
-  .warn{background:#3a2a12;border:1px solid #6a4a1a;color:#ffcf8a;padding:8px 12px;border-radius:8px;margin:14px 14px 0}
+  body{margin:0;font:14px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--fg)}
+  .app{display:grid;grid-template-columns:210px 1fr;min-height:100vh}
+  /* sidebar */
+  .side{background:linear-gradient(180deg,var(--nav),var(--nav2));border-right:1px solid var(--line);display:flex;flex-direction:column}
+  .brand{padding:16px 18px;font-weight:700;letter-spacing:.5px;font-size:16px;border-bottom:1px solid var(--line)}
+  .brand small{display:block;color:var(--mut);font-weight:400;font-size:11px;letter-spacing:2px}
+  .nav{padding:8px}
+  .nav a{display:flex;gap:10px;align-items:center;padding:10px 12px;color:var(--mut);text-decoration:none;border-radius:8px;cursor:pointer;font-weight:500}
+  .nav a:hover{background:#ffffff0d;color:var(--fg)}
+  .nav a.active{background:var(--acc);color:#04211f}
+  .nav .ic{width:16px;text-align:center}
+  .sidefoot{margin-top:auto;padding:12px 16px;border-top:1px solid var(--line);color:var(--mut);font-size:12px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}
+  /* main */
+  .main{min-width:0}
+  .topbar{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:3}
+  .topbar h2{margin:0;font-size:16px}
+  .topbar .spacer{margin-left:auto}
+  .topbar .meta{color:var(--mut);font-size:12px}
+  .view{padding:18px 20px;display:none}
+  .view.active{display:block}
+  /* cards + grid */
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:2fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:960px){.g2,.g3{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .card h3{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);margin:0 0 10px}
+  #map{height:400px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .kpi b{font-size:26px;display:block}.kpi span{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:1px}
+  .row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}
+  .bar{height:6px;background:var(--acc2);border-radius:3px;margin-top:3px}.bar.drop{background:var(--drop)}
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--mut);font-weight:600;position:sticky;top:0;background:var(--card)}
+  tbody tr:hover{background:#ffffff08}
+  .pill{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+  .pill.allow{background:#0e3a2a;color:var(--ok)}.pill.deny{background:#3a1420;color:var(--drop)}
+  .pill.dir{background:#16233d;color:var(--acc2)}
   .mono{font-family:ui-monospace,monospace;font-size:12px}
-  .ipl{cursor:pointer;border-bottom:1px dotted var(--mut)}
-  .ipl:hover{color:var(--acc)}
-  .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);align-items:center;justify-content:center;z-index:9}
-  .modalcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;min-width:340px;max-width:90vw;max-height:80vh;overflow:auto;position:relative}
+  .ipl{cursor:pointer;border-bottom:1px dotted var(--mut)}.ipl:hover{color:var(--acc2)}
+  .muted{color:var(--mut)}
+  .filters{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+  .filters input,.filters select{background:var(--bg);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:6px 10px;font:inherit}
+  .warn{background:#3a2a12;border:1px solid #6a4a1a;color:var(--warnc);padding:8px 12px;border-radius:8px;margin-bottom:14px;font-size:13px}
+  .tablewrap{max-height:520px;overflow:auto}
+  code{color:var(--mut)}
+  /* modal */
+  .modal{display:none;position:fixed;inset:0;background:#000a;align-items:center;justify-content:center;z-index:9}
+  .modalcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;min-width:360px;max-width:90vw;max-height:80vh;overflow:auto;position:relative}
   .modalcard h3{margin:0 0 12px;font-family:ui-monospace,monospace}
   .modalcard .x{position:absolute;top:12px;right:14px;cursor:pointer;color:var(--mut)}
-  .lk{margin-bottom:14px}
-  .lk b{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:1px}
-  .lk table{margin-top:4px}
+  .lk{margin-bottom:14px}.lk b{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:1px}
   .lk td:first-child{color:var(--mut);width:90px}
 </style>
 </head>
 <body>
-<header>
-  <h1>nftgeo-ui</h1>
-  <span class="tag">v<span id="ver">?</span></span>
-  <span class="tag"><span class="dot" id="loaddot"></span><span id="loadtxt">…</span></span>
-  <span class="tag" style="margin-left:auto">updated <span id="upd">—</span></span>
-</header>
-
-<div id="logwarn" class="warn" style="display:none">
-  Drop logging is off — the map and drop stats stay empty. Enable with
-  <code>LOG_DROPS="1"</code> in <code>/etc/nftgeo/config</code>, then apply.
-</div>
-
-<div class="grid">
-  <div class="card">
-    <h2>Where drops come from (ingress, last 24h)</h2>
-    <div id="map"></div>
-    <div id="mapfallback" style="display:none;color:var(--mut);font-size:12px">
-      Map library unavailable — see the country list on the right.
+<div class="app">
+  <aside class="side">
+    <div class="brand">nftgeo<small>FIREWALL</small></div>
+    <nav class="nav" id="nav">
+      <a data-v="dashboard" class="active"><span class="ic">▚</span>Dashboard</a>
+      <a data-v="policy"><span class="ic">▤</span>Policy</a>
+      <a data-v="logs"><span class="ic">≣</span>Logs &amp; Drops</a>
+      <a data-v="objects"><span class="ic">◈</span>Objects</a>
+    </nav>
+    <div class="sidefoot">
+      <div><span class="dot" id="loaddot"></span><span id="loadtxt">…</span></div>
+      <div>v<span id="ver">?</span></div>
     </div>
-  </div>
+  </aside>
 
-  <div>
-    <div class="card">
-      <h2>Last 24h</h2>
+  <main class="main">
+    <div class="topbar">
+      <h2 id="title">Dashboard</h2>
+      <div class="spacer"></div>
+      <div class="meta">updated <span id="upd">—</span></div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <section class="view active" id="v-dashboard">
+      <div id="logwarn" class="warn" style="display:none">Drop logging is off — map &amp; drop stats stay empty. Set <code>LOG_DROPS="1"</code> in <code>/etc/nftgeo/config</code> and apply.</div>
       <div class="kpis">
-        <div class="kpi"><b id="k-total">0</b><span>total drops</span></div>
+        <div class="kpi"><b id="k-total">0</b><span>drops / 24h</span></div>
         <div class="kpi"><b id="k-in">0</b><span>ingress</span></div>
         <div class="kpi"><b id="k-out">0</b><span>egress</span></div>
+        <div class="kpi"><b id="k-abuse">0</b><span>abuse IPs</span></div>
       </div>
-    </div>
-    <div class="card" style="margin-top:14px">
-      <h2>Top source countries (ingress)</h2>
-      <div id="cc-in"></div>
-    </div>
-    <div class="card" style="margin-top:14px">
-      <h2>Top blocked ports</h2>
-      <div id="ports"></div>
-    </div>
-  </div>
+      <div class="grid g2">
+        <div class="card"><h3>Where drops come from (ingress)</h3><div id="map"></div>
+          <div id="mapfallback" class="muted" style="display:none;font-size:12px">Map library unavailable — see the country list.</div></div>
+        <div>
+          <div class="card"><h3>Top source countries</h3><div id="cc-in"></div></div>
+          <div class="card" style="margin-top:14px"><h3>Top blocked ports</h3><div id="ports"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- POLICY -->
+    <section class="view" id="v-policy">
+      <div class="warn">Read-only view of your rules. Editing lands in roadmap P6 phase B; for now edit <code>/etc/nftgeo/rules.conf</code> and <code>nftgeo apply</code>.</div>
+      <div class="filters"><input id="pf" placeholder="filter rules…" oninput="renderPolicy()"></div>
+      <div class="card"><div class="tablewrap"><table>
+        <thead><tr><th>#</th><th>Action</th><th>Dir</th><th>Service</th><th>Target</th><th>Interface</th><th>Source file</th><th>Comment</th></tr></thead>
+        <tbody id="policy"></tbody></table></div></div>
+    </section>
+
+    <!-- LOGS -->
+    <section class="view" id="v-logs">
+      <div class="filters">
+        <select id="lf-dir" onchange="renderLogs()"><option value="">all directions</option><option>ingress</option><option>egress</option><option>forward</option></select>
+        <input id="lf-cc" placeholder="country (e.g. RU)" oninput="renderLogs()" size="10">
+        <input id="lf-port" placeholder="port" oninput="renderLogs()" size="6">
+        <input id="lf-ip" placeholder="search IP…" oninput="renderLogs()">
+        <span class="meta" id="lf-count" style="align-self:center"></span>
+      </div>
+      <div class="card"><div class="tablewrap"><table>
+        <thead><tr><th>time (UTC)</th><th>dir</th><th>source → destination</th><th>port</th><th>proto</th><th>cc</th></tr></thead>
+        <tbody id="recent"></tbody></table></div></div>
+    </section>
+
+    <!-- OBJECTS -->
+    <section class="view" id="v-objects">
+      <div class="grid g3">
+        <div class="card"><h3>Address groups</h3><div id="o-groups"></div></div>
+        <div class="card"><h3>Custom regions</h3><div id="o-regions"></div></div>
+        <div class="card"><h3>Whitelist</h3><div id="o-wl"></div></div>
+      </div>
+      <div class="grid g2" style="margin-top:14px">
+        <div class="card"><h3>nftables sets (live sizes)</h3><div id="o-sets"></div></div>
+        <div class="card"><h3>Abuse feeds</h3><div id="o-feeds"></div></div>
+      </div>
+    </section>
+  </main>
 </div>
 
-<div class="grid">
-  <div class="card">
-    <h2>Recent drops</h2>
-    <table><thead><tr><th>time (UTC)</th><th>dir</th><th>src → dst</th><th>port</th><th>cc</th></tr></thead>
-    <tbody id="recent"></tbody></table>
-  </div>
-  <div>
-    <div class="card">
-      <h2>Drop-rule counters</h2>
-      <div id="counters" class="mono"></div>
-    </div>
-    <div class="card" style="margin-top:14px">
-      <h2>Sets</h2>
-      <div id="sets"></div>
-    </div>
-  </div>
-</div>
-
-<div id="modal" class="modal">
-  <div class="modalcard">
-    <span class="x" onclick="document.getElementById('modal').style.display='none'">✕</span>
-    <div id="modalbody"></div>
-  </div>
-</div>
+<div id="modal" class="modal"><div class="modalcard"><span class="x" onclick="closeModal()">✕</span><div id="modalbody"></div></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/js/jsvectormap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/maps/world.js"></script>
 <script>
-const $=s=>document.querySelector(s);
-let map=null;
-function initMap(){
-  try{
-    map=new jsVectorMap({selector:'#map',map:'world',backgroundColor:'transparent',
-      regionStyle:{initial:{fill:'#2a2f4a',stroke:'#171a2b',strokeWidth:.4}},
-      series:{regions:[{scale:['#3a3f66','#ff5d5d'],normalizeFunction:'polynomial',attribute:'fill',values:{}}]}});
-  }catch(e){ $('#map').style.display='none'; $('#mapfallback').style.display='block'; }
+const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
+const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const j=async u=>(await fetch(u)).json();
+let map=null, DROPS={recent:[]}, RULES=[];
+
+function nav(v){
+  $$('#nav a').forEach(a=>a.classList.toggle('active',a.dataset.v===v));
+  $$('.view').forEach(s=>s.classList.remove('active'));
+  $('#v-'+v).classList.add('active');
+  $('#title').textContent=$(`#nav a[data-v="${v}"]`).textContent.trim();
+  if(v==='policy') loadPolicy();
+  if(v==='objects') loadObjects();
 }
-function bars(el,obj,cls){
-  const rows=Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  const max=rows.length?rows[0][1]:1;
-  el.innerHTML=rows.map(([k,v])=>`<div class="row"><span>${k.toUpperCase()}</span><span>${v}</span></div><div class="bar ${cls||''}" style="width:${Math.max(3,100*v/max)}%"></div>`).join('')||'<span style="color:var(--mut)">none</span>';
-}
-async function j(u){const r=await fetch(u);return r.json();}
+$('#nav').addEventListener('click',e=>{const a=e.target.closest('a[data-v]'); if(a) nav(a.dataset.v);});
+
+function initMap(){try{map=new jsVectorMap({selector:'#map',map:'world',backgroundColor:'transparent',
+  regionStyle:{initial:{fill:'#22304d',stroke:'#141a2e',strokeWidth:.4}},
+  series:{regions:[{scale:['#28406b','#ff5568'],normalizeFunction:'polynomial',attribute:'fill',values:{}}]}});}
+  catch(e){$('#map').style.display='none';$('#mapfallback').style.display='block';}}
+function bars(el,obj,cls){const rows=Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);const max=rows[0]?rows[0][1]:1;
+  el.innerHTML=rows.map(([k,v])=>`<div class="row"><span>${esc(k.toUpperCase())}</span><span>${v}</span></div><div class="bar ${cls||''}" style="width:${Math.max(3,100*v/max)}%"></div>`).join('')||'<span class="muted">none</span>';}
 
 async function refresh(){
   try{
     const s=await j('/api/status');
     $('#ver').textContent=s.version;
     $('#loaddot').style.background=s.loaded?'var(--ok)':'var(--drop)';
-    $('#loadtxt').textContent=s.loaded?'table loaded':'table NOT loaded';
+    $('#loadtxt').textContent=s.loaded?'table loaded':'not loaded';
     $('#upd').textContent=new Date().toLocaleTimeString();
-    // drop-rule counters
-    let html='';
-    (s.chains||[]).forEach(c=>{(c.rules||[]).filter(r=>r.verdict==='drop'&&r.packets>0).forEach(r=>{
-      html+=`<div class="row"><span>${c.name}: ${r.text.replace(/counter packets.*/,'').trim()}</span><span>${r.packets}</span></div>`;});});
-    $('#counters').innerHTML=html||'<span style="color:var(--mut)">no drops recorded (counters reset on reload)</span>';
-
-    const d=await j('/api/drops?since=-24h');
+    const d=await j('/api/drops?since=-24h'); DROPS=d;
     $('#logwarn').style.display=d.enabled?'none':'block';
-    $('#k-total').textContent=d.total;
-    const ing=Object.values(d.ingressByCC).reduce((a,b)=>a+b,0);
-    const egr=Object.values(d.egressByCC).reduce((a,b)=>a+b,0);
-    $('#k-in').textContent=ing; $('#k-out').textContent=egr;
-    bars($('#cc-in'),d.ingressByCC,'drop');
-    bars($('#ports'),d.topPorts,'');
-    $('#recent').innerHTML=(d.recent||[]).slice(0,60).map(r=>`<tr><td>${(r.time||'').replace('T',' ').replace('Z','')}</td><td>${r.dir}</td><td class="mono"><span class="ipl" data-ip="${r.src}">${r.src}</span> → <span class="ipl" data-ip="${r.dst}">${r.dst}</span></td><td>${r.dport}</td><td>${(r.cc||'').toUpperCase()}</td></tr>`).join('');
-    if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;
-      try{map.series.regions[0].setValues(vals);}catch(e){}}
+    const ing=Object.values(d.ingressByCC).reduce((a,b)=>a+b,0), egr=Object.values(d.egressByCC).reduce((a,b)=>a+b,0);
+    $('#k-total').textContent=d.total; $('#k-in').textContent=ing; $('#k-out').textContent=egr;
+    bars($('#cc-in'),d.ingressByCC,'drop'); bars($('#ports'),d.topPorts,'');
+    if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;try{map.series.regions[0].setValues(vals);}catch(e){}}
+    renderLogs();
+    const st=await j('/api/sets'); const ab=(st||[]).find(x=>x.name==='abuse4'); $('#k-abuse').textContent=ab?ab.count:0;
+    window.SETS=st;
   }catch(e){console.error(e);}
 }
-async function refreshSets(){
-  try{const st=await j('/api/sets');
-    $('#sets').innerHTML=(st||[]).map(x=>`<div class="row"><span>${x.name}</span><span>${x.count}</span></div>`).join('');
-  }catch(e){}
+function renderLogs(){
+  const dir=$('#lf-dir').value,cc=$('#lf-cc').value.toUpperCase(),port=$('#lf-port').value,ip=$('#lf-ip').value;
+  const rows=(DROPS.recent||[]).filter(r=>(!dir||r.dir===dir)&&(!cc||(r.cc||'').toUpperCase().includes(cc))&&(!port||r.dport===port)&&(!ip||(r.src+r.dst).includes(ip)));
+  $('#lf-count').textContent=rows.length+' shown';
+  $('#recent').innerHTML=rows.slice(0,300).map(r=>`<tr><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td><span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">no drops (enable LOG_DROPS)</td></tr>';
 }
-function esc(s){return String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
-async function lookup(ip){
-  const m=$('#modal'), b=$('#modalbody');
-  m.style.display='flex'; b.innerHTML='Looking up '+esc(ip)+' …';
-  try{
-    const r=await j('/api/lookup?ip='+encodeURIComponent(ip));
-    let h=`<h3>${esc(ip)}</h3>`;
-    h+=`<div class="lk"><b>Reverse DNS (PTR)</b><div class="mono">${(r.ptr||['—']).map(esc).join('<br>')}</div></div>`;
-    const w=r.rdap||{};
-    h+='<div class="lk"><b>Whois (RDAP)</b><table>';
-    [['name','Network'],['org','Org'],['country','Country'],['cidr','Range'],['handle','Handle'],['type','Type']].forEach(([k,lbl])=>{ if(w[k]) h+=`<tr><td>${lbl}</td><td>${esc(w[k])}</td></tr>`;});
-    if(!Object.keys(w).length) h+='<tr><td colspan="2" style="color:var(--mut)">no RDAP data</td></tr>';
-    h+='</table></div>';
-    b.innerHTML=h;
-  }catch(e){ b.innerHTML='lookup failed'; }
-}
-document.addEventListener('click',e=>{const t=e.target.closest('.ipl'); if(t&&t.dataset.ip) lookup(t.dataset.ip);});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')$('#modal').style.display='none';});
-$('#modal').addEventListener('click',e=>{if(e.target.id==='modal')$('#modal').style.display='none';});
 
-initMap(); refresh(); refreshSets();
-setInterval(refresh,5000); setInterval(refreshSets,30000);
+async function loadPolicy(){ RULES=await j('/api/rules'); renderPolicy(); }
+function renderPolicy(){
+  const f=$('#pf').value.toLowerCase();
+  const rows=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
+  $('#policy').innerHTML=rows.map(r=>`<tr><td class="muted">${r.num}</td><td><span class="pill ${r.action}">${esc(r.action)}</span></td><td><span class="pill dir">${esc(r.dir)}</span></td><td>${esc(r.proto)} ${esc(r.port==='-'?'':r.port)}</td><td class="mono">${esc(r.target)}</td><td>${esc(r.iface||'')}</td><td class="muted">${esc(r.file)}</td><td class="muted">${esc(r.comment)}</td></tr>`).join('')||'<tr><td colspan="8" class="muted">no rules</td></tr>';
+}
+
+async function loadObjects(){
+  const o=await j('/api/objects');
+  const list=(arr,fmt)=>arr&&arr.length?arr.map(fmt).join(''):'<span class="muted">none</span>';
+  $('#o-groups').innerHTML=list(o.groups,g=>`<div class="row"><b>${esc(g.name)}</b><span class="mono muted">${esc(g.value)}</span></div>`);
+  $('#o-regions').innerHTML=list(o.regions,g=>`<div class="row"><b>${esc(g.name)}</b><span class="mono muted">${esc((g.value||'').slice(0,60))}</span></div>`);
+  $('#o-wl').innerHTML=list([...(o.whitelist||[]).map(x=>['ip',x]),...(o.whitelistHosts||[]).map(x=>['host',x])],([t,x])=>`<div class="row"><span class="mono">${esc(x)}</span><span class="muted">${t}</span></div>`);
+  $('#o-feeds').innerHTML=list(o.feeds,x=>`<div class="row"><span class="mono" style="font-size:11px">${esc(x)}</span></div>`);
+  $('#o-sets').innerHTML=list(window.SETS,x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`);
+}
+
+// lookup modal
+function closeModal(){$('#modal').style.display='none';}
+async function lookup(ip){const m=$('#modal'),b=$('#modalbody');m.style.display='flex';b.innerHTML='Looking up '+esc(ip)+' …';
+  try{const r=await j('/api/lookup?ip='+encodeURIComponent(ip));let h=`<h3>${esc(ip)}</h3>`;
+    h+=`<div class="lk"><b>Reverse DNS (PTR)</b><div class="mono">${(r.ptr||['—']).map(esc).join('<br>')}</div></div>`;
+    const w=r.rdap||{};h+='<div class="lk"><b>Whois (RDAP)</b><table>';
+    [['name','Network'],['org','Org'],['country','Country'],['cidr','Range'],['handle','Handle'],['type','Type']].forEach(([k,l])=>{if(w[k])h+=`<tr><td>${l}</td><td>${esc(w[k])}</td></tr>`;});
+    if(!Object.keys(w).length)h+='<tr><td colspan="2" class="muted">no RDAP data</td></tr>';h+='</table></div>';b.innerHTML=h;
+  }catch(e){b.innerHTML='lookup failed';}}
+document.addEventListener('click',e=>{const t=e.target.closest('.ipl');if(t&&t.dataset.ip)lookup(t.dataset.ip);});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+$('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
+
+initMap(); refresh(); setInterval(refresh,5000);
 </script>
 </body>
 </html>
