@@ -4,6 +4,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.5.0] - 2026-07-06
+
+### Added
+- No-op detection: when a run renders a ruleset byte-identical to the one already
+  loaded, the reload is skipped so per-rule counters are preserved instead of
+  being zeroed twice a day. A live-table check keeps a fresh boot loading
+  normally.
+
 ## [1.4.1] - 2026-07-06
 
 ### Fixed
@@ -96,6 +104,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.5.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.5.0
 [1.4.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.4.1
 [1.4.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.4.0
 [1.3.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.3.1

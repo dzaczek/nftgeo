@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.4.1"
+NFTGEO_VERSION="1.5.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -830,6 +830,17 @@ if [ -n "$RENDER_ONLY" ]; then
 	printf 'nftgeo %s validated %s/%s: rules=%s geo_groups=%s (render only, not loaded)\n' \
 		"$NFTGEO_VERSION" "$TABLE_FAMILY" "$TABLE_NAME" \
 		"$(wc -l < "$RULES_NORM")" "$(wc -l < "$GEO_FINAL")"
+	exit 0
+fi
+
+# No-op: if the render is byte-identical to what is already loaded, skip the
+# reload so per-rule counters are preserved (a flush/reload would zero them).
+# Guarded by a live-table check so a fresh boot (file present, table absent)
+# still loads.
+if [ -f "$NFT_FILE" ] && cmp -s "${TMP_DIR}/nftgeo.nft" "$NFT_FILE" \
+		&& nft list table "$TABLE_FAMILY" "$TABLE_NAME" >/dev/null 2>&1; then
+	printf 'nftgeo %s unchanged %s/%s; ruleset not reloaded (counters preserved).\n' \
+		"$NFTGEO_VERSION" "$TABLE_FAMILY" "$TABLE_NAME"
 	exit 0
 fi
 
