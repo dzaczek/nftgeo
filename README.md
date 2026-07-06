@@ -537,6 +537,19 @@ Releases follow [Semantic Versioning](https://semver.org/) and are tagged
 each run logs it. See [CHANGELOG.md](CHANGELOG.md) for what changed between
 releases.
 
+## Roadmap / TODO
+
+nftgeo is growing from a geo/abuse edge filter into a single-tool declarative
+firewall — so you don't need a second firewall manager beside it. See
+[ROADMAP.md](ROADMAP.md) for the full plan with milestones. In short:
+
+- ✅ **Done** — geo/abuse filtering, operator CLI (`check`/`status`/`validate`/
+  `plan`/`block`/`apply --confirm`/`rollback`), `HARDEN`, per-interface `on <iface>`.
+- 🔜 **P3** — egress NAT (`masquerade` / `snat`) for gateways.
+- 🔜 **P4** — port forwarding (`dnat` inbound) with the forward-accept auto-added.
+- 📋 **P5** — internal firewall / segmentation: zones, inter-VLAN rules, service
+  names & groups, IP/host labels, 802.1Q VLAN matching.
+
 ## Data sources
 
 - AbuseIPDB blacklist API: `https://api.abuseipdb.com/api/v2/blacklist`

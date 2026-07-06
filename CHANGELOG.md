@@ -4,6 +4,12 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [Unreleased]
+
+Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
+segmentation with VLAN zones, service names/groups, and IP labels) is tracked in
+[ROADMAP.md](ROADMAP.md).
+
 ## [1.10.1] - 2026-07-06
 
 ### Added

@@ -1,0 +1,134 @@
+# nftgeo roadmap / TODO
+
+nftgeo today is a stateful **geo/abuse edge filter** with an operator CLI. This
+roadmap tracks its growth into a single tool that covers the whole job — edge
+**and** internal firewall — so you never have to run a second firewall manager
+next to it.
+
+Legend: ✅ shipped · 🔜 next · 📋 planned
+
+Cross-cutting principles for everything below: declarative rules, `nftgeo
+validate` / `plan` before applying, the safe-apply **deadman** guards every
+change, fail-safe loads, and thorough Docker tests. NAT is IPv4-first;
+nftgeo warns about (but does not flip) `ip_forward`/`forwarding` sysctls.
+
+---
+
+## ✅ Shipped
+
+- Per-direction geo/region/IP/CIDR/group filtering (`in`/`out`/`fwd-in`/`fwd-out`).
+- AbuseIPDB + `ABUSE_FEEDS` blocklists, bogon-scrubbed; `WHITELIST` + re-resolved
+  `WHITELIST_HOSTS` with `RESOLVERS`.
+- Operator CLI: `check`, `status`, `validate`, `plan`, `block/unblock/blocklist`,
+  `apply --confirm/--commit`, `rollback`; no-op reloads; `LOG_DROPS`.
+- **P1 — HARDEN**: loopback accept, `ct state invalid` drop, essential ICMPv6.
+- **P2 — Interfaces**: `on <iface>` on any rule, arbitrary interface names
+  (VLANs, tunnels, bridges) with an unknown-interface warning.
+
+---
+
+## 🔜 P3 — Egress NAT (masquerade / SNAT)
+
+**Goal:** act as a gateway that NATs an internal network out to the world.
+
+```text
+masquerade on eth0                  # masquerade everything leaving via the WAN
+snat out on eth0 to 203.0.113.7     # or a static source NAT
+```
+
+Milestones:
+- [ ] **M3.1** `nat` table + `postrouting` chain scaffolding (emitted only when a
+  NAT rule exists; coexists with the filter table).
+- [ ] **M3.2** `masquerade on <iface>` → `oifname <iface> masquerade`.
+- [ ] **M3.3** `snat out on <iface> to <ip>` (static source NAT).
+- [ ] **M3.4** warn when IP forwarding is disabled (document; sysctl not managed).
+- [ ] **M3.5** `validate`/`plan`/deadman aware; fail-safe.
+- [ ] **M3.6** docs, examples, Docker (privileged netns) tests.
+
+---
+
+## 🔜 P4 — Ingress NAT (port forwarding / DNAT)
+
+**Goal:** expose an internal service on the box's public interface — the headline
+"I don't need another firewall" feature. Geo and interface qualifiers reused.
+
+```text
+dnat in tcp 443  to 10.0.0.5:8443                 # WAN:443 -> internal:8443
+dnat in tcp 2222 europe to 10.0.0.5:22 on eth0    # geo-restricted, on the WAN
+```
+
+Milestones:
+- [ ] **M4.1** `prerouting` NAT chain scaffolding.
+- [ ] **M4.2** `dnat <dir> <proto> <port> to <ip[:port]>` parse + emit.
+- [ ] **M4.3** reuse the geo target and `on <iface>` qualifier.
+- [ ] **M4.4** auto-emit the matching `fwd-in` accept so the forwarded packet
+  passes the filter (make it "just work").
+- [ ] **M4.5** optional hairpin/reflexive NAT (reach the service via the public IP
+  from inside the LAN).
+- [ ] **M4.6** warn on disabled forwarding; IPv4-first.
+- [ ] **M4.7** docs, examples, tests.
+
+---
+
+## 📋 P5 — Internal firewall / segmentation (VLANs & zones)
+
+**Goal:** a real internal firewall. Filter traffic **between segments**
+(VLANs / subnets), not only world↔host — micro-segmentation with rules that read
+like sentences. This is where nftgeo becomes an internal firewall in its own
+right, and it needs a few new primitives first.
+
+### New primitives (config)
+
+```text
+# Service names: built-in (ssh=22, https=443, postgres=5432, ...) plus your groups
+SERVICE_WEB="http https"
+SERVICE_DB="postgres mysql"
+
+# IP / host labels: name single hosts, use the name in rules
+HOST_DB1="10.0.20.5"
+HOST_LB="10.0.10.7"
+
+# Zones: a segment = interfaces and/or subnets grouped under one name
+ZONE_WEB="eth0.10 10.0.10.0/24"
+ZONE_DB="eth0.20 10.0.20.0/24"
+ZONE_MGMT="eth0.99 10.0.99.0/24"
+```
+
+### Inter-zone rules (forward chain)
+
+```text
+allow web  -> db    db                 # web tier reaches the DB service group
+allow mgmt -> any   ssh                 # mgmt may SSH into any internal zone
+allow any  -> web   web from europe     # world -> web (http/https), geo-filtered
+allow web  -> db1   postgres            # ...or a single labelled host
+deny  db   -> any   any                 # the DB initiates nothing (egress lockdown)
+```
+
+`<zone> -> <zone>` matches the source segment (iifname + saddr subnets) against
+the destination segment (oifname + daddr subnets); services expand to ports;
+`from <geo>` layers geo on top; per zone-pair deny-by-default applies.
+
+Milestones:
+- [ ] **M5.1** Service names + `SERVICE_<NAME>` groups (usable in the port field,
+  e.g. `allow in tcp ssh ...` / `allow web -> db db`).
+- [ ] **M5.2** Host/IP labels (`HOST_<NAME>` / `LABEL_<NAME>`) — single-IP names,
+  usable as any target.
+- [ ] **M5.3** Zones (`ZONE_<NAME>` = interfaces + subnets) as source/destination.
+- [ ] **M5.4** Inter-zone rule form `allow <zone> -> <zone> <service> [from <geo>]`
+  emitted into the forward chain, with per zone-pair deny-by-default.
+- [ ] **M5.5** 802.1Q VLAN-tag matching (`vlan id <N>`) for trunk ports, on top of
+  VLAN sub-interfaces (`eth0.10`) which already work via `on`.
+- [ ] **M5.6** Optional default-deny between zones (true micro-segmentation
+  posture) — a `SEGMENT_DEFAULT="deny"` switch.
+- [ ] **M5.7** docs, examples, tests; interplay with geo/abuse/HARDEN and P3/P4 NAT.
+
+---
+
+## Backlog (unscheduled ideas)
+
+- Auto-throttle brute-force: kernel-native `limit rate ... add @dyn_block` (the
+  reactive half of `nftgeo block`).
+- Conntrack limits: per-source connection caps (`ct count`), SYN-flood / synproxy.
+- Anti-spoofing / rpfilter, MSS clamping (VPN/PPPoE gateways), flowtable offload.
+- Prometheus metrics export; fail2ban as an actuator; userspace log listener.
+- Declarative config schema / API; multi-host (fleet) mode.
