@@ -4,6 +4,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.10.1] - 2026-07-06
+
+### Added
+- `on <iface>` works with arbitrary interface names (VPN tunnels, VLANs, bridges,
+  predictable names - e.g. `home-Client-10`, `eth0.100`, `br-lan`, `enp3s0`,
+  `wg0`), preserved verbatim. If a referenced interface is not currently present,
+  the update prints a non-fatal warning (visible in `nftgeo validate`) so a typo
+  can't silently break a rule - while a legitimately-down tunnel still works once
+  it appears.
+
 ## [1.10.0] - 2026-07-06
 
 ### Added
@@ -178,6 +188,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.10.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.10.1
 [1.10.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.10.0
 [1.9.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.9.0
 [1.8.2]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.2

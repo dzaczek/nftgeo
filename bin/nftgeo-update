@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.10.0"
+NFTGEO_VERSION="1.10.1"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -364,6 +364,15 @@ parse_rules_file() {
 			case "$iface" in
 				''|*[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: 'on' needs a valid interface name" >&2; exit 1 ;;
 			esac
+			# Warn (don't fail - a VPN/tunnel iface may appear later) when the
+			# interface is absent now, so a typo can't silently break a rule.
+			if [ ! -e "/sys/class/net/${iface}" ]; then
+				case " ${WARNED_IFACES:-} " in
+					*" ${iface} "*) : ;;
+					*) echo "${rf}:${lineno}: warning: interface '${iface}' is not present; rules on it match nothing until it appears" >&2
+					   WARNED_IFACES="${WARNED_IFACES:-} ${iface}" ;;
+				esac
+			fi
 		elif [ -n "${1:-}" ]; then
 			echo "${rf}:${lineno}: unexpected '${1}' after target (only 'on <iface>' allowed)" >&2; exit 1
 		fi
