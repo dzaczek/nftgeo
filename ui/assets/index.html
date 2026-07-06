@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nftgeo-ui</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/css/jsvectormap.min.css">
+<style>
+  :root{--bg:#0f1220;--card:#171a2b;--line:#262a40;--fg:#e6e8f0;--mut:#8b90a8;--acc:#5b9dff;--drop:#ff5d5d;--ok:#3ddc84}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+  header{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
+  header h1{font-size:16px;margin:0;letter-spacing:.5px}
+  header .tag{color:var(--mut)}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}
+  .grid{display:grid;grid-template-columns:2fr 1fr;gap:14px;padding:14px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);margin:0 0 10px}
+  #map{height:420px}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border:0}
+  .bar{height:6px;background:var(--acc);border-radius:3px;margin-top:3px}
+  .bar.drop{background:var(--drop)}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .kpi{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center}
+  .kpi b{font-size:22px;display:block}
+  .kpi span{color:var(--mut);font-size:11px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  td,th{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
+  th{color:var(--mut);font-weight:600}
+  code{color:var(--mut);font-size:12px}
+  .warn{background:#3a2a12;border:1px solid #6a4a1a;color:#ffcf8a;padding:8px 12px;border-radius:8px;margin:14px 14px 0}
+  .mono{font-family:ui-monospace,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>nftgeo-ui</h1>
+  <span class="tag">v<span id="ver">?</span></span>
+  <span class="tag"><span class="dot" id="loaddot"></span><span id="loadtxt">…</span></span>
+  <span class="tag" style="margin-left:auto">updated <span id="upd">—</span></span>
+</header>
+
+<div id="logwarn" class="warn" style="display:none">
+  Drop logging is off — the map and drop stats stay empty. Enable with
+  <code>LOG_DROPS="1"</code> in <code>/etc/nftgeo/config</code>, then apply.
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Where drops come from (ingress, last 24h)</h2>
+    <div id="map"></div>
+    <div id="mapfallback" style="display:none;color:var(--mut);font-size:12px">
+      Map library unavailable — see the country list on the right.
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Last 24h</h2>
+      <div class="kpis">
+        <div class="kpi"><b id="k-total">0</b><span>total drops</span></div>
+        <div class="kpi"><b id="k-in">0</b><span>ingress</span></div>
+        <div class="kpi"><b id="k-out">0</b><span>egress</span></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h2>Top source countries (ingress)</h2>
+      <div id="cc-in"></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h2>Top blocked ports</h2>
+      <div id="ports"></div>
+    </div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Recent drops</h2>
+    <table><thead><tr><th>time (UTC)</th><th>dir</th><th>src → dst</th><th>port</th><th>cc</th></tr></thead>
+    <tbody id="recent"></tbody></table>
+  </div>
+  <div>
+    <div class="card">
+      <h2>Drop-rule counters</h2>
+      <div id="counters" class="mono"></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h2>Sets</h2>
+      <div id="sets"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/js/jsvectormap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/maps/world.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+let map=null;
+function initMap(){
+  try{
+    map=new jsVectorMap({selector:'#map',map:'world',backgroundColor:'transparent',
+      regionStyle:{initial:{fill:'#2a2f4a',stroke:'#171a2b',strokeWidth:.4}},
+      series:{regions:[{scale:['#3a3f66','#ff5d5d'],normalizeFunction:'polynomial',attribute:'fill',values:{}}]}});
+  }catch(e){ $('#map').style.display='none'; $('#mapfallback').style.display='block'; }
+}
+function bars(el,obj,cls){
+  const rows=Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const max=rows.length?rows[0][1]:1;
+  el.innerHTML=rows.map(([k,v])=>`<div class="row"><span>${k.toUpperCase()}</span><span>${v}</span></div><div class="bar ${cls||''}" style="width:${Math.max(3,100*v/max)}%"></div>`).join('')||'<span style="color:var(--mut)">none</span>';
+}
+async function j(u){const r=await fetch(u);return r.json();}
+
+async function refresh(){
+  try{
+    const s=await j('/api/status');
+    $('#ver').textContent=s.version;
+    $('#loaddot').style.background=s.loaded?'var(--ok)':'var(--drop)';
+    $('#loadtxt').textContent=s.loaded?'table loaded':'table NOT loaded';
+    $('#upd').textContent=new Date().toLocaleTimeString();
+    // drop-rule counters
+    let html='';
+    (s.chains||[]).forEach(c=>{(c.rules||[]).filter(r=>r.verdict==='drop'&&r.packets>0).forEach(r=>{
+      html+=`<div class="row"><span>${c.name}: ${r.text.replace(/counter packets.*/,'').trim()}</span><span>${r.packets}</span></div>`;});});
+    $('#counters').innerHTML=html||'<span style="color:var(--mut)">no drops recorded (counters reset on reload)</span>';
+
+    const d=await j('/api/drops?since=-24h');
+    $('#logwarn').style.display=d.enabled?'none':'block';
+    $('#k-total').textContent=d.total;
+    const ing=Object.values(d.ingressByCC).reduce((a,b)=>a+b,0);
+    const egr=Object.values(d.egressByCC).reduce((a,b)=>a+b,0);
+    $('#k-in').textContent=ing; $('#k-out').textContent=egr;
+    bars($('#cc-in'),d.ingressByCC,'drop');
+    bars($('#ports'),d.topPorts,'');
+    $('#recent').innerHTML=(d.recent||[]).slice(0,60).map(r=>`<tr><td>${(r.time||'').replace('T',' ').replace('Z','')}</td><td>${r.dir}</td><td class="mono">${r.src} → ${r.dst}</td><td>${r.dport}</td><td>${(r.cc||'').toUpperCase()}</td></tr>`).join('');
+    if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;
+      try{map.series.regions[0].setValues(vals);}catch(e){}}
+  }catch(e){console.error(e);}
+}
+async function refreshSets(){
+  try{const st=await j('/api/sets');
+    $('#sets').innerHTML=(st||[]).map(x=>`<div class="row"><span>${x.name}</span><span>${x.count}</span></div>`).join('');
+  }catch(e){}
+}
+initMap(); refresh(); refreshSets();
+setInterval(refresh,5000); setInterval(refreshSets,30000);
+</script>
+</body>
+</html>

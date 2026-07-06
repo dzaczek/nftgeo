@@ -537,6 +537,25 @@ Releases follow [Semantic Versioning](https://semver.org/) and are tagged
 each run logs it. See [CHANGELOG.md](CHANGELOG.md) for what changed between
 releases.
 
+## Dashboard (nftgeo-ui)
+
+`nftgeo-ui` is an optional, **read-only** local web dashboard (roadmap P6,
+Phase A): a world map of where drops come from, live drop counters, set sizes,
+and a recent-drops feed. It only reads (`nft`, `journalctl`, `nftgeo-update`);
+the firewall's source of truth stays in `/etc/nftgeo` and the CLI.
+
+Build the single static binary (needs Go; no runtime dependencies) and run it:
+
+```sh
+go build -o /usr/local/sbin/nftgeo-ui ./ui
+install -m 0644 systemd/nftgeo-ui.service /etc/systemd/system/
+systemctl enable --now nftgeo-ui.service      # serves http://127.0.0.1:8787
+```
+
+The map and drop stats are fed by kernel drop logs, so set `LOG_DROPS="1"` in
+`/etc/nftgeo/config` (and apply) to populate them. Bind it to localhost and put a
+reverse proxy with auth/TLS in front if you need remote access.
+
 ## Roadmap / TODO
 
 nftgeo is growing from a geo/abuse edge filter into a single-tool declarative
@@ -549,6 +568,8 @@ firewall — so you don't need a second firewall manager beside it. See
 - 🔜 **P4** — port forwarding (`dnat` inbound) with the forward-accept auto-added.
 - 📋 **P5** — internal firewall / segmentation: zones, inter-VLAN rules, service
   names & groups, IP/host labels, 802.1Q VLAN matching.
+- 🔜 **P6** — `nftgeo-ui`: a small local web dashboard (world map of drops, live
+  stats, blocklist browser) and later a drag-and-drop visual editor.
 
 ## Data sources
 

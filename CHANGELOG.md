@@ -7,8 +7,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 ## [Unreleased]
 
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
-segmentation with VLAN zones, service names/groups, and IP labels) is tracked in
-[ROADMAP.md](ROADMAP.md).
+segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
+
+## [1.11.0] - 2026-07-06
+
+### Added
+- `nftgeo-ui` (roadmap P6, Phase A): an optional, read-only local web dashboard -
+  a single dependency-free Go binary that serves `127.0.0.1:8787` with a world
+  map of where drops come from (geolocated from the local ipdeny zones, no
+  external GeoIP), live drop-rule counters, set sizes, top source countries and
+  ports, and a recent-drops feed. It only reads `nft`/`journalctl`/`nftgeo-update`
+  and never writes; feed the map by enabling `LOG_DROPS`. Built from `./ui` with a
+  `nftgeo-ui.service` unit.
 
 ## [1.10.1] - 2026-07-06
 
@@ -194,6 +204,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.11.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.11.0
 [1.10.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.10.1
 [1.10.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.10.0
 [1.9.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.9.0

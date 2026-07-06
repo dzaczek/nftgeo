@@ -124,6 +124,44 @@ Milestones:
 
 ---
 
+## 📋 P6 — nftgeo-ui (local web dashboard & visual editor)
+
+**Goal:** a small, dependency-light local web UI — a single Go binary serving
+`127.0.0.1` — that makes a geo firewall *visual*: a world map of what's being
+dropped, live stats, blocklist browsing, and (later) drag-and-drop group/template
+building. **Principle:** the UI is a *view + editor* over `rules.conf`/`config`
+and the CLI verbs (`status`/`plan`/`validate`/`apply --confirm`) — never a second
+source of truth. Localhost-only by default.
+
+### Phase A — read-only dashboard 🚧 (mostly shipped in 1.11.0)
+- [x] **M6A.1** Go single binary `nftgeo-ui`, embedded assets, serves
+  `127.0.0.1:<port>`; systemd unit; no runtime dependencies.
+- [x] **M6A.2** `/api/status` — version, table loaded, per-chain rule counters.
+- [x] **M6A.3** `/api/sets` — whitelist / abuse / geo / dynamic-block sizes.
+- [x] **M6A.4** drop-event stream — parse journald `nftgeo-drop` (needs
+  `LOG_DROPS`): source IP, port, direction (ingress/egress), time.
+- [x] **M6A.5** geolocation from the local ipdeny zones (IP → country), no
+  external GeoIP dependency.
+- [x] **M6A.6** world map of drops by country (jsVectorMap), ingress focus.
+- [x] **M6A.7** live stats — top source countries, top blocked ports; auto-refresh.
+- [ ] **M6A.7b** drops-over-time chart (time series).
+- [ ] **M6A.8** offline map assets (bundle jsVectorMap), prebuilt release binaries,
+  hardened service (drop root/caps), tests.
+
+### Phase B — visual editor (writes) 📋
+- [ ] **M6B.1** parse `rules.conf`/`config` into a structured model and back.
+- [ ] **M6B.2** drag-and-drop group/zone builder (`GROUP_*` / `ZONE_*`).
+- [ ] **M6B.3** rule editor that renders `rules.conf`.
+- [ ] **M6B.4** apply pipeline in the UI: `validate` → `plan` (visual diff) →
+  `apply --confirm` with an in-page confirm / rollback (the deadman guards it).
+- [ ] **M6B.5** templates: save / load / drag-drop reusable rule sets.
+- [ ] **M6B.6** auth + TLS for non-localhost use; minimal RBAC.
+
+### Phase C — polish 📋
+- [ ] **M6C.1** template library / presets.
+- [ ] **M6C.2** saved dashboard layouts.
+- [ ] **M6C.3** alerts (drop spikes, stale feeds, failed runs).
+
 ## Backlog (unscheduled ideas)
 
 - Auto-throttle brute-force: kernel-native `limit rate ... add @dyn_block` (the

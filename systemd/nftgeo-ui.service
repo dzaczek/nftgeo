@@ -1,0 +1,16 @@
+[Unit]
+Description=nftgeo-ui - local read-only firewall dashboard
+After=network.target nftgeo.service
+
+[Service]
+# Read-only: it only runs nft/journalctl/nftgeo-update to read state, never
+# writes the ruleset. Bound to localhost; put a reverse proxy in front for
+# remote access. Runs as root because it reads the kernel log and nft.
+ExecStart=/usr/local/sbin/nftgeo-ui -addr 127.0.0.1:8787
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
