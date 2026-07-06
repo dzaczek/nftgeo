@@ -37,7 +37,65 @@ var (
 	configFile = env("CONFIG_FILE", "/etc/nftgeo/config")
 	rulesFile  = env("RULES_FILE", "/etc/nftgeo/rules.conf")
 	rulesDir   = env("RULES_DIR", "/etc/nftgeo/rules.d")
+	feedsDir   = env("ABUSE_FEEDS_CACHE_DIR", "/var/lib/nftgeo/feeds")
 )
+
+func runV(name string, args ...string) string { out, _ := run(name, args...); return strings.TrimSpace(out) }
+
+func shortFeed(f string) string {
+	for _, k := range []string{"firehol", "spamhaus", "blocklist", "greensnow"} {
+		if strings.Contains(f, k) {
+			return k
+		}
+	}
+	if len(f) > 24 {
+		return f[:24]
+	}
+	return f
+}
+
+// health gathers the status widgets: next scheduled run, last load, feed
+// freshness, and the established-connection counter.
+func health(ch []Chain) map[string]interface{} {
+	h := map[string]interface{}{}
+	for _, c := range ch {
+		if c.Name == "input" {
+			for _, r := range c.Rules {
+				if strings.Contains(r.Text, "ct state established") {
+					h["established"] = r.Packets
+					break
+				}
+			}
+		}
+	}
+	// systemctl --value prints a formatted timestamp here (not raw microseconds).
+	if v := runV("systemctl", "show", "nftgeo.timer", "-p", "NextElapseUSecRealtime", "--value"); v != "" && v != "0" && v != "n/a" {
+		h["nextRun"] = v
+	}
+	if out, err := run("journalctl", "-u", "nftgeo.service", "--no-pager", "-n", "200"); err == nil {
+		var last string
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, "loaded "+fam+"/"+table) {
+				last = strings.TrimSpace(l)
+			}
+		}
+		if last != "" {
+			h["lastRun"] = last
+		}
+	}
+	var feeds []map[string]interface{}
+	if ents, err := os.ReadDir(feedsDir); err == nil {
+		for _, e := range ents {
+			if fi, err := e.Info(); err == nil {
+				age := time.Since(fi.ModTime())
+				feeds = append(feeds, map[string]interface{}{
+					"name": shortFeed(e.Name()), "ageHours": int(age.Hours()), "fresh": age < 26*time.Hour})
+			}
+		}
+	}
+	h["feeds"] = feeds
+	return h
+}
 
 func env(k, def string) string {
 	if v, ok := os.LookupEnv(k); ok && v != "" {
@@ -285,13 +343,14 @@ type DropsResp struct {
 	IngressByCC   map[string]int `json:"ingressByCC"`
 	EgressByCC    map[string]int `json:"egressByCC"`
 	TopPorts      map[string]int `json:"topPorts"`
+	Timeline      []int          `json:"timeline"` // last 24h, hourly buckets (oldest first)
 	Recent        []Drop         `json:"recent"`
 }
 
 var reKV = regexp.MustCompile(`(\w+)=(\S+)`)
 
 func drops(since string) DropsResp {
-	resp := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}}
+	resp := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}, Timeline: make([]int, 24)}
 	out, err := run("journalctl", "-k", "-o", "json", "--no-pager", "--since", since)
 	if err != nil {
 		return resp
@@ -313,7 +372,11 @@ func drops(since string) DropsResp {
 		}
 		d := Drop{Src: f["SRC"], Dst: f["DST"], Dport: f["DPT"], Proto: f["PROTO"]}
 		if us, e := strconv.ParseInt(rec.TS, 10, 64); e == nil {
-			d.Time = time.UnixMicro(us).UTC().Format(time.RFC3339)
+			t := time.UnixMicro(us)
+			d.Time = t.UTC().Format(time.RFC3339)
+			if ha := int(time.Since(t).Hours()); ha >= 0 && ha < 24 {
+				resp.Timeline[23-ha]++
+			}
 		}
 		in, out := f["IN"] != "", f["OUT"] != ""
 		switch {
@@ -611,10 +674,12 @@ func main() {
 	http.Handle("/", http.FileServer(http.FS(sub)))
 
 	http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+		ch := chains()
 		writeJSON(w, map[string]interface{}{
 			"version": version(),
 			"loaded":  tableLoaded(),
-			"chains":  chains(),
+			"chains":  ch,
+			"health":  health(ch),
 			"time":    time.Now().UTC().Format(time.RFC3339),
 		})
 	})

@@ -9,6 +9,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.14.0] - 2026-07-06
+
+### Added
+- nftgeo-ui Dashboard widgets: a System card (next scheduled run, established
+  connections, abuse-feed freshness pills, last load), top destination countries
+  for egress drops alongside sources, and a drops-over-time sparkline (24h
+  hourly), backed by `health` in /api/status and a `timeline` in /api/drops.
+
 ## [1.13.0] - 2026-07-06
 
 ### Added
@@ -235,6 +243,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.14.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.14.0
 [1.13.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.13.0
 [1.12.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.12.0
 [1.11.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.11.1

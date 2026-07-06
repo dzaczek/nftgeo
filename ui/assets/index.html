@@ -103,11 +103,16 @@
         <div class="kpi"><b id="k-out">0</b><span>egress</span></div>
         <div class="kpi"><b id="k-abuse">0</b><span>abuse IPs</span></div>
       </div>
+      <div class="grid g2" style="margin-bottom:14px">
+        <div class="card"><h3>System</h3><div id="health"></div></div>
+        <div class="card"><h3>Drops over time (24h)</h3><div id="spark"></div></div>
+      </div>
       <div class="grid g2">
         <div class="card"><h3>Where drops come from (ingress)</h3><div id="map"></div>
           <div id="mapfallback" class="muted" style="display:none;font-size:12px">Map library unavailable — see the country list.</div></div>
         <div>
-          <div class="card"><h3>Top source countries</h3><div id="cc-in"></div></div>
+          <div class="card"><h3>Top source countries (ingress)</h3><div id="cc-in"></div></div>
+          <div class="card" style="margin-top:14px"><h3>Top destination countries (egress)</h3><div id="cc-out"></div></div>
           <div class="card" style="margin-top:14px"><h3>Top blocked ports</h3><div id="ports"></div></div>
         </div>
       </div>
@@ -177,6 +182,16 @@ function initMap(){try{map=new jsVectorMap({selector:'#map',map:'world',backgrou
   catch(e){$('#map').style.display='none';$('#mapfallback').style.display='block';}}
 function bars(el,obj,cls){const rows=Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);const max=rows[0]?rows[0][1]:1;
   el.innerHTML=rows.map(([k,v])=>`<div class="row"><span>${esc(k.toUpperCase())}</span><span>${v}</span></div><div class="bar ${cls||''}" style="width:${Math.max(3,100*v/max)}%"></div>`).join('')||'<span class="muted">none</span>';}
+function renderHealth(h){h=h||{};
+  const feeds=(h.feeds||[]).map(f=>`<span class="pill ${f.fresh?'allow':'deny'}" title="${f.ageHours}h old">${esc(f.name)}</span>`).join(' ')||'<span class="muted">none</span>';
+  $('#health').innerHTML=`<div class="row"><span class="muted">Next scheduled run</span><span>${esc(h.nextRun||'—')}</span></div>
+    <div class="row"><span class="muted">Established (pkts)</span><span>${(h.established||0).toLocaleString()}</span></div>
+    <div class="row"><span class="muted">Abuse feeds</span><span>${feeds}</span></div>
+    <div class="muted mono" style="font-size:11px;margin-top:8px">${esc(h.lastRun||'no run logged')}</div>`;}
+function sparkline(el,data){data=data||[];const w=300,ht=52,max=Math.max(1,...data);
+  const pts=data.map((v,i)=>`${(i/(Math.max(1,data.length-1)))*w},${ht-(v/max)*(ht-6)-3}`).join(' ');
+  el.innerHTML=`<svg viewBox="0 0 ${w} ${ht}" width="100%" height="${ht}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="var(--drop)" stroke-width="2"/></svg>
+    <div class="muted" style="font-size:11px;display:flex;justify-content:space-between"><span>-24h</span><span>peak ${max}/h</span><span>now</span></div>`;}
 
 async function refresh(){
   try{
@@ -185,11 +200,13 @@ async function refresh(){
     $('#loaddot').style.background=s.loaded?'var(--ok)':'var(--drop)';
     $('#loadtxt').textContent=s.loaded?'table loaded':'not loaded';
     $('#upd').textContent=new Date().toLocaleTimeString();
+    renderHealth(s.health);
     const d=await j('/api/drops?since=-24h'); DROPS=d;
     $('#logwarn').style.display=d.enabled?'none':'block';
     const ing=Object.values(d.ingressByCC).reduce((a,b)=>a+b,0), egr=Object.values(d.egressByCC).reduce((a,b)=>a+b,0);
     $('#k-total').textContent=d.total; $('#k-in').textContent=ing; $('#k-out').textContent=egr;
-    bars($('#cc-in'),d.ingressByCC,'drop'); bars($('#ports'),d.topPorts,'');
+    bars($('#cc-in'),d.ingressByCC,'drop'); bars($('#cc-out'),d.egressByCC,''); bars($('#ports'),d.topPorts,'');
+    sparkline($('#spark'),d.timeline);
     if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;try{map.series.regions[0].setValues(vals);}catch(e){}}
     renderLogs();
     const st=await j('/api/sets'); const ab=(st||[]).find(x=>x.name==='abuse4'); $('#k-abuse').textContent=ab?ab.count:0;
