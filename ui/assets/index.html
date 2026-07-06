@@ -32,6 +32,16 @@
   code{color:var(--mut);font-size:12px}
   .warn{background:#3a2a12;border:1px solid #6a4a1a;color:#ffcf8a;padding:8px 12px;border-radius:8px;margin:14px 14px 0}
   .mono{font-family:ui-monospace,monospace;font-size:12px}
+  .ipl{cursor:pointer;border-bottom:1px dotted var(--mut)}
+  .ipl:hover{color:var(--acc)}
+  .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);align-items:center;justify-content:center;z-index:9}
+  .modalcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;min-width:340px;max-width:90vw;max-height:80vh;overflow:auto;position:relative}
+  .modalcard h3{margin:0 0 12px;font-family:ui-monospace,monospace}
+  .modalcard .x{position:absolute;top:12px;right:14px;cursor:pointer;color:var(--mut)}
+  .lk{margin-bottom:14px}
+  .lk b{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:1px}
+  .lk table{margin-top:4px}
+  .lk td:first-child{color:var(--mut);width:90px}
 </style>
 </head>
 <body>
@@ -94,6 +104,13 @@
   </div>
 </div>
 
+<div id="modal" class="modal">
+  <div class="modalcard">
+    <span class="x" onclick="document.getElementById('modal').style.display='none'">✕</span>
+    <div id="modalbody"></div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/js/jsvectormap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/maps/world.js"></script>
 <script>
@@ -134,7 +151,7 @@ async function refresh(){
     $('#k-in').textContent=ing; $('#k-out').textContent=egr;
     bars($('#cc-in'),d.ingressByCC,'drop');
     bars($('#ports'),d.topPorts,'');
-    $('#recent').innerHTML=(d.recent||[]).slice(0,60).map(r=>`<tr><td>${(r.time||'').replace('T',' ').replace('Z','')}</td><td>${r.dir}</td><td class="mono">${r.src} → ${r.dst}</td><td>${r.dport}</td><td>${(r.cc||'').toUpperCase()}</td></tr>`).join('');
+    $('#recent').innerHTML=(d.recent||[]).slice(0,60).map(r=>`<tr><td>${(r.time||'').replace('T',' ').replace('Z','')}</td><td>${r.dir}</td><td class="mono"><span class="ipl" data-ip="${r.src}">${r.src}</span> → <span class="ipl" data-ip="${r.dst}">${r.dst}</span></td><td>${r.dport}</td><td>${(r.cc||'').toUpperCase()}</td></tr>`).join('');
     if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;
       try{map.series.regions[0].setValues(vals);}catch(e){}}
   }catch(e){console.error(e);}
@@ -144,6 +161,26 @@ async function refreshSets(){
     $('#sets').innerHTML=(st||[]).map(x=>`<div class="row"><span>${x.name}</span><span>${x.count}</span></div>`).join('');
   }catch(e){}
 }
+function esc(s){return String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
+async function lookup(ip){
+  const m=$('#modal'), b=$('#modalbody');
+  m.style.display='flex'; b.innerHTML='Looking up '+esc(ip)+' …';
+  try{
+    const r=await j('/api/lookup?ip='+encodeURIComponent(ip));
+    let h=`<h3>${esc(ip)}</h3>`;
+    h+=`<div class="lk"><b>Reverse DNS (PTR)</b><div class="mono">${(r.ptr||['—']).map(esc).join('<br>')}</div></div>`;
+    const w=r.rdap||{};
+    h+='<div class="lk"><b>Whois (RDAP)</b><table>';
+    [['name','Network'],['org','Org'],['country','Country'],['cidr','Range'],['handle','Handle'],['type','Type']].forEach(([k,lbl])=>{ if(w[k]) h+=`<tr><td>${lbl}</td><td>${esc(w[k])}</td></tr>`;});
+    if(!Object.keys(w).length) h+='<tr><td colspan="2" style="color:var(--mut)">no RDAP data</td></tr>';
+    h+='</table></div>';
+    b.innerHTML=h;
+  }catch(e){ b.innerHTML='lookup failed'; }
+}
+document.addEventListener('click',e=>{const t=e.target.closest('.ipl'); if(t&&t.dataset.ip) lookup(t.dataset.ip);});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')$('#modal').style.display='none';});
+$('#modal').addEventListener('click',e=>{if(e.target.id==='modal')$('#modal').style.display='none';});
+
 initMap(); refresh(); refreshSets();
 setInterval(refresh,5000); setInterval(refreshSets,30000);
 </script>

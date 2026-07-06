@@ -5,13 +5,16 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -347,6 +350,61 @@ func logDropsOn() bool {
 	return strings.Contains(out, `log prefix "nftgeo-drop`)
 }
 
+// ---- per-IP lookup: reverse DNS + RDAP (whois) -----------------------------
+
+func rdapOrg(m map[string]interface{}) string {
+	ents, _ := m["entities"].([]interface{})
+	for _, e := range ents {
+		em, _ := e.(map[string]interface{})
+		va, _ := em["vcardArray"].([]interface{})
+		if len(va) < 2 {
+			continue
+		}
+		props, _ := va[1].([]interface{})
+		for _, p := range props {
+			pa, _ := p.([]interface{})
+			if len(pa) >= 4 && pa[0] == "fn" {
+				if s, ok := pa[3].(string); ok && s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func doLookup(ip string) map[string]interface{} {
+	res := map[string]interface{}{"ip": ip}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if names, err := net.DefaultResolver.LookupAddr(ctx, ip); err == nil && len(names) > 0 {
+		res["ptr"] = names
+	}
+	client := &http.Client{Timeout: 6 * time.Second}
+	if r, err := client.Get("https://rdap.org/ip/" + url.PathEscape(ip)); err == nil {
+		defer r.Body.Close()
+		var m map[string]interface{}
+		if json.NewDecoder(r.Body).Decode(&m) == nil {
+			w := map[string]interface{}{}
+			for _, k := range []string{"handle", "name", "country", "type", "startAddress", "endAddress"} {
+				if v, ok := m[k]; ok {
+					w[k] = v
+				}
+			}
+			if c, ok := m["cidr0_cidrs"].([]interface{}); ok && len(c) > 0 {
+				if cm, ok := c[0].(map[string]interface{}); ok {
+					w["cidr"] = fmt.Sprintf("%v/%v", cm["v4prefix"], cm["length"])
+				}
+			}
+			if org := rdapOrg(m); org != "" {
+				w["org"] = org
+			}
+			res["rdap"] = w
+		}
+	}
+	return res
+}
+
 // ---- http -------------------------------------------------------------------
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
@@ -385,6 +443,14 @@ func main() {
 			since = "-24h"
 		}
 		writeJSON(w, drops(since))
+	})
+	http.HandleFunc("/api/lookup", func(w http.ResponseWriter, r *http.Request) {
+		ip := r.URL.Query().Get("ip")
+		if net.ParseIP(ip) == nil {
+			http.Error(w, `{"error":"invalid ip"}`, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, doLookup(ip))
 	})
 
 	log.Printf("nftgeo-ui: serving on http://%s (read-only)", *addr)

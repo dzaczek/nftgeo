@@ -9,6 +9,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.11.1] - 2026-07-06
+
+### Added
+- nftgeo-ui: click any IP in the recent-drops feed to look it up - reverse DNS
+  (PTR) plus whois via RDAP (network, org, country, range), served by a new
+  `/api/lookup` endpoint (no `whois` CLI dependency). RDAP also fills in the
+  country when an IP isn't in a cached geo zone.
+
 ## [1.11.0] - 2026-07-06
 
 ### Added
@@ -204,6 +212,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.11.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.11.1
 [1.11.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.11.0
 [1.10.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.10.1
 [1.10.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.10.0

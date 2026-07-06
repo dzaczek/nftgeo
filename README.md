@@ -541,8 +541,9 @@ releases.
 
 `nftgeo-ui` is an optional, **read-only** local web dashboard (roadmap P6,
 Phase A): a world map of where drops come from, live drop counters, set sizes,
-and a recent-drops feed. It only reads (`nft`, `journalctl`, `nftgeo-update`);
-the firewall's source of truth stays in `/etc/nftgeo` and the CLI.
+and a recent-drops feed where you can click any IP to look it up (reverse DNS +
+whois via RDAP). It only reads (`nft`, `journalctl`, `nftgeo-update`); the
+firewall's source of truth stays in `/etc/nftgeo` and the CLI.
 
 Build the single static binary (needs Go; no runtime dependencies) and run it:
 
