@@ -554,7 +554,13 @@ systemctl enable --now nftgeo-ui.service      # serves http://127.0.0.1:8787
 
 The map and drop stats are fed by kernel drop logs, so set `LOG_DROPS="1"` in
 `/etc/nftgeo/config` (and apply) to populate them. Bind it to localhost and put a
-reverse proxy with auth/TLS in front if you need remote access.
+reverse proxy with auth/TLS in front if you need remote access; to view it over
+SSH: `ssh -L 8787:127.0.0.1:8787 <host>`, then open `http://127.0.0.1:8787`.
+
+Geolocation reuses the local ipdeny zones, which nftgeo only downloads for the
+countries your rules reference. So the world map currently colours the countries
+you filter on; the recent-drops feed, counters, and set sizes are always
+complete. A full offline geo dataset for the map is roadmap **M6A.5b**.
 
 ## Roadmap / TODO
 

@@ -142,6 +142,9 @@ source of truth. Localhost-only by default.
   `LOG_DROPS`): source IP, port, direction (ingress/egress), time.
 - [x] **M6A.5** geolocation from the local ipdeny zones (IP → country), no
   external GeoIP dependency.
+- [ ] **M6A.5b** full offline geo dataset: fetch all ipdeny country zones into a
+  UI-owned cache so the map covers every source, not only rule-referenced
+  countries (today it only geolocates cached zones).
 - [x] **M6A.6** world map of drops by country (jsVectorMap), ingress focus.
 - [x] **M6A.7** live stats — top source countries, top blocked ports; auto-refresh.
 - [ ] **M6A.7b** drops-over-time chart (time series).
