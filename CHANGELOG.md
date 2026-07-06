@@ -4,6 +4,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.2.0] - 2026-07-06
+
+### Added
+- `nftgeo` operator CLI (installed alongside `nftgeo-update`):
+  - `nftgeo check <ip>` - show whether an address is whitelisted, on the abuse
+    list, or in a geo set, the rules that match it, and the resulting verdict.
+  - `nftgeo status` - one-screen summary: version, last run, set sizes, live drop
+    counters, abuse-feed cache freshness, and the next scheduled run.
+  - `nftgeo apply` / `nftgeo version` wrap the update engine.
+
 ## [1.1.1] - 2026-07-05
 
 ### Fixed
@@ -46,6 +56,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.2.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.2.0
 [1.1.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.1.1
 [1.1.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.0.0

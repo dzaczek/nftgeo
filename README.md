@@ -141,7 +141,8 @@ sudo ./install.sh
 The installer:
 
 - installs `curl`, `nftables`, and `ca-certificates`,
-- copies the script to `/usr/local/sbin/nftgeo-update`,
+- copies the engine to `/usr/local/sbin/nftgeo-update` and the operator CLI to
+  `/usr/local/sbin/nftgeo`,
 - creates `/etc/nftgeo/config` and `/etc/nftgeo/rules.conf`, plus empty
   `rules.d/` and `groups.d/` directories for drop-in files,
 - installs `nftgeo.service` and `nftgeo.timer`,
@@ -302,7 +303,24 @@ Runs are serialized by a lock (`/var/lib/nftgeo/.lock`), so a manual run and the
 scheduled one cannot overlap; a run that cannot take the lock within
 `LOCK_WAIT` seconds (default 60) exits without touching the ruleset.
 
+## Operator CLI
+
+The `nftgeo` command wraps the common day-to-day checks:
+
+```sh
+nftgeo check 203.0.113.7   # what does the firewall do to this address?
+nftgeo status              # version, last run, set sizes, drop counters, next run
+nftgeo apply               # rebuild and load now (same as the update engine)
+```
+
+`nftgeo check <ip>` reports whether the address is whitelisted, on the abuse
+list, or in any geo set, prints the rules that match it, and gives a plain verdict
+(allowed / dropped / where). `nftgeo status` is a one-screen summary pulled from
+the live table, the journal, and the feed cache.
+
 ## Status checks
+
+The raw commands behind `nftgeo status`, if you want them directly:
 
 ```sh
 nftgeo-update --version                       # installed version

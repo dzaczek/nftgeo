@@ -19,6 +19,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y curl nftables ca-certificates
 install -d -m 0755 /etc/nftgeo /etc/nftgeo/rules.d /etc/nftgeo/groups.d \
 	/etc/nftables.d /var/lib/nftgeo /var/lib/nftgeo/zones /usr/local/sbin
 install -m 0755 "${BASE_DIR}/bin/nftgeo-update" /usr/local/sbin/nftgeo-update
+install -m 0755 "${BASE_DIR}/bin/nftgeo" /usr/local/sbin/nftgeo
 
 if [ ! -f /etc/nftgeo/config ]; then
 	install -m 0600 "${BASE_DIR}/etc/config.example" /etc/nftgeo/config

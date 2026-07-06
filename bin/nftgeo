@@ -1,0 +1,140 @@
+#!/bin/sh
+# nftgeo - operator CLI for the nftgeo geo firewall.
+# Read-only helpers plus dispatch to the update engine. See `nftgeo help`.
+set -eu
+
+FAM="${TABLE_FAMILY:-inet}"
+TABLE="${TABLE_NAME:-nftgeo}"
+STATE_DIR="${STATE_DIR:-/var/lib/nftgeo}"
+ABUSE_FEEDS_CACHE_DIR="${ABUSE_FEEDS_CACHE_DIR:-${STATE_DIR}/feeds}"
+
+# Locate the update engine (for `apply` and `version`).
+ENGINE="${NFTGEO_UPDATE:-}"
+if [ -z "$ENGINE" ]; then
+	for c in /usr/local/sbin/nftgeo-update "$(dirname -- "$0")/nftgeo-update"; do
+		[ -x "$c" ] && ENGINE="$c" && break
+	done
+fi
+
+usage() {
+	cat <<EOF
+Usage: nftgeo <command> [args]
+
+  check <ip>     Show what the firewall does to an address (whitelist / abuse /
+                 geo sets, the rules that match it, and the resulting verdict).
+  status         One-screen summary: version, last run, set sizes, drop
+                 counters, feed health, and the next scheduled run.
+  apply          Rebuild and load the ruleset now (runs the update engine).
+  version        Print the nftgeo version.
+  help           Show this help.
+EOF
+}
+
+need_table() {
+	nft list table "$FAM" "$TABLE" >/dev/null 2>&1 && return 0
+	echo "nftgeo table ${FAM} ${TABLE} is not loaded (try: systemctl start nftgeo.service)" >&2
+	return 1
+}
+
+# True if $ip is contained in set $1.
+in_set() { nft get element "$FAM" "$TABLE" "$1" "{ $ip }" >/dev/null 2>&1; }
+
+cmd_check() {
+	ip="${1:-}"
+	[ -n "$ip" ] || { echo "usage: nftgeo check <ip>" >&2; exit 2; }
+	need_table || exit 1
+	case "$ip" in *:*) fam=6 ;; *) fam=4 ;; esac
+	echo "${ip}  (IPv${fam})"
+
+	if in_set "whitelist${fam}"; then wl=YES; else wl=no; fi
+	if in_set "abuse${fam}"; then ab=YES; else ab=no; fi
+	printf '  whitelist : %s\n' "$wl"
+	printf '  abuse     : %s\n' "$ab"
+
+	# Which geo/group sets contain it. Testing a wrong-family set simply fails.
+	matched=""
+	for s in $(nft list table "$FAM" "$TABLE" 2>/dev/null \
+			| grep -oE 'set g_[A-Za-z0-9_]+ ' | awk '{print $2}'); do
+		in_set "$s" && matched="${matched} ${s}"
+	done
+	printf '  geo sets  :%s\n' "${matched:- (none)}"
+
+	# Only rules for sets the address actually belongs to.
+	hit="$matched"
+	[ "$wl" = YES ] && hit="${hit} whitelist${fam}"
+	[ "$ab" = YES ] && hit="${hit} abuse${fam}"
+	echo "  matching rules:"
+	rules="$(for ch in input output forward; do
+		for s in ${hit}; do
+			nft list chain "$FAM" "$TABLE" "$ch" 2>/dev/null | grep -E "@${s} " \
+				| sed "s/^[[:space:]]*/    ${ch}  /"
+		done
+	done | sort -u)"
+	if [ -n "$rules" ]; then printf '%s\n' "$rules"; else echo "    (none)"; fi
+
+	if [ "$wl" = YES ]; then
+		echo "verdict: ALLOWED - whitelisted, bypasses geo and abuse"
+	elif [ "$ab" = YES ]; then
+		echo "verdict: DROPPED where a 'deny ... abuse' rule applies (unless also whitelisted)"
+	elif [ -n "$matched" ]; then
+		echo "verdict: allowed on the ports shown above; other managed ports fall to deny-by-default"
+	else
+		echo "verdict: in no managed set - reaches whatever your rules leave open (unmanaged ports untouched)"
+	fi
+}
+
+set_count() {
+	# Element count of set $1, or "-" if absent. Counts comma/newline separated
+	# elements without choking on interval ranges.
+	nft list set "$FAM" "$TABLE" "$1" 2>/dev/null \
+		| awk '/elements = {/{f=1} f{n+=gsub(/,/,",")} /}/{if(f){print n+1; exit}} END{if(!f)print 0}'
+}
+
+cmd_status() {
+	v="$("$ENGINE" --version 2>/dev/null | awk '{print $NF}')"
+	echo "nftgeo ${v:-?}   table ${FAM} ${TABLE}"
+	if ! nft list table "$FAM" "$TABLE" >/dev/null 2>&1; then
+		echo "table: NOT LOADED (try: systemctl start nftgeo.service)"
+		return 0
+	fi
+
+	last="$(journalctl -u nftgeo.service --no-pager -o cat 2>/dev/null \
+		| grep -iE "loaded ${FAM}/${TABLE}" | tail -1)"
+	[ -n "$last" ] && echo "last run : ${last}"
+
+	chains="$(nft list table "$FAM" "$TABLE" | grep -oE 'chain (input|output|forward)' \
+		| awk '{print $2}' | paste -sd, -)"
+	echo "chains   : ${chains:-none}"
+	printf 'sets     : whitelist4=%s whitelist6=%s abuse4=%s abuse6=%s\n' \
+		"$(set_count whitelist4)" "$(set_count whitelist6)" \
+		"$(set_count abuse4)" "$(set_count abuse6)"
+
+	echo "drop rules (live counters):"
+	for ch in input output forward; do
+		nft list chain "$FAM" "$TABLE" "$ch" 2>/dev/null | grep -E 'counter.*drop' \
+			| sed "s/^[[:space:]]*/  ${ch}  /"
+	done
+
+	if [ -d "$ABUSE_FEEDS_CACHE_DIR" ] && [ -n "$(ls -A "$ABUSE_FEEDS_CACHE_DIR" 2>/dev/null)" ]; then
+		echo "abuse feeds (cache mtime):"
+		for f in "$ABUSE_FEEDS_CACHE_DIR"/*; do
+			[ -f "$f" ] || continue
+			echo "  $(date -r "$f" '+%Y-%m-%d %H:%M')  $(basename "$f")"
+		done
+	fi
+
+	t="$(systemctl list-timers nftgeo.timer --no-pager 2>/dev/null | sed -n '2p')"
+	[ -n "$t" ] && echo "next run : $(echo "$t" | sed 's/^[[:space:]]*//')"
+	return 0
+}
+
+cmd="${1:-help}"
+[ $# -gt 0 ] && shift || true
+case "$cmd" in
+	check)             cmd_check "$@" ;;
+	status)            cmd_status ;;
+	apply)             [ -n "$ENGINE" ] || { echo "nftgeo-update not found" >&2; exit 1; }; exec "$ENGINE" ;;
+	version|--version|-V) [ -n "$ENGINE" ] && exec "$ENGINE" --version || { echo "nftgeo (engine not found)"; exit 1; } ;;
+	help|-h|--help)    usage ;;
+	*)                 echo "unknown command: ${cmd}" >&2; usage >&2; exit 2 ;;
+esac
