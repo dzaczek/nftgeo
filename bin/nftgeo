@@ -5,9 +5,12 @@ set -eu
 
 FAM="${TABLE_FAMILY:-inet}"
 TABLE="${TABLE_NAME:-nftgeo}"
+DYN_TABLE="${DYN_TABLE:-nftgeo_dyn}"
 STATE_DIR="${STATE_DIR:-/var/lib/nftgeo}"
 NFT_FILE="${NFT_FILE:-/etc/nftables.d/nftgeo.nft}"
 ABUSE_FEEDS_CACHE_DIR="${ABUSE_FEEDS_CACHE_DIR:-${STATE_DIR}/feeds}"
+DYN_STATE="${DYN_STATE:-${STATE_DIR}/dynblock.tsv}"
+TAB="$(printf '\t')"
 
 # Locate the update engine (for `apply` and `version`).
 ENGINE="${NFTGEO_UPDATE:-}"
@@ -29,6 +32,11 @@ Usage: nftgeo <command> [args]
                  loading it. Exits non-zero if the config is invalid. (root)
   plan           Show how the rendered ruleset differs from what is loaded, as a
                  policy diff (set contents elided). (root)
+  block <ip> [ttl]   Drop an address now for ttl (default 1h; e.g. 30m, 2d),
+                 without editing rules or a reload. Refuses a whitelisted or your
+                 own SSH source unless --force. Survives updates. (root)
+  unblock <ip>   Remove a dynamic block. (root)
+  blocklist      List the current dynamic blocks and their remaining TTL.
   apply          Rebuild and load the ruleset now (runs the update engine).
   version        Print the nftgeo version.
   help           Show this help.
@@ -186,6 +194,110 @@ cmd_plan() {
 	fi
 }
 
+dur_to_sec() {
+	# 30m | 1h | 2d | 3600s | bare seconds -> seconds; empty on invalid.
+	case "$1" in
+		*d) n=${1%d}; case "$n" in *[!0-9]*|'') echo ""; return;; esac; echo $((n*86400)) ;;
+		*h) n=${1%h}; case "$n" in *[!0-9]*|'') echo ""; return;; esac; echo $((n*3600)) ;;
+		*m) n=${1%m}; case "$n" in *[!0-9]*|'') echo ""; return;; esac; echo $((n*60)) ;;
+		*s) n=${1%s}; case "$n" in *[!0-9]*|'') echo ""; return;; esac; echo "$n" ;;
+		*[!0-9]*|'') echo "" ;;
+		*) echo "$1" ;;
+	esac
+}
+
+ensure_dyn() {
+	# Dynamic manual-block table, separate from the geo table so nftgeo-update
+	# never rebuilds it - blocks survive a ruleset reload. Runs before the geo
+	# table (priority -150); the block/unblock commands guard against self-lockout.
+	nft list table "$FAM" "$DYN_TABLE" >/dev/null 2>&1 && return 0
+	nft -f - <<EOF
+table $FAM $DYN_TABLE {
+	set dynblock4 { type ipv4_addr; flags timeout; }
+	set dynblock6 { type ipv6_addr; flags timeout; }
+	chain input {
+		type filter hook input priority -150; policy accept;
+		ip saddr @dynblock4 counter drop
+		ip6 saddr @dynblock6 counter drop
+	}
+	chain output {
+		type filter hook output priority -150; policy accept;
+		ip daddr @dynblock4 counter drop
+		ip6 daddr @dynblock6 counter drop
+	}
+}
+EOF
+}
+
+cmd_block() {
+	force=0; [ "${1:-}" = "--force" ] && { force=1; shift; }
+	ip="${1:-}"; ttl="${2:-1h}"
+	[ -n "$ip" ] || { echo "usage: nftgeo block [--force] <ip> [ttl]   (ttl e.g. 30m, 1h, 2d)" >&2; exit 2; }
+	case "$ip" in *:*) fam=6 ;; *) fam=4 ;; esac
+	sec="$(dur_to_sec "$ttl")"
+	{ [ -n "$sec" ] && [ "$sec" -gt 0 ]; } || { echo "bad ttl '${ttl}' (use 30m, 1h, 2d, or seconds)" >&2; exit 2; }
+	if [ "$force" != 1 ]; then
+		if nft get element "$FAM" "$TABLE" "whitelist${fam}" "{ $ip }" >/dev/null 2>&1; then
+			echo "refusing: ${ip} is whitelisted; use --force to block anyway" >&2; exit 1
+		fi
+		src="${SSH_CLIENT:-}"; src="${src%% *}"
+		[ -n "$src" ] && [ "$ip" = "$src" ] && { echo "refusing: ${ip} is your current SSH source; use --force" >&2; exit 1; }
+	fi
+	ensure_dyn
+	nft add element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip timeout ${sec}s }"
+	now="$(date +%s)"; exp="$((now + sec))"
+	mkdir -p "$STATE_DIR"; touch "$DYN_STATE"
+	grep -v "^${ip}${TAB}" "$DYN_STATE" > "${DYN_STATE}.n" 2>/dev/null || true
+	mv "${DYN_STATE}.n" "$DYN_STATE"
+	printf '%s\t%s\t%s\n' "$ip" "$fam" "$exp" >> "$DYN_STATE"
+	echo "blocked ${ip} for ${ttl} (until $(date -d "@${exp}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "@${exp}"))"
+}
+
+cmd_unblock() {
+	ip="${1:-}"; [ -n "$ip" ] || { echo "usage: nftgeo unblock <ip>" >&2; exit 2; }
+	case "$ip" in *:*) fam=6 ;; *) fam=4 ;; esac
+	nft delete element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip }" 2>/dev/null || true
+	if [ -f "$DYN_STATE" ]; then
+		grep -v "^${ip}${TAB}" "$DYN_STATE" > "${DYN_STATE}.n" 2>/dev/null || true
+		mv "${DYN_STATE}.n" "$DYN_STATE"
+	fi
+	echo "unblocked ${ip}"
+}
+
+cmd_blocklist() {
+	if ! nft list table "$FAM" "$DYN_TABLE" >/dev/null 2>&1; then
+		echo "no dynamic blocks (table ${FAM} ${DYN_TABLE} not present)"; return 0
+	fi
+	echo "dynamic blocks (in-kernel, auto-expiring):"
+	found=0
+	for s in dynblock4 dynblock6; do
+		el="$(nft list set "$FAM" "$DYN_TABLE" "$s" 2>/dev/null | tr '\n' ' ' \
+			| sed -n 's/.*elements = {\([^}]*\)}.*/\1/p')"
+		[ -n "$el" ] || continue
+		printf '%s' "$el" | tr ',' '\n' \
+			| sed 's/^[[:space:]]*/  /; s/[[:space:]]*$//' | grep -v '^[[:space:]]*$' && found=1
+	done
+	[ "$found" = 1 ] || echo "  (none)"
+}
+
+cmd_restore_dyn() {
+	# Re-create the dynamic block table from persisted state after a reboot,
+	# dropping entries whose TTL has passed. Idempotent; wired to run after each
+	# engine start (incl. boot) via the service.
+	[ -s "$DYN_STATE" ] || return 0
+	ensure_dyn
+	now="$(date +%s)"
+	: > "${DYN_STATE}.n"
+	while IFS="$TAB" read -r ip fam exp; do
+		[ -n "$ip" ] || continue
+		case "$exp" in ''|*[!0-9]*) continue ;; esac
+		rem=$((exp - now)); [ "$rem" -gt 0 ] || continue
+		nft add element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip timeout ${rem}s }" 2>/dev/null || true
+		printf '%s\t%s\t%s\n' "$ip" "$fam" "$exp" >> "${DYN_STATE}.n"
+	done < "$DYN_STATE"
+	mv "${DYN_STATE}.n" "$DYN_STATE"
+}
+
 cmd="${1:-help}"
 [ $# -gt 0 ] && shift || true
 case "$cmd" in
@@ -193,6 +305,10 @@ case "$cmd" in
 	status)            cmd_status ;;
 	validate)          cmd_validate ;;
 	plan)              cmd_plan ;;
+	block)             cmd_block "$@" ;;
+	unblock)           cmd_unblock "$@" ;;
+	blocklist|blocks)  cmd_blocklist ;;
+	restore-dyn)       cmd_restore_dyn ;;
 	apply)             [ -n "$ENGINE" ] || { echo "nftgeo-update not found" >&2; exit 1; }; exec "$ENGINE" ;;
 	version|--version|-V) [ -n "$ENGINE" ] && exec "$ENGINE" --version || { echo "nftgeo (engine not found)"; exit 1; } ;;
 	help|-h|--help)    usage ;;

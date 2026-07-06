@@ -4,6 +4,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.6.0] - 2026-07-06
+
+### Added
+- `nftgeo block <ip> [ttl]` / `unblock <ip>` / `blocklist` - drop an address right
+  now for a TTL (default 1h) without editing rules or reloading. Blocks live in a
+  separate `nftgeo_dyn` table that `nftgeo-update` never rebuilds, so they survive
+  ruleset reloads; entries carry an in-kernel timeout and are restored after a
+  reboot from `/var/lib/nftgeo/dynblock.tsv` (via the service's ExecStartPost).
+  `block` refuses a whitelisted address or your current SSH source unless
+  `--force`, to prevent self-lockout.
+
 ## [1.5.1] - 2026-07-06
 
 ### Fixed
@@ -110,6 +121,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.6.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.6.0
 [1.5.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.5.1
 [1.5.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.5.0
 [1.4.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.4.1

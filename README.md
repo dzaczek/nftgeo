@@ -330,8 +330,18 @@ nftgeo check 203.0.113.7   # what does the firewall do to this address?
 nftgeo status              # version, last run, set sizes, drop counters, next run
 nftgeo validate            # check the current config renders/loads, without applying
 nftgeo plan                # show how the rendered ruleset differs from what is loaded
+nftgeo block 203.0.113.7 1h # drop an address now for a while (no reload)
+nftgeo unblock 203.0.113.7 # remove a dynamic block
+nftgeo blocklist           # list current dynamic blocks and their TTL
 nftgeo apply               # rebuild and load now (same as the update engine)
 ```
+
+`nftgeo block <ip> [ttl]` is for cutting off an attacker immediately without
+editing `rules.conf` or reloading. The block lives in a separate `nftgeo_dyn`
+table that the update engine never rebuilds, so it survives refreshes; it carries
+an in-kernel timeout (default `1h`; use `30m`, `2d`, ...) and is restored after a
+reboot. `block` refuses a whitelisted address or your own SSH source unless you
+pass `--force`, so you cannot lock yourself out by mistake.
 
 `nftgeo validate` and `nftgeo plan` let you check an edit before applying it:
 `validate` exits non-zero if the config is invalid, and `plan` prints a policy

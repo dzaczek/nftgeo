@@ -6,6 +6,8 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/nftgeo-update
+# Restore dynamic "nftgeo block" entries (e.g. after a reboot); non-fatal.
+ExecStartPost=-/usr/local/sbin/nftgeo restore-dyn
 
 [Install]
 WantedBy=multi-user.target

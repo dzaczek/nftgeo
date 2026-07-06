@@ -12,6 +12,10 @@ systemctl disable --now nftgeo.service >/dev/null 2>&1 || true
 if command -v nft >/dev/null 2>&1 && nft list table inet nftgeo >/dev/null 2>&1; then
 	nft delete table inet nftgeo
 fi
+if command -v nft >/dev/null 2>&1 && nft list table inet nftgeo_dyn >/dev/null 2>&1; then
+	nft delete table inet nftgeo_dyn
+fi
+rm -f /usr/local/sbin/nftgeo
 
 rm -f /etc/systemd/system/nftgeo.service
 rm -f /etc/systemd/system/nftgeo.timer
