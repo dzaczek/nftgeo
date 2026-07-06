@@ -4,6 +4,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 [Semantic Versioning](https://semver.org/). The running version is reported by
 `nftgeo-update --version` and in the `Loaded` log line of each run.
 
+## [1.8.2] - 2026-07-06
+
+### Fixed
+- Deadman cleanup: the 1.8.1 `setsid` group-kill did not reliably reap the
+  waiter on all hosts, leaving a stray `sleep` behind. The deadman now polls the
+  sentinel once a second and self-exits within ~1s of it being removed, so
+  `--commit`/`rollback` leave nothing behind regardless of the platform. (It was
+  always functionally correct - cancellation is sentinel-based - this only tidies
+  the leftover process.)
+
 ## [1.8.1] - 2026-07-06
 
 ### Changed
@@ -11,6 +21,7 @@ All notable changes to `nftgeo` are documented here. Versions follow
   regex, run the deadman in its own session (`setsid`) and group-kill it on
   confirm/rollback so no stray `sleep` is left behind, and drop the undocumented
   `blocks` alias. Added a command cheat sheet ([CHEATSHEET.md](CHEATSHEET.md)).
+  (The deadman cleanup here was superseded by 1.8.2.)
 
 ## [1.8.0] - 2026-07-06
 
@@ -148,6 +159,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.8.2]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.2
 [1.8.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.1
 [1.8.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.8.0
 [1.7.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.7.0

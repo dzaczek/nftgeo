@@ -322,11 +322,11 @@ snapshot_current() {
 }
 
 kill_deadman() {
-	# Cancel a pending deadman: group-kill (reaps the detached sh and its sleep),
-	# falling back to a plain pid kill, then drop the sentinel.
+	# Remove the sentinel first - the deadman polls it and self-exits within ~1s -
+	# then best-effort kill the waiter for immediacy.
 	pid="$(cat "$SENTINEL" 2>/dev/null || true)"
-	[ -n "$pid" ] && { kill -- "-${pid}" 2>/dev/null || kill "$pid" 2>/dev/null || true; }
 	rm -f "$SENTINEL"
+	[ -n "$pid" ] && kill "$pid" 2>/dev/null || true
 }
 
 cmd_confirm() {
@@ -356,14 +356,11 @@ cmd_apply() {
 			snap="$(snapshot_current)"
 			"$ENGINE"
 			# Detached deadman: rolls back to the snapshot unless the sentinel is
-			# removed (by --commit) within T seconds. Runs in its own session
-			# (setsid) so cancelling can group-kill it cleanly; survives this exit.
-			dm="sleep ${T}; [ -f '${SENTINEL}' ] && { nft -f '${snap}' 2>/dev/null; cp '${snap}' '${NFT_FILE}' 2>/dev/null; logger -t nftgeo 'deadman: apply not confirmed in ${T}s, rolled back' 2>/dev/null; rm -f '${SENTINEL}'; }"
-			if command -v setsid >/dev/null 2>&1; then
-				setsid sh -c "$dm" >/dev/null 2>&1 &
-			else
-				nohup sh -c "$dm" >/dev/null 2>&1 &
-			fi
+			# removed (by --commit) within T seconds. It polls the sentinel once a
+			# second, so removing it makes the deadman self-exit within ~1s with no
+			# long-lived sleep to reap. nohup so it survives this process exiting.
+			dm="i=0; while [ \$i -lt ${T} ]; do [ -f '${SENTINEL}' ] || exit 0; sleep 1; i=\$((i+1)); done; [ -f '${SENTINEL}' ] && { nft -f '${snap}' 2>/dev/null; cp '${snap}' '${NFT_FILE}' 2>/dev/null; logger -t nftgeo 'deadman: apply not confirmed in ${T}s, rolled back' 2>/dev/null; rm -f '${SENTINEL}'; }"
+			nohup sh -c "$dm" >/dev/null 2>&1 &
 			echo "$!" > "$SENTINEL"
 			echo "Applied with a ${T}s deadman. If you still have access, keep it with:"
 			echo "    nftgeo apply --commit"
