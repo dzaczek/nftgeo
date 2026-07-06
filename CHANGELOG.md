@@ -9,6 +9,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.16.0] - 2026-07-06
+
+### Added
+- nftgeo-ui full offline geo dataset (roadmap M6A.5b): `GEO_FULL=1` makes the UI
+  fetch every ipdeny country zone into `GEO_CACHE_DIR` (default
+  `/var/lib/nftgeo/ui-geo`) in the background on startup and daily, so the world
+  map geolocates all sources - not just the countries your rules reference (238
+  countries / ~177k prefixes on a live host). Low concurrency + retries (ipdeny
+  throttles bursts); a `/api/geo` endpoint reports coverage, shown on the map.
+  Off by default (~240 outbound requests to ipdeny.com).
+
 ## [1.15.0] - 2026-07-06
 
 ### Added
@@ -252,6 +263,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.16.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.16.0
 [1.15.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.15.0
 [1.14.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.14.0
 [1.13.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.13.0

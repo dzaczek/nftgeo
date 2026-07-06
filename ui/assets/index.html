@@ -122,7 +122,7 @@
         <div class="card"><h3>Drops over time (24h)</h3><div id="spark"></div></div>
       </div>
       <div class="grid g2">
-        <div class="card"><h3>Where drops come from (ingress)</h3><div id="map"></div>
+        <div class="card"><h3>Where drops come from (ingress) <span id="geonote" class="muted" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h3><div id="map"></div>
           <div id="mapfallback" class="muted" style="display:none;font-size:12px">Map library unavailable — see the country list.</div></div>
         <div>
           <div class="card"><h3>Top source countries (ingress)</h3><div id="cc-in"></div></div>
@@ -221,6 +221,7 @@ async function refresh(){
     $('#k-total').textContent=d.total; $('#k-in').textContent=ing; $('#k-out').textContent=egr;
     bars($('#cc-in'),d.ingressByCC,'drop'); bars($('#cc-out'),d.egressByCC,''); bars($('#ports'),d.topPorts,'');
     sparkline($('#spark'),d.timeline);
+    try{const g=await j('/api/geo');$('#geonote').textContent=`· ${g.countries} countries indexed${g.full?'':' (rule-set only — set GEO_FULL=1 for global)'}`;}catch(e){}
     if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;try{map.series.regions[0].setValues(vals);}catch(e){}}
     renderLogs();
     const st=await j('/api/sets'); const ab=(st||[]).find(x=>x.name==='abuse4'); $('#k-abuse').textContent=ab?ab.count:0;

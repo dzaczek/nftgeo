@@ -561,7 +561,9 @@ SSH: `ssh -L 8787:127.0.0.1:8787 <host>`, then open `http://127.0.0.1:8787`.
 Geolocation reuses the local ipdeny zones, which nftgeo only downloads for the
 countries your rules reference. So the world map currently colours the countries
 you filter on; the recent-drops feed, counters, and set sizes are always
-complete. A full offline geo dataset for the map is roadmap **M6A.5b**.
+complete. Set `GEO_FULL=1` (env, e.g. a `nftgeo-ui.service` drop-in) to have
+the UI fetch every ipdeny country zone into `GEO_CACHE_DIR` on startup and daily,
+making the map global (~240 outbound requests; off by default).
 
 ## Roadmap / TODO
 

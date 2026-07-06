@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -23,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,7 +40,70 @@ var (
 	rulesFile  = env("RULES_FILE", "/etc/nftgeo/rules.conf")
 	rulesDir   = env("RULES_DIR", "/etc/nftgeo/rules.d")
 	feedsDir   = env("ABUSE_FEEDS_CACHE_DIR", "/var/lib/nftgeo/feeds")
+	// Optional full offline geo dataset (GEO_FULL=1): fetch every ipdeny country
+	// zone into a UI-owned cache so the drop map covers all sources.
+	geoFull     = env("GEO_FULL", "")
+	geoCacheDir = env("GEO_CACHE_DIR", "/var/lib/nftgeo/ui-geo")
+	ipdenyV4    = env("IPDENY_V4_URL", "https://www.ipdeny.com/ipblocks/data/aggregated")
 )
+
+// ISO 3166-1 alpha-2 codes (lowercase) - the ipdeny per-country zone filenames.
+const isoCodes = "ad ae af ag ai al am ao ar as at au aw ax az ba bb bd be bf bg bh bi bj bl bm bn bo bq br bs bt bw by bz ca cc cd cf cg ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm do dz ec ee eg eh er es et fi fj fk fm fo fr ga gb gd ge gf gg gh gi gl gm gn gp gq gr gt gu gw gy hk hn hr ht hu id ie il im in io iq ir is it je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ly ma mc md me mf mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz na nc ne nf ng ni nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg sh si sk sl sm sn so sr ss st sv sx sy sz tc td tg th tj tk tl tm tn to tr tt tv tw tz ua ug us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw"
+
+var geoRefresh atomic.Int64 // unix seconds of last successful geo-cache fetch
+
+// geoFetchAll downloads every country zone into geoCacheDir (bounded concurrency,
+// per-request timeout, failures skipped), then reloads the geo index.
+func geoFetchAll() {
+	if err := os.MkdirAll(geoCacheDir, 0755); err != nil {
+		return
+	}
+	codes := strings.Fields(isoCodes)
+	// ipdeny throttles many concurrent connections from one IP, so keep the
+	// concurrency low and retry with a backoff.
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	var n int64
+	client := &http.Client{Timeout: 25 * time.Second}
+	fetch := func(cc string) []byte {
+		for attempt := 0; attempt < 3; attempt++ {
+			resp, err := client.Get(ipdenyV4 + "/" + cc + "-aggregated.zone")
+			if err == nil {
+				if resp.StatusCode == 200 {
+					b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+					resp.Body.Close()
+					if len(b) > 0 {
+						return b
+					}
+				} else {
+					resp.Body.Close()
+					if resp.StatusCode == 404 {
+						return nil // ipdeny has no zone for this code
+					}
+				}
+			}
+			time.Sleep(time.Duration(400+attempt*600) * time.Millisecond)
+		}
+		return nil
+	}
+	for _, cc := range codes {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(cc string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if b := fetch(cc); b != nil {
+				if os.WriteFile(geoCacheDir+"/"+cc+".v4", b, 0644) == nil {
+					atomic.AddInt64(&n, 1)
+				}
+			}
+		}(cc)
+	}
+	wg.Wait()
+	geoRefresh.Store(time.Now().Unix())
+	log.Printf("nftgeo-ui: geo-cache fetched %d/%d country zones", n, len(codes))
+	geo.load()
+}
 
 func runV(name string, args ...string) string { out, _ := run(name, args...); return strings.TrimSpace(out) }
 
@@ -245,9 +310,11 @@ func setCount(name string) int {
 // ---- geolocation from the local ipdeny zones -------------------------------
 
 type geoIndex struct {
-	mu   sync.RWMutex
-	v4   map[byte][]v4net // first octet -> nets
-	when time.Time
+	mu    sync.RWMutex
+	v4    map[byte][]v4net // first octet -> nets
+	when  time.Time
+	count int
+	ccs   int
 }
 type v4net struct {
 	ip, mask uint32
@@ -257,42 +324,52 @@ type v4net struct {
 var geo = &geoIndex{v4: map[byte][]v4net{}}
 
 func (g *geoIndex) load() {
-	entries, err := os.ReadDir(zoneDir)
-	if err != nil {
-		return
-	}
 	idx := map[byte][]v4net{}
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".v4") {
-			continue
-		}
-		cc := strings.TrimSuffix(name, ".v4")
-		data, err := os.ReadFile(zoneDir + "/" + name)
+	seen := map[string]bool{}
+	total := 0
+	// UI geo-cache first (broad coverage wins), then the engine's zone cache.
+	for _, dir := range []string{geoCacheDir, zoneDir} {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
+		for _, e := range entries {
+			name := e.Name()
+			if !strings.HasSuffix(name, ".v4") {
 				continue
 			}
-			_, n, err := net.ParseCIDR(line)
+			cc := strings.TrimSuffix(name, ".v4")
+			if seen[cc] {
+				continue
+			}
+			seen[cc] = true
+			data, err := os.ReadFile(dir + "/" + name)
 			if err != nil {
 				continue
 			}
-			ip4 := n.IP.To4()
-			if ip4 == nil {
-				continue
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				_, n, err := net.ParseCIDR(line)
+				if err != nil {
+					continue
+				}
+				ip4 := n.IP.To4()
+				if ip4 == nil {
+					continue
+				}
+				idx[ip4[0]] = append(idx[ip4[0]], v4net{be32(ip4), be32(net.IP(n.Mask).To4()), cc})
+				total++
 			}
-			ipu := be32(ip4)
-			masku := be32(net.IP(n.Mask).To4())
-			idx[ip4[0]] = append(idx[ip4[0]], v4net{ipu, masku, cc})
 		}
 	}
 	g.mu.Lock()
 	g.v4 = idx
 	g.when = time.Now()
+	g.count = total
+	g.ccs = len(seen)
 	g.mu.Unlock()
 }
 
@@ -317,6 +394,20 @@ func (g *geoIndex) lookup(ipStr string) string {
 		}
 	}
 	return best
+}
+
+func geoStale() bool {
+	ents, err := os.ReadDir(geoCacheDir)
+	if err != nil || len(ents) < 50 {
+		return true
+	}
+	var newest time.Time
+	for _, e := range ents {
+		if fi, err := e.Info(); err == nil && fi.ModTime().After(newest) {
+			newest = fi.ModTime()
+		}
+	}
+	return time.Since(newest) > 24*time.Hour
 }
 
 func be32(b []byte) uint32 {
@@ -669,6 +760,16 @@ func main() {
 			geo.load()
 		}
 	}()
+	if geoFull != "" {
+		go func() {
+			if geoStale() {
+				geoFetchAll()
+			}
+			for range time.Tick(24 * time.Hour) {
+				geoFetchAll()
+			}
+		}()
+	}
 
 	sub, _ := fs.Sub(assetsFS, "assets")
 	http.Handle("/", http.FileServer(http.FS(sub)))
@@ -693,6 +794,17 @@ func main() {
 	})
 	http.HandleFunc("/api/objects", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, objects())
+	})
+	http.HandleFunc("/api/geo", func(w http.ResponseWriter, r *http.Request) {
+		geo.mu.RLock()
+		cnt, ccs, when := geo.count, geo.ccs, geo.when
+		geo.mu.RUnlock()
+		m := map[string]interface{}{"full": geoFull != "", "cacheDir": geoCacheDir,
+			"countries": ccs, "entries": cnt, "indexedAt": when.UTC().Format(time.RFC3339)}
+		if ref := geoRefresh.Load(); ref > 0 {
+			m["lastRefresh"] = time.Unix(ref, 0).UTC().Format(time.RFC3339)
+		}
+		writeJSON(w, m)
 	})
 	http.HandleFunc("/api/drops", func(w http.ResponseWriter, r *http.Request) {
 		since := r.URL.Query().Get("since")
