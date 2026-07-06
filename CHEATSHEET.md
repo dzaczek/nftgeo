@@ -4,13 +4,16 @@ Quick reference for every command. Rules live in `/etc/nftgeo/rules.conf` (or
 `rules.d/*.conf`); settings in `/etc/nftgeo/config`. After editing files, apply
 with `sudo systemctl start nftgeo.service` (or `sudo nftgeo apply`).
 
-Rule line: `<action> <dir> <proto> <port> <target>`
+Rule line: `<action> <dir> <proto> <port> <target> [on <iface>]`
 - **action** `allow` | `deny`
 - **dir** `in` | `out` | `fwd-in` | `fwd-out`
 - **proto** `tcp` `udp` `sctp` `all` | `any` `icmp` `icmpv6` `esp` `ah` `gre`
 - **port** `22` | `5060-5070` | `-` (port-less protos)
 - **target** country `pl` · region `europe` · IP `203.0.113.5` · CIDR `10.0.0.0/8`
   · group `office` · `any` · `abuse` (deny-only)
+- **on `<iface>`** (optional) scope to one interface: `iifname` for the source
+  side (`in`/`fwd-in`), `oifname` for the destination (`out`/`fwd-out`). Any real
+  name works (`eth0`, `eth0.100`, `br-lan`, `wg0`, `home-Client-10`).
 
 ---
 
@@ -39,6 +42,8 @@ allow in  icmp -   any                 # allow ping (v4); icmpv6 for v6
 allow out udp 53   any                 # outbound DNS (client; replies auto-allowed)
 allow fwd-in  tcp 443 europe           # gateway: forward inbound 443 from EU
 allow fwd-out tcp 80  any              # gateway: let the LAN browse out
+allow in  tcp 22   europe on eth0      # SSH from EU only on the WAN interface
+allow in  tcp 22   any    on wg0       # ...and freely over a trusted VPN tunnel
 ```
 
 A pure client needs no rule — replies to its own connections are always allowed.
@@ -128,9 +133,11 @@ sudo nftgeo rollback                   # restore the previous generation
 ## Enabling features (config → apply)
 
 ```sh
+HARDEN="1"                             # baseline: accept lo, drop invalid, ICMPv6
 LOG_DROPS="1"                          # log dropped packets to journald/dmesg
 ABUSE_FEEDS="https://..."              # extra blocklists
 WHITELIST_HOSTS="vpn.example.ch"       # hostname whitelist
+RESOLVERS="1.1.1.1 8.8.8.8 local"      # resolve whitelist hosts via public DNS first
 # then:
 sudo systemctl start nftgeo.service
 ```

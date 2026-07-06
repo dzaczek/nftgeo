@@ -40,3 +40,16 @@ One rule of thumb that explains most of these: **inbound is closed only where yo
 open it, outbound is open unless you restrict it, and replies to connections you
 started are always allowed.** So a pure client (it only makes outbound requests)
 usually needs no rules at all.
+
+Two extras that apply across all of these:
+
+- **Scope any rule to an interface** by ending it with `on <iface>`, e.g.
+  `allow in tcp 22 europe on eth0`. `on` maps to `iifname` on the source side
+  (`in`/`fwd-in`) and `oifname` on the destination side (`out`/`fwd-out`); any
+  real interface name works (`eth0.100`, `br-lan`, `wg0`, ...).
+- **Baseline hardening** is a config toggle, not a rule fragment: set `HARDEN="1"`
+  in `/etc/nftgeo/config` to accept loopback, drop invalid packets, and always
+  permit essential ICMPv6.
+
+NAT / port-forwarding and internal (inter-VLAN) segmentation are on the roadmap -
+see [ROADMAP.md](../ROADMAP.md).
