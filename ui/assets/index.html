@@ -91,6 +91,8 @@
   .tog.on{background:#2ecc71}
   .tog::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
   .tog.on::after{left:18px}
+  .secrow td{background:var(--bg);cursor:pointer;border-top:1px solid var(--line)}
+  .sectitle{letter-spacing:.6px;text-transform:uppercase;font-size:11px;font-weight:700;color:var(--acc2)}
   /* theme toggle + responsive + light theme (dark sidebar stays, FortiGate-style) */
   .themebtn{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:5px 10px;cursor:pointer;margin-top:8px;font:inherit}
   .themebtn:hover{color:var(--fg)}
@@ -205,6 +207,7 @@
         <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
         <span style="display:flex;gap:10px;align-items:center">
           <span class="muted" id="polhint" style="font-size:12px">Drag ⠿ to reorder · toggle to enable/disable · click a row to edit · click a target to change it.</span>
+          <button class="btn-ghost" id="addsection" style="color:var(--fg)">+ Section</button>
           <button class="btn-go" id="addrule">+ Add rule</button>
         </span>
       </div>
@@ -452,7 +455,14 @@ function renderPolicy(){
   const f=$('#pf').value.toLowerCase();
   const ro=MODE==='ro';
   const rows=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
-  $('#policy').innerHTML=rows.map((r,i)=>{
+  let n=0;
+  $('#policy').innerHTML=rows.map(r=>{
+    if(r.kind==='section'){
+      return `<tr class="prow secrow" data-id="${r.id}" ${ro?'':'draggable="true"'}>
+        <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}</td>
+        <td colspan="7" class="sectitle">§ ${esc(r.title||'(untitled)')}</td></tr>`;
+    }
+    n++; const i=n-1;
     const [s,d]=srcDst(r);
     const act=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
     const tog=`<span class="tog ${r.disabled?'':'on'}" ${ro?'':`data-toggle="${r.id}"`} title="${r.disabled?'disabled':'enabled'}"></span>`;
@@ -471,11 +481,35 @@ $('#policy').addEventListener('click',async e=>{
   if(t){const r=await post('/api/rules/draft/toggle',{id:+t.dataset.toggle});if(r&&r.error){toast(r.error);return;}await loadPolicy();refreshCommitBar();return;}
   if(MODE==='ro')return;
   const row=e.target.closest('.prow'); if(!row)return;
+  if(row.classList.contains('secrow')){sectionDrawer(+row.dataset.id);return;}
   const chip=e.target.closest('.chip.obj,.chip.any,.chip.abuse');
   if(chip){inlineTarget(row,chip);return;}
   ruleDrawer(+row.dataset.id);
 });
 $('#addrule').addEventListener('click',()=>ruleDrawer(null));
+$('#addsection').addEventListener('click',()=>sectionDrawer(null));
+
+function sectionDrawer(id){
+  if(MODE==='ro')return;
+  const s=id!=null?(RULES||[]).find(x=>x.id===id):null;
+  $('#drawertitle').textContent=id!=null?'Edit section':'New section';
+  $('#drawerbody').innerHTML=`
+    <label class="fld"><span>Section title</span><input id="s-title" value="${esc(s?s.title:'')}" placeholder="e.g. DMZ rules" autocomplete="off"></label>
+    <p class="muted" style="font-size:12px">A section is a labelled divider (a <code>## title</code> comment) grouping the rules below it. Drag it to position. Saved to the draft — deploy via Commit.</p>
+    <div style="display:flex;gap:8px;margin-top:auto">
+      <button class="btn-go" onclick="saveSection(${id!=null?id:'null'})">Save to draft</button>
+      ${id!=null?`<button class="btn-rb" onclick="deleteRule(${id})">Delete</button>`:''}
+      <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
+    </div>`;
+  openDrawer(); $('#s-title').focus();
+}
+async function saveSection(id){
+  const b={title:$('#s-title').value};
+  if(id!=null)b.id=id;
+  const res=await post('/api/rules/draft/section',b);
+  if(res&&res.error){toast('Rejected: '+res.error);return;}
+  closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Saved to draft.');
+}
 
 function ruleDrawer(id){
   if(MODE==='ro')return;
@@ -659,7 +693,7 @@ async function boot(){
   }catch(e){showLock('');return;}
   hideLock();
   if(MODE==='ro'){$('#modebadge').textContent='read-only';$('#nav-rules').style.display='none';
-    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#addrule').style.display='none';}
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();

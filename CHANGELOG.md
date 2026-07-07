@@ -9,6 +9,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.22.0] - 2026-07-07
+
+### Added
+- **nftgeo-ui rule sections (roadmap Phase B, M6B.5).** Group rules under titled
+  section headers ("Perimeter", "DMZ", "Egress"…) for readability in large
+  policies. **+ Section** adds a divider; click one to rename or delete it; drag
+  it like any row to position it. Sections are stored as `## Title` comment lines
+  in rules.conf, so they round-trip losslessly and the engine ignores them
+  (validated on hermes: adding/moving a section keeps the ruleset byte-identical).
+  New endpoint: `POST /api/rules/draft/section` (add/rename); delete reuses the
+  rule-delete endpoint. Next: templates / building blocks (M6B.7).
+
 ## [1.21.0] - 2026-07-07
 
 ### Added
@@ -362,6 +374,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.22.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.22.0
 [1.21.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.21.0
 [1.20.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.20.0
 [1.19.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.19.0

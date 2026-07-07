@@ -192,9 +192,10 @@ count.
   group/region autocomplete, `on <iface>`, name); click a target chip for an
   **inline quick-edit**. Fields validated server-side; the engine's `validate` is
   the final gate. Writes to the draft, deploys via Commit.
-- [ ] **M6B.5 Sections / rule groups.** Insert titled section headers between
-  rules ("DMZ rules", "Geo-drops") to keep large policies readable; sections are
-  comment-anchored in `rules.conf` so they round-trip.
+- [x] **M6B.5 Sections / rule groups.** *(Shipped 1.22.0.)* Titled section headers
+  ("Perimeter", "DMZ", "Egress") group rules for readability; add / rename / delete
+  / drag them. Stored as `## Title` comment lines in `rules.conf` (round-trip
+  lossless, ignored by the engine).
 - [ ] **M6B.6 Commit / Deploy pipeline.** Top-bar **Commit** button → change
   summary ("+1 rule, ~1 object") → `validate` → `plan` visual diff → on confirm
   `apply --confirm` with the in-page deadman countdown / one-click rollback.

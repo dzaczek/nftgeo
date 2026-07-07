@@ -612,8 +612,9 @@ and live hit counts, **drag-and-drop reordering** (top-down precedence) and a
 per-rule **enable/disable toggle**. **+ Add rule** or clicking a row opens a
 slide-out drawer to edit the rule's fields (action, direction, protocol, port,
 target with group/region autocomplete, interface, name) or delete it; clicking a
-target chip does an inline quick-edit. Every change writes to the draft and deploys
-via Commit. Next up: rule sections and templates (P6 Phase B, M6B.5 / M6B.7).
+target chip does an inline quick-edit, and **+ Section** adds a titled divider
+(`## Title`) to group rules in large policies. Every change writes to the draft and
+deploys via Commit. Next up: templates / building blocks (P6 Phase B, M6B.7).
 
 ## Roadmap / TODO
 

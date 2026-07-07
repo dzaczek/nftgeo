@@ -1264,8 +1264,12 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 // through the file. Body is kept verbatim (field parsing is for display only),
 // so these ops never rewrite a rule's own text. Field editing is M6B.4.
 
+// draftRule is one ordered item in rules.conf: a rule (Kind "rule") or a section
+// header (Kind "section": a "## Title" comment that groups the rules below it).
 type draftRule struct {
 	ID       int      `json:"id"`
+	Kind     string   `json:"kind"`
+	Title    string   `json:"title,omitempty"`
 	Disabled bool     `json:"disabled"`
 	Action   string   `json:"action"`
 	Dir      string   `json:"dir"`
@@ -1279,6 +1283,8 @@ type draftRule struct {
 	Hits     int64    `json:"hits"`
 	Matched  bool     `json:"matched"`
 }
+
+var sectionRe = regexp.MustCompile(`^#{2,}\s*(.*?)\s*#*$`)
 
 // ruleFields splits a candidate rule line into fields + trailing comment, and
 // reports whether it is a valid allow/deny rule.
@@ -1297,7 +1303,7 @@ func ruleFields(s string) (fields []string, body, comment string, ok bool) {
 }
 
 func mkDraftRule(id int, disabled bool, f []string, body, comment string, trivia []string) *draftRule {
-	r := &draftRule{ID: id, Disabled: disabled, Body: body, Name: comment, Trivia: trivia,
+	r := &draftRule{ID: id, Kind: "rule", Disabled: disabled, Body: body, Name: comment, Trivia: trivia,
 		Action: f[0], Dir: f[1], Proto: f[2], Port: f[3], Target: f[4]}
 	for i := 5; i < len(f)-1; i++ {
 		if f[i] == "on" {
@@ -1313,6 +1319,17 @@ func parseDraftRules(text string) ([]*draftRule, []string) {
 	id := 0
 	for _, raw := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "##") {
+			// "## Title" is a section header (grouping label).
+			title := ""
+			if m := sectionRe.FindStringSubmatch(trimmed); m != nil {
+				title = m[1]
+			}
+			rules = append(rules, &draftRule{ID: id, Kind: "section", Title: title, Trivia: trivia})
+			id++
+			trivia = nil
+			continue
+		}
 		if strings.HasPrefix(trimmed, "#") {
 			// A commented line that parses as a rule is a disabled rule.
 			if f, body, comment, ok := ruleFields(strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))); ok {
@@ -1338,6 +1355,10 @@ func serializeDraftRules(rules []*draftRule, tail []string) string {
 		for _, t := range r.Trivia {
 			b.WriteString(t)
 			b.WriteByte('\n')
+		}
+		if r.Kind == "section" {
+			b.WriteString("## " + r.Title + "\n")
+			continue
 		}
 		if r.Disabled {
 			b.WriteString("# ")
@@ -1368,7 +1389,7 @@ func annotateDraft(rules []*draftRule, chs []Chain) {
 	var prs []PolicyRule
 	var idx []int
 	for i, r := range rules {
-		if r.Disabled {
+		if r.Disabled || r.Kind == "section" {
 			continue
 		}
 		prs = append(prs, PolicyRule{Action: r.Action, Dir: r.Dir, Proto: r.Proto, Port: r.Port, Target: r.Target})
@@ -1447,7 +1468,7 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 			found = rr
 		}
 	}
-	if found == nil {
+	if found == nil || found.Kind == "section" {
 		http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
 		return
 	}
@@ -1457,6 +1478,45 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"saved": true, "disabled": found.Disabled})
+}
+
+// handleRulesSection adds a new section header (no id) or renames one (with id).
+func handleRulesSection(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID    *int   `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	title := sanitizeComment(req.Title)
+	if title == "" {
+		http.Error(w, `{"error":"section needs a title"}`, http.StatusBadRequest)
+		return
+	}
+	text, _ := draftRulesText()
+	rules, tail := parseDraftRules(text)
+	if req.ID != nil {
+		var found *draftRule
+		for _, rr := range rules {
+			if rr.ID == *req.ID && rr.Kind == "section" {
+				found = rr
+			}
+		}
+		if found == nil {
+			http.Error(w, `{"error":"no such section"}`, http.StatusBadRequest)
+			return
+		}
+		found.Title = title
+	} else {
+		rules = append(rules, &draftRule{ID: -1, Kind: "section", Title: title})
+	}
+	if err := writeDraftRules(rules, tail); err != nil {
+		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"saved": true})
 }
 
 // ---- rule add / edit / delete (M6B.4) ----
@@ -1858,6 +1918,7 @@ func main() {
 	api("/api/rules/draft/toggle", handleRulesToggle)
 	api("/api/rules/draft/save", handleRulesSave)
 	api("/api/rules/draft/delete", handleRulesDelete)
+	api("/api/rules/draft/section", handleRulesSection)
 	api("/api/draft/discard", handleDraftDiscard)
 	api("/api/commit/preview", handleCommitPreview)
 	api("/api/commit/status", handleCommitStatus)
