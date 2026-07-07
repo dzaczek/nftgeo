@@ -40,6 +40,49 @@ func TestBuildRuleBody(t *testing.T) {
 	}
 }
 
+func TestBuildThrottleBody(t *testing.T) {
+	cases := []struct {
+		name, dir, proto, port, rate, ban, iface string
+		want                                     string
+		wantErr                                  bool
+	}{
+		{"basic", "in", "tcp", "22", "5/minute", "", "", "throttle in tcp 22 5/minute", false},
+		{"ban_iface", "fwd-in", "udp", "5060", "20/second", "2h", "eth0", "throttle fwd-in udp 5060 20/second ban 2h on eth0", false},
+		{"list_port", "in", "tcp", "22,3389", "3/minute", "", "", "throttle in tcp 22,3389 3/minute", false},
+		{"bad_dir", "out", "tcp", "22", "5/minute", "", "", "", true},
+		{"bad_proto", "in", "icmp", "22", "5/minute", "", "", "", true},
+		{"bad_rate", "in", "tcp", "22", "5/min", "", "", "", true},
+		{"bad_ban", "in", "tcp", "22", "5/minute", "soon", "", "", true},
+		{"service_port", "in", "tcp", "web", "5/minute", "", "", "", true},
+	}
+	for _, c := range cases {
+		got, err := buildThrottleBody(c.dir, c.proto, c.port, c.rate, c.ban, c.iface)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("%s: expected error, got %q", c.name, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", c.name, err)
+		} else if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestParseThrottleRule(t *testing.T) {
+	items, _ := parseDraftRules("throttle in tcp 22 5/minute ban 2h on eth0\n")
+	if len(items) != 1 {
+		t.Fatalf("got %d items", len(items))
+	}
+	r := items[0]
+	if r.Action != "throttle" || r.Dir != "in" || r.Proto != "tcp" || r.Port != "22" ||
+		r.Rate != "5/minute" || r.Ban != "2h" || r.Iface != "eth0" {
+		t.Errorf("throttle parsed wrong: %+v", r)
+	}
+}
+
 func TestParseDraftRulesRoundTrip(t *testing.T) {
 	in := "# header\nallow in tcp 22 any # ssh\n## Section\n# deny in tcp 23 any # disabled\ndeny out any - abuse\n"
 	items, tail := parseDraftRules(in)

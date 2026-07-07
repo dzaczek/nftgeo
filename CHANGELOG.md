@@ -9,6 +9,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.30.0] - 2026-07-07
+
+### Added
+- **Throttle rules in the panel.** The visual policy editor now understands
+  `throttle` rules: they render as their own row (a rate chip, `THROTTLE` badge
+  with the ban in the tooltip) and a **+ Throttle** button / row-click opens a
+  dedicated drawer (direction, protocol, port, rate = number + per second/minute/
+  hour, optional ban and interface). They toggle, reorder, delete and deploy
+  through the same draft→Commit pipeline as every other rule; input is validated
+  server-side and by the engine at preview. Previously throttle rules were only
+  editable in `rules.conf` / the raw editor. New tests cover `buildThrottleBody`
+  and throttle parsing.
+
 ## [1.29.0] - 2026-07-07
 
 ### Added
@@ -528,6 +541,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.30.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.30.0
 [1.29.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.29.0
 [1.28.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.28.0
 [1.27.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.27.0

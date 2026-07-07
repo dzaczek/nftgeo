@@ -116,7 +116,9 @@ Form: `throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>]
 dynamic timeout set and dropped for `THROTTLE_BAN` (default `1h`; override
 per-rule with `ban <dur>`). It runs **after the whitelist**, so whitelisted
 sources are never throttled. Bans live in the `throttle_block{4,6}` sets (visible
-in the dashboard's live-sets panel); they expire automatically.
+in the dashboard's live-sets panel); they expire automatically. You can add and
+edit throttle rules in the dashboard (**+ Throttle** on the Policy tab) as well as
+in `rules.conf`.
 
 Define reusable **service objects** as `SERVICE_<NAME>` variables — named ports
 and port groups you use in a rule's port field by name. A service may contain

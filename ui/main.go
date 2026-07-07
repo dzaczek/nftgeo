@@ -1398,6 +1398,8 @@ type draftRule struct {
 	Port     string   `json:"port"`
 	Target   string   `json:"target"`
 	Iface    string   `json:"iface"`
+	Rate     string   `json:"rate,omitempty"` // throttle only
+	Ban      string   `json:"ban,omitempty"`  // throttle only
 	Name     string   `json:"name"`
 	Body     string   `json:"body"`
 	Trivia   []string `json:"-"`
@@ -1417,7 +1419,7 @@ func ruleFields(s string) (fields []string, body, comment string, ok bool) {
 	}
 	body = strings.TrimSpace(body)
 	f := strings.Fields(body)
-	if len(f) >= 5 && (f[0] == "allow" || f[0] == "deny") {
+	if len(f) >= 5 && (f[0] == "allow" || f[0] == "deny" || f[0] == "throttle") {
 		return f, body, comment, true
 	}
 	return nil, "", "", false
@@ -1425,7 +1427,21 @@ func ruleFields(s string) (fields []string, body, comment string, ok bool) {
 
 func mkDraftRule(id int, disabled bool, f []string, body, comment string, trivia []string) *draftRule {
 	r := &draftRule{ID: id, Kind: "rule", Disabled: disabled, Body: body, Name: comment, Trivia: trivia,
-		Action: f[0], Dir: f[1], Proto: f[2], Port: f[3], Target: f[4]}
+		Action: f[0], Dir: f[1], Proto: f[2], Port: f[3]}
+	if f[0] == "throttle" {
+		// throttle <dir> <proto> <port> <rate> [ban <dur>] [on <iface>]
+		r.Rate = f[4]
+		for i := 5; i < len(f)-1; i++ {
+			switch f[i] {
+			case "on":
+				r.Iface = f[i+1]
+			case "ban":
+				r.Ban = f[i+1]
+			}
+		}
+		return r
+	}
+	r.Target = f[4]
 	for i := 5; i < len(f)-1; i++ {
 		if f[i] == "on" {
 			r.Iface = f[i+1]
@@ -1833,7 +1849,49 @@ var (
 	ruleTargetRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 	ruleIfaceRe  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	ruleProtos   = map[string]bool{"tcp": true, "udp": true, "sctp": true, "all": true, "any": true, "icmp": true, "icmpv6": true}
+
+	throttlePortRe = regexp.MustCompile(`^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$`)
+	throttleRateRe = regexp.MustCompile(`^[0-9]+/(second|minute|hour)$`)
+	throttleBanRe  = regexp.MustCompile(`^[0-9]+[smhd]$`)
 )
+
+// buildThrottleBody assembles/validates a throttle rule; the engine re-validates
+// at preview/deploy.
+func buildThrottleBody(dir, proto, port, rate, ban, iface string) (string, error) {
+	dir, proto = strings.TrimSpace(dir), strings.ToLower(strings.TrimSpace(proto))
+	port, rate = strings.TrimSpace(port), strings.TrimSpace(rate)
+	ban, iface = strings.TrimSpace(ban), strings.TrimSpace(iface)
+	switch dir {
+	case "in", "fwd-in":
+	default:
+		return "", fmt.Errorf("throttle direction must be in or fwd-in")
+	}
+	switch proto {
+	case "tcp", "udp":
+	default:
+		return "", fmt.Errorf("throttle protocol must be tcp or udp")
+	}
+	if !throttlePortRe.MatchString(port) {
+		return "", fmt.Errorf("throttle port must be a number, range or list")
+	}
+	if !throttleRateRe.MatchString(rate) {
+		return "", fmt.Errorf("rate must be like 5/minute (N/second|minute|hour)")
+	}
+	parts := []string{"throttle", dir, proto, port, rate}
+	if ban != "" {
+		if !throttleBanRe.MatchString(ban) {
+			return "", fmt.Errorf("ban must be like 30m, 1h or 2d")
+		}
+		parts = append(parts, "ban", ban)
+	}
+	if iface != "" {
+		if !ruleIfaceRe.MatchString(iface) {
+			return "", fmt.Errorf("invalid interface name")
+		}
+		parts = append(parts, "on", iface)
+	}
+	return strings.Join(parts, " "), nil
+}
 
 func sanitizeComment(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
@@ -1891,6 +1949,7 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		File                                    string
 		ID                                      *int
 		Action, Dir, Proto, Port, Target, Iface string
+		Rate, Ban                               string
 		Name                                    string
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
@@ -1901,7 +1960,13 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 	if rf == nil {
 		return
 	}
-	body, err := buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface)
+	var body string
+	var err error
+	if req.Action == "throttle" {
+		body, err = buildThrottleBody(req.Dir, req.Proto, req.Port, req.Rate, req.Ban, req.Iface)
+	} else {
+		body, err = buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface)
+	}
 	if err != nil {
 		http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
 		return
