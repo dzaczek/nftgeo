@@ -91,6 +91,7 @@
   .tog.on{background:#2ecc71}
   .tog::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
   .tog.on::after{left:18px}
+  .filerow td{background:var(--bg);font-weight:700;font-size:12px;color:var(--fg);border-top:2px solid var(--acc2);padding:9px 12px}
   .secrow td{background:var(--bg);cursor:pointer;border-top:1px solid var(--line)}
   .sectitle{letter-spacing:.6px;text-transform:uppercase;font-size:11px;font-weight:700;color:var(--acc2)}
   .tplitem{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px}
@@ -434,15 +435,20 @@ function renderLogs(){
   $('#recent').innerHTML=rows.slice(0,300).map(r=>`<tr><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td><span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">no drops (enable LOG_DROPS)</td></tr>';
 }
 
-// ---- policy table (M6B.3): enterprise view of the draft rules ----
-let OBJMAP={}, SVCS=[]; // name(upper) -> members (chip tooltips); service names (port autocomplete)
+// ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
+let OBJMAP={}, SVCS=[], FILES=[]; // tooltips; service autocomplete; rule files
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
   try{const od=await j('/api/objects/draft');SVCS=(od.services||[]).map(s=>s.name);
     (od.groups||[]).concat(od.regions||[]).forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=g.members||[]);}catch(e){}
   fillTargets(); fillServices();
-  const d=await j('/api/rules/draft'); RULES=d.rules||[]; renderPolicy();
+  const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
+}
+function findRule(file,id){return (RULES||[]).find(r=>r.file===file&&r.id===id);}
+function fileSelectHTML(selId,sel){
+  if(FILES.length<=1)return '';
+  return `<label class="fld"><span>File</span><select id="${selId}">${FILES.map(f=>`<option${f.name===sel?' selected':''}>${esc(f.name)}</option>`).join('')}</select></label>`;
 }
 const REGIONS=['europe','asia','africa','north_america','south_america','middle_east','oceania','caribbean'];
 function fillTargets(){$('#tgtlist').innerHTML=[...Object.keys(OBJMAP),'any','abuse',...REGIONS].map(o=>`<option value="${esc(o)}">`).join('');}
@@ -466,60 +472,69 @@ function srcDst(r){
   }
 }
 function svc(r){const p=r.port&&r.port!=='-'?r.port:'';const label=(p?esc(r.proto)+'/'+esc(p):esc(r.proto));return `<span class="chip svc">${label}</span>`;}
+function rowHTML(r,n,ro){
+  const fa=`data-file="${esc(r.file)}"`;
+  if(r.kind==='section'){
+    return `<tr class="prow secrow" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+      <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}</td>
+      <td colspan="7" class="sectitle">§ ${esc(r.title||'(untitled)')}</td></tr>`;
+  }
+  const [s,d]=srcDst(r);
+  const act=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
+  const tog=`<span class="tog ${r.disabled?'':'on'}" ${ro?'':'data-toggle="1"'} title="${r.disabled?'disabled':'enabled'}"></span>`;
+  const hits=r.disabled?'<span class="muted">—</span>':(r.matched?`<b>${r.hits.toLocaleString()}</b>`:'<span class="muted">—</span>');
+  return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+    <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${n}</span></td>
+    <td>${tog}</td>
+    <td>${r.name?esc(r.name):'<span class="muted">—</span>'}</td>
+    <td>${s}</td><td>${d}</td><td>${svc(r)}${r.iface?` <span class="chip if" title="interface">${esc(r.iface)}</span>`:''}</td>
+    <td>${act}</td><td style="text-align:right">${hits}</td></tr>`;
+}
 function renderPolicy(){
   const f=$('#pf').value.toLowerCase();
   const ro=MODE==='ro';
-  const rows=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
-  let n=0;
-  $('#policy').innerHTML=rows.map(r=>{
-    if(r.kind==='section'){
-      return `<tr class="prow secrow" data-id="${r.id}" ${ro?'':'draggable="true"'}>
-        <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}</td>
-        <td colspan="7" class="sectitle">§ ${esc(r.title||'(untitled)')}</td></tr>`;
-    }
-    n++; const i=n-1;
-    const [s,d]=srcDst(r);
-    const act=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
-    const tog=`<span class="tog ${r.disabled?'':'on'}" ${ro?'':`data-toggle="${r.id}"`} title="${r.disabled?'disabled':'enabled'}"></span>`;
-    const hits=r.disabled?'<span class="muted">—</span>':(r.matched?`<b>${r.hits.toLocaleString()}</b>`:'<span class="muted">—</span>');
-    return `<tr class="prow${r.disabled?' rdis':''}" data-id="${r.id}" ${ro?'':'draggable="true"'}>
-      <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${i+1}</span></td>
-      <td>${tog}</td>
-      <td>${r.name?esc(r.name):'<span class="muted">—</span>'}</td>
-      <td>${s}</td><td>${d}</td><td>${svc(r)}${r.iface?` <span class="chip if" title="interface">${esc(r.iface)}</span>`:''}</td>
-      <td>${act}</td><td style="text-align:right">${hits}</td></tr>`;
-  }).join('')||'<tr><td colspan="8" class="muted">no rules in rules.conf</td></tr>';
+  let html='';
+  (FILES.length?FILES:[{name:'rules.conf'}]).forEach(file=>{
+    const frows=(RULES||[]).filter(r=>r.file===file.name&&(!f||JSON.stringify(r).toLowerCase().includes(f)));
+    if(!frows.length)return;
+    if(FILES.length>1)html+=`<tr class="filerow"><td colspan="8">📄 ${esc(file.name)}${file.hasDraft?' <span class="muted" style="text-transform:none;letter-spacing:0">(draft)</span>':''}</td></tr>`;
+    let n=0;
+    frows.forEach(r=>{if(r.kind!=='section')n++; html+=rowHTML(r,r.kind==='section'?'':n,ro);});
+  });
+  $('#policy').innerHTML=html||'<tr><td colspan="8" class="muted">no rules</td></tr>';
 }
 // row interactions: toggle · inline target edit · open editor
 $('#policy').addEventListener('click',async e=>{
-  const t=e.target.closest('[data-toggle]');
-  if(t){const r=await post('/api/rules/draft/toggle',{id:+t.dataset.toggle});if(r&&r.error){toast(r.error);return;}await loadPolicy();refreshCommitBar();return;}
-  if(MODE==='ro')return;
   const row=e.target.closest('.prow'); if(!row)return;
-  if(row.classList.contains('secrow')){sectionDrawer(+row.dataset.id);return;}
+  const file=row.dataset.file, id=+row.dataset.id;
+  const t=e.target.closest('[data-toggle]');
+  if(t){const r=await post('/api/rules/draft/toggle',{file,id});if(r&&r.error){toast(r.error);return;}await loadPolicy();refreshCommitBar();return;}
+  if(MODE==='ro')return;
+  if(row.classList.contains('secrow')){sectionDrawer(file,id);return;}
   const chip=e.target.closest('.chip.obj,.chip.any,.chip.abuse');
   if(chip){inlineTarget(row,chip);return;}
-  ruleDrawer(+row.dataset.id);
+  ruleDrawer(file,id);
 });
-$('#addrule').addEventListener('click',()=>ruleDrawer(null));
-$('#addsection').addEventListener('click',()=>sectionDrawer(null));
+$('#addrule').addEventListener('click',()=>ruleDrawer(FILES[0]?FILES[0].name:'rules.conf',null));
+$('#addsection').addEventListener('click',()=>sectionDrawer(FILES[0]?FILES[0].name:'rules.conf',null));
 
-function sectionDrawer(id){
+function sectionDrawer(file,id){
   if(MODE==='ro')return;
-  const s=id!=null?(RULES||[]).find(x=>x.id===id):null;
+  const s=id!=null?findRule(file,id):null;
   $('#drawertitle').textContent=id!=null?'Edit section':'New section';
   $('#drawerbody').innerHTML=`
+    ${id!=null?'':fileSelectHTML('s-file',file)}
     <label class="fld"><span>Section title</span><input id="s-title" value="${esc(s?s.title:'')}" placeholder="e.g. DMZ rules" autocomplete="off"></label>
     <p class="muted" style="font-size:12px">A section is a labelled divider (a <code>## title</code> comment) grouping the rules below it. Drag it to position. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
-      <button class="btn-go" onclick="saveSection(${id!=null?id:'null'})">Save to draft</button>
-      ${id!=null?`<button class="btn-rb" onclick="deleteRule(${id})">Delete</button>`:''}
+      <button class="btn-go" onclick="saveSection('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
+      ${id!=null?`<button class="btn-rb" onclick="deleteRule('${esc(file)}',${id})">Delete</button>`:''}
       <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
     </div>`;
   openDrawer(); $('#s-title').focus();
 }
-async function saveSection(id){
-  const b={title:$('#s-title').value};
+async function saveSection(file,id){
+  const b={file:($('#s-file')?$('#s-file').value:file),title:$('#s-title').value};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/section',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}
@@ -539,7 +554,8 @@ async function templatesDrawer(){
   </div>`;
   $('#drawertitle').textContent='Templates';
   $('#drawerbody').innerHTML=`
-    <p class="muted" style="font-size:12px">Import inserts the block at the <b>top</b> of your policy (into the draft) — review, position and deploy via Commit.</p>
+    <p class="muted" style="font-size:12px">Import inserts the block at the <b>top</b> of the chosen file (into the draft) — review, position and deploy via Commit.</p>
+    ${fileSelectHTML('tpl-file',FILES[0]?FILES[0].name:'rules.conf')}
     <div style="display:flex;flex-direction:column;gap:8px">${list.map(item).join('')}</div>
     <div style="margin-top:auto;border-top:1px solid var(--line);padding-top:12px">
       <label class="fld"><span>Save the current policy as a reusable template</span><input id="tpl-name" placeholder="template name" autocomplete="off"></label>
@@ -547,18 +563,20 @@ async function templatesDrawer(){
     </div>`;
   openDrawer();
 }
-async function importTpl(id){const r=await post('/api/rules/draft/import',{id});if(r&&r.error){toast(r.error);return;}closeDrawer();await loadPolicy();refreshCommitBar();toast('Imported '+(r.rules||0)+' rules to the top — deploy via Commit.');}
+async function importTpl(id){const file=$('#tpl-file')?$('#tpl-file').value:(FILES[0]?FILES[0].name:'rules.conf');
+  const r=await post('/api/rules/draft/import',{file,id});if(r&&r.error){toast(r.error);return;}closeDrawer();await loadPolicy();refreshCommitBar();toast('Imported '+(r.rules||0)+' rules to the top of '+file+' — deploy via Commit.');}
 async function delTpl(id){const r=await post('/api/templates/delete',{id});if(r&&r.error){toast(r.error);return;}templatesDrawer();}
 async function saveTpl(){const name=$('#tpl-name').value.trim();if(!name){toast('Name required.');return;}const r=await post('/api/templates',{name,description:''});if(r&&r.error){toast('Rejected: '+r.error);return;}toast('Template saved.');templatesDrawer();}
 
-function ruleDrawer(id){
+function ruleDrawer(file,id){
   if(MODE==='ro')return;
-  const r=id!=null?(RULES||[]).find(x=>x.id===id):null;
+  const r=id!=null?findRule(file,id):null;
   const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name}
            :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:''};
   const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
   $('#drawertitle').textContent=id!=null?'Edit rule':'New rule';
   $('#drawerbody').innerHTML=`
+    ${id!=null?'':fileSelectHTML('r-file',file)}
     <label class="fld"><span>Name (comment)</span><input id="r-name" value="${esc(v.name)}" placeholder="describe this rule" autocomplete="off"></label>
     <div style="display:flex;gap:10px">
       <label class="fld" style="flex:1"><span>Action</span><select id="r-action">${opt(['allow','deny'],v.action)}</select></label>
@@ -572,8 +590,8 @@ function ruleDrawer(id){
     <label class="fld"><span>Interface (optional)</span><input id="r-iface" value="${esc(v.iface)}" placeholder="e.g. eth0 — blank = any" autocomplete="off"></label>
     <p class="muted" style="font-size:12px"><b>Direction</b> sets what the target means: <b>in</b> = source, <b>out</b> = destination, <b>fwd-*</b> = forwarded. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
-      <button class="btn-go" onclick="saveRule(${id!=null?id:'null'})">Save to draft</button>
-      ${id!=null?`<button class="btn-rb" onclick="deleteRule(${id})">Delete</button>`:''}
+      <button class="btn-go" onclick="saveRule('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
+      ${id!=null?`<button class="btn-rb" onclick="deleteRule('${esc(file)}',${id})">Delete</button>`:''}
       <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
     </div>`;
   rProtoChange(); openDrawer(); $('#r-name').focus();
@@ -581,48 +599,51 @@ function ruleDrawer(id){
 function rProtoChange(){const p=$('#r-proto').value,pt=$('#r-port');
   if(p==='icmp'||p==='icmpv6'){pt.value='';pt.disabled=true;pt.placeholder='(no port)';}
   else{pt.disabled=false;pt.placeholder=p==='any'?'blank = every port, or a service (e.g. dns)':'443, 80,443 or a service';}}
-async function saveRule(id){
-  const b={action:$('#r-action').value,dir:$('#r-dir').value,proto:$('#r-proto').value,port:$('#r-port').value,
+async function saveRule(file,id){
+  const b={file:($('#r-file')?$('#r-file').value:file),action:$('#r-action').value,dir:$('#r-dir').value,proto:$('#r-proto').value,port:$('#r-port').value,
     target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}
   closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Saved to draft.');
 }
-async function deleteRule(id){
+async function deleteRule(file,id){
   if(!confirm('Delete this rule from the draft?'))return;
-  const res=await post('/api/rules/draft/delete',{id});
+  const res=await post('/api/rules/draft/delete',{file,id});
   if(res&&res.error){toast(res.error);return;}
   closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Rule deleted.');
 }
 function inlineTarget(row,chip){
-  const id=+row.dataset.id, r=(RULES||[]).find(x=>x.id===id); if(!r)return;
+  const file=row.dataset.file, id=+row.dataset.id, r=findRule(file,id); if(!r)return;
   const cell=chip.parentElement;
   cell.innerHTML=`<input class="inlineinp" list="tgtlist" value="${esc(r.target)}">`;
   const inp=cell.querySelector('input'); inp.focus(); inp.select(); let done=false;
   const commit=async()=>{if(done)return;done=true;const nt=inp.value.trim();
     if(!nt||nt===r.target){loadPolicy();return;}
-    const res=await post('/api/rules/draft/save',{id,action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:nt,iface:r.iface,name:r.name});
+    const res=await post('/api/rules/draft/save',{file,id,action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:nt,iface:r.iface,name:r.name});
     if(res&&res.error){toast('Rejected: '+res.error);} await loadPolicy(); refreshCommitBar();};
   inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}else if(e.key==='Escape'){done=true;loadPolicy();}});
   inp.addEventListener('blur',commit,{once:true});
 }
-// drag-and-drop reorder
+// drag-and-drop reorder (scoped within a file)
 const polBody=$('#policy');
 polBody.addEventListener('dragstart',e=>{const row=e.target.closest('.prow');if(row){row.classList.add('dragging');}});
 polBody.addEventListener('dragover',e=>{
   e.preventDefault();const dragging=polBody.querySelector('.dragging');if(!dragging)return;
-  const after=[...polBody.querySelectorAll('.prow:not(.dragging)')].reduce((c,ch)=>{
-    const box=ch.getBoundingClientRect();const off=e.clientY-box.top-box.height/2;
+  const file=dragging.dataset.file;
+  const sib=[...polBody.querySelectorAll(`.prow:not(.dragging)`)].filter(r=>r.dataset.file===file);
+  const after=sib.reduce((c,ch)=>{const box=ch.getBoundingClientRect();const off=e.clientY-box.top-box.height/2;
     return off<0&&off>c.off?{off,el:ch}:c;},{off:-Infinity,el:null}).el;
-  if(after==null)polBody.appendChild(dragging);else polBody.insertBefore(dragging,after);
+  if(after)polBody.insertBefore(dragging,after);
+  else if(sib.length)sib[sib.length-1].after(dragging);
 });
 polBody.addEventListener('dragend',async e=>{
-  const row=e.target.closest('.prow');if(row)row.classList.remove('dragging');
-  const order=[...polBody.querySelectorAll('.prow')].map(r=>+r.dataset.id);
-  const cur=(RULES||[]).map(r=>r.id);
-  if(order.length===cur.length&&order.every((v,i)=>v===cur[i]))return; // no change
-  const res=await post('/api/rules/draft/reorder',{order});
+  const row=e.target.closest('.prow');if(!row)return;row.classList.remove('dragging');
+  const file=row.dataset.file;
+  const order=[...polBody.querySelectorAll('.prow')].filter(r=>r.dataset.file===file).map(r=>+r.dataset.id);
+  const cur=(RULES||[]).filter(r=>r.file===file).map(r=>r.id);
+  if(order.length===cur.length&&order.every((v,i)=>v===cur[i]))return; // no change within this file
+  const res=await post('/api/rules/draft/reorder',{file,order});
   if(res&&res.error){toast(res.error);loadPolicy();return;}
   await loadPolicy(); refreshCommitBar();
 });

@@ -9,6 +9,22 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.26.0] - 2026-07-07
+
+### Changed
+- **nftgeo-ui editor now spans `rules.d/*.conf`, not just `rules.conf`.** The
+  visual policy editor previously only read/edited `rules.conf`, so rules kept in
+  `rules.d` drop-ins were invisible in the panel (a regression vs the original
+  read-only view, which listed them). The Policy table now groups rules by file
+  (`rules.conf` first, then each `rules.d/*.conf` in engine order); toggle /
+  reorder / edit / delete / add-section operate within a rule's file; **Add rule**,
+  **+ Section** and **template import** let you choose the target file; and the
+  Commit pipeline stages every changed rule file (each drafted under
+  `ui-drafts/<path>`, deployed together through the deadman). Preview renders the
+  drafts of all files via a temp `RULES_DIR`, so validate/plan reflect the whole
+  policy. Reordering is scoped within a file (the engine's cross-file order is set
+  by filename).
+
 ## [1.25.0] - 2026-07-07
 
 ### Added
@@ -435,6 +451,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.26.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.26.0
 [1.25.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.25.0
 [1.24.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.24.0
 [1.23.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.23.0

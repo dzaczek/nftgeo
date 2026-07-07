@@ -632,7 +632,10 @@ saved to a UI-owned drop-in (`groups.d/ui-objects.conf`) and deployed through th
 The **Policy** tab is a visual editor over the draft rules — columns for
 Source / Destination / Service / Action with object chips, colour-coded verdicts
 and live hit counts, **drag-and-drop reordering** (top-down precedence) and a
-per-rule **enable/disable toggle**. **+ Add rule** or clicking a row opens a
+per-rule **enable/disable toggle**. Rules are grouped by file — `rules.conf` and
+every `rules.d/*.conf` drop-in — and each edit (including where **Add rule** puts a
+new rule) applies to the chosen file; Commit deploys all changed files together.
+**+ Add rule** or clicking a row opens a
 slide-out drawer to edit the rule's fields (action, direction, protocol, port,
 target with group/region autocomplete, interface, name) or delete it; clicking a
 target chip does an inline quick-edit, and **+ Section** adds a titled divider

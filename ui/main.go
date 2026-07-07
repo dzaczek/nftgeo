@@ -962,15 +962,16 @@ var (
 	groupsDir = env("GROUPS_DIR", "/etc/nftgeo/groups.d")
 	sentinel  = env("SENTINEL", filepath.Join(stateDir, ".pending-confirm"))
 
-	// rules.conf staging (M6B.1)
-	draftFile  = env("UI_DRAFT_FILE", filepath.Join(stateDir, "ui-draft.rules"))
-	backupFile = filepath.Join(stateDir, "ui-commit-backup.rules")
+	// Per-file staging: every rule file (rules.conf + each rules.d/*.conf) and the
+	// objects drop-in are drafted under these dirs, mirroring the live layout.
+	draftDir  = filepath.Join(stateDir, "ui-drafts")
+	backupDir = filepath.Join(stateDir, "ui-backups")
 
-	// objects staging (M6B.2): GROUP_*/REGION_* live in a UI-owned groups.d
-	// drop-in, sourced by the engine after config.
+	// objects staging (M6B.2): GROUP_*/REGION_*/SERVICE_* live in a UI-owned
+	// groups.d drop-in, sourced by the engine after config.
 	objLiveFile   = filepath.Join(groupsDir, "ui-objects.conf")
-	objDraftFile  = filepath.Join(stateDir, "ui-draft.objects")
-	objBackupFile = filepath.Join(stateDir, "ui-commit-backup.objects")
+	objDraftFile  = filepath.Join(draftDir, "objects")
+	objBackupFile = filepath.Join(backupDir, "objects")
 )
 
 // A stage is one file the UI drafts and commits: the operator edits `draft`,
@@ -978,11 +979,65 @@ var (
 // restore `live` from `backup` on rollback / deadman / interrupted deploy.
 type stage struct{ name, draft, live, backup string }
 
-func stages() []stage {
-	return []stage{
-		{"rules", draftFile, rulesFile, backupFile},
-		{"objects", objDraftFile, objLiveFile, objBackupFile},
+// ruleFile is one editable rules file: rules.conf or a rules.d/*.conf drop-in.
+// The engine reads rules.conf first, then rules.d/*.conf in sorted order.
+type ruleFile struct{ rel, live, draft, backup string }
+
+func ruleFileList() []ruleFile {
+	mk := func(live, rel string) ruleFile {
+		return ruleFile{rel: rel, live: live,
+			draft: filepath.Join(draftDir, rel), backup: filepath.Join(backupDir, rel)}
 	}
+	out := []ruleFile{mk(rulesFile, "rules.conf")}
+	if ents, err := os.ReadDir(rulesDir); err == nil {
+		var names []string
+		for _, e := range ents {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".conf") {
+				names = append(names, e.Name())
+			}
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			out = append(out, mk(filepath.Join(rulesDir, n), "rules.d/"+n))
+		}
+	}
+	return out
+}
+
+// findRuleFile resolves an editable rule file by its relative name (default
+// rules.conf). Returns nil for an unknown name (so callers reject bad input
+// instead of writing outside the managed set).
+func findRuleFile(rel string) *ruleFile {
+	if rel == "" {
+		rel = "rules.conf"
+	}
+	for _, rf := range ruleFileList() {
+		if rf.rel == rel {
+			r := rf
+			return &r
+		}
+	}
+	return nil
+}
+
+func draftTextFor(rf ruleFile) string {
+	if b, err := os.ReadFile(rf.draft); err == nil {
+		return string(b)
+	}
+	return readFileStr(rf.live)
+}
+
+func writeDraftFor(rf ruleFile, items []*draftRule, tail []string) error {
+	os.MkdirAll(filepath.Dir(rf.draft), 0755)
+	return os.WriteFile(rf.draft, []byte(serializeDraftRules(items, tail)), 0644)
+}
+
+func stages() []stage {
+	var s []stage
+	for _, rf := range ruleFileList() {
+		s = append(s, stage{name: "rule:" + rf.rel, draft: rf.draft, live: rf.live, backup: rf.backup})
+	}
+	return append(s, stage{name: "objects", draft: objDraftFile, live: objLiveFile, backup: objBackupFile})
 }
 
 func (s stage) hasDraft() bool { _, e := os.Stat(s.draft); return e == nil }
@@ -1071,17 +1126,57 @@ func restoreBackups() {
 }
 
 // previewEnv builds engine env overrides so validate/plan render the *draft*
-// state (draft rules + draft objects) without touching any live file. Returns a
-// cleanup to remove the temp groups dir.
+// state (draft rules across every file + draft objects) without touching any
+// live file. Returns a cleanup to remove any temp dirs.
 func previewEnv() ([]string, func()) {
 	var envv []string
-	cleanup := func() {}
-	if _, e := os.Stat(draftFile); e == nil {
-		envv = append(envv, "RULES_FILE="+draftFile)
+	var tmps []string
+	cleanup := func() {
+		for _, t := range tmps {
+			os.RemoveAll(t)
+		}
 	}
+	files := ruleFileList()
+
+	// rules.conf: point RULES_FILE at its draft if one exists.
+	for _, rf := range files {
+		if rf.rel == "rules.conf" {
+			if _, e := os.Stat(rf.draft); e == nil {
+				envv = append(envv, "RULES_FILE="+rf.draft)
+			}
+		}
+	}
+	// rules.d: if any drop-in has a draft, render from a temp dir holding the
+	// draft-or-live version of every drop-in.
+	anyDD := false
+	for _, rf := range files {
+		if strings.HasPrefix(rf.rel, "rules.d/") {
+			if _, e := os.Stat(rf.draft); e == nil {
+				anyDD = true
+			}
+		}
+	}
+	if anyDD {
+		if tmp, err := os.MkdirTemp("", "nftgeo-rd-*"); err == nil {
+			for _, rf := range files {
+				if !strings.HasPrefix(rf.rel, "rules.d/") {
+					continue
+				}
+				src := rf.live
+				if _, e := os.Stat(rf.draft); e == nil {
+					src = rf.draft
+				}
+				if b, e := os.ReadFile(src); e == nil {
+					os.WriteFile(filepath.Join(tmp, strings.TrimPrefix(rf.rel, "rules.d/")), b, 0644)
+				}
+			}
+			envv = append(envv, "RULES_DIR="+tmp)
+			tmps = append(tmps, tmp)
+		}
+	}
+	// objects drop-in.
 	if _, e := os.Stat(objDraftFile); e == nil {
-		tmp, err := os.MkdirTemp("", "nftgeo-gd-*")
-		if err == nil {
+		if tmp, err := os.MkdirTemp("", "nftgeo-gd-*"); err == nil {
 			if ents, e := os.ReadDir(groupsDir); e == nil {
 				for _, en := range ents {
 					if strings.HasSuffix(en.Name(), ".conf") && en.Name() != filepath.Base(objLiveFile) {
@@ -1095,7 +1190,7 @@ func previewEnv() ([]string, func()) {
 				os.WriteFile(filepath.Join(tmp, filepath.Base(objLiveFile)), b, 0644)
 			}
 			envv = append(envv, "GROUPS_DIR="+tmp)
-			cleanup = func() { os.RemoveAll(tmp) }
+			tmps = append(tmps, tmp)
 		}
 	}
 	return envv, cleanup
@@ -1111,29 +1206,35 @@ func validateDraft() (string, bool) {
 // ---- rules draft (M6B.1) ----
 
 func handleDraft(w http.ResponseWriter, r *http.Request) {
+	rf := findRuleFile(r.URL.Query().Get("file"))
+	if rf == nil {
+		http.Error(w, `{"error":"unknown rule file"}`, http.StatusBadRequest)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
-		live := readFileStr(rulesFile)
+		live := readFileStr(rf.live)
 		text, exists := live, false
-		if b, err := os.ReadFile(draftFile); err == nil {
+		if b, err := os.ReadFile(rf.draft); err == nil {
 			text, exists = string(b), true
 		}
 		diff, changed := "", 0
 		if exists {
 			diff, changed = diffText(live, text)
 		}
-		writeJSON(w, map[string]interface{}{"exists": exists, "live": live, "draft": text, "diff": diff, "changed": changed})
+		writeJSON(w, map[string]interface{}{"file": rf.rel, "exists": exists, "live": live, "draft": text, "diff": diff, "changed": changed})
 	case http.MethodPut:
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil {
 			http.Error(w, `{"error":"read failed"}`, http.StatusBadRequest)
 			return
 		}
-		if err := os.WriteFile(draftFile, body, 0644); err != nil {
+		os.MkdirAll(filepath.Dir(rf.draft), 0755)
+		if err := os.WriteFile(rf.draft, body, 0644); err != nil {
 			http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
 			return
 		}
-		_, changed := diffText(readFileStr(rulesFile), string(body))
+		_, changed := diffText(readFileStr(rf.live), string(body))
 		writeJSON(w, map[string]interface{}{"saved": true, "changed": changed})
 	default:
 		http.Error(w, `{"error":"method"}`, http.StatusMethodNotAllowed)
@@ -1287,6 +1388,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 // header (Kind "section": a "## Title" comment that groups the rules below it).
 type draftRule struct {
 	ID       int      `json:"id"`
+	File     string   `json:"file"`
 	Kind     string   `json:"kind"`
 	Title    string   `json:"title,omitempty"`
 	Disabled bool     `json:"disabled"`
@@ -1395,13 +1497,6 @@ func serializeDraftRules(rules []*draftRule, tail []string) string {
 	return b.String()
 }
 
-func draftRulesText() (string, bool) {
-	if b, err := os.ReadFile(draftFile); err == nil {
-		return string(b), true
-	}
-	return readFileStr(rulesFile), false
-}
-
 // annotateDraft fills live hit counts for enabled rules (best-effort, via the
 // same signature match as the read-only policy view).
 func annotateDraft(rules []*draftRule, chs []Chain) {
@@ -1421,30 +1516,49 @@ func annotateDraft(rules []*draftRule, chs []Chain) {
 	}
 }
 
-func writeDraftRules(rules []*draftRule, tail []string) error {
-	return os.WriteFile(draftFile, []byte(serializeDraftRules(rules, tail)), 0644)
+// reqRuleFile resolves the "file" field of a request; writes a 400 and returns
+// nil for an unknown file.
+func reqRuleFile(w http.ResponseWriter, rel string) *ruleFile {
+	rf := findRuleFile(rel)
+	if rf == nil {
+		http.Error(w, `{"error":"unknown rule file"}`, http.StatusBadRequest)
+	}
+	return rf
 }
 
+// handleRulesDraft returns the parsed rules across every editable file
+// (rules.conf + rules.d/*.conf, in engine order), each tagged with its file.
 func handleRulesDraft(w http.ResponseWriter, r *http.Request) {
-	text, hasDraft := draftRulesText()
-	rules, _ := parseDraftRules(text)
-	annotateDraft(rules, chains())
-	if rules == nil {
-		rules = []*draftRule{}
+	chs := chains()
+	all := []*draftRule{}
+	var files []map[string]interface{}
+	for _, rf := range ruleFileList() {
+		items, _ := parseDraftRules(draftTextFor(rf))
+		annotateDraft(items, chs)
+		for _, it := range items {
+			it.File = rf.rel
+			all = append(all, it)
+		}
+		_, hasDraft := os.Stat(rf.draft)
+		files = append(files, map[string]interface{}{"name": rf.rel, "hasDraft": hasDraft == nil})
 	}
-	writeJSON(w, map[string]interface{}{"hasDraft": hasDraft, "rules": rules})
+	writeJSON(w, map[string]interface{}{"files": files, "rules": all})
 }
 
 func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Order []int `json:"order"`
+		File  string `json:"file"`
+		Order []int  `json:"order"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
-	text, _ := draftRulesText()
-	rules, tail := parseDraftRules(text)
+	rf := reqRuleFile(w, req.File)
+	if rf == nil {
+		return
+	}
+	rules, tail := parseDraftRules(draftTextFor(*rf))
 	if len(req.Order) != len(rules) {
 		http.Error(w, `{"error":"order length mismatch"}`, http.StatusBadRequest)
 		return
@@ -1464,7 +1578,7 @@ func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
 		seen[id] = true
 		nr = append(nr, rr)
 	}
-	if err := writeDraftRules(nr, tail); err != nil {
+	if err := writeDraftFor(*rf, nr, tail); err != nil {
 		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
 		return
 	}
@@ -1473,14 +1587,18 @@ func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
 
 func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID int `json:"id"`
+		File string `json:"file"`
+		ID   int    `json:"id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
-	text, _ := draftRulesText()
-	rules, tail := parseDraftRules(text)
+	rf := reqRuleFile(w, req.File)
+	if rf == nil {
+		return
+	}
+	rules, tail := parseDraftRules(draftTextFor(*rf))
 	var found *draftRule
 	for _, rr := range rules {
 		if rr.ID == req.ID {
@@ -1492,7 +1610,7 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found.Disabled = !found.Disabled
-	if err := writeDraftRules(rules, tail); err != nil {
+	if err := writeDraftFor(*rf, rules, tail); err != nil {
 		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
 		return
 	}
@@ -1502,6 +1620,7 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 // handleRulesSection adds a new section header (no id) or renames one (with id).
 func handleRulesSection(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		File  string `json:"file"`
 		ID    *int   `json:"id"`
 		Title string `json:"title"`
 	}
@@ -1509,13 +1628,16 @@ func handleRulesSection(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
+	rf := reqRuleFile(w, req.File)
+	if rf == nil {
+		return
+	}
 	title := sanitizeComment(req.Title)
 	if title == "" {
 		http.Error(w, `{"error":"section needs a title"}`, http.StatusBadRequest)
 		return
 	}
-	text, _ := draftRulesText()
-	rules, tail := parseDraftRules(text)
+	rules, tail := parseDraftRules(draftTextFor(*rf))
 	if req.ID != nil {
 		var found *draftRule
 		for _, rr := range rules {
@@ -1531,7 +1653,7 @@ func handleRulesSection(w http.ResponseWriter, r *http.Request) {
 	} else {
 		rules = append(rules, &draftRule{ID: -1, Kind: "section", Title: title})
 	}
-	if err := writeDraftRules(rules, tail); err != nil {
+	if err := writeDraftFor(*rf, rules, tail); err != nil {
 		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
 		return
 	}
@@ -1577,25 +1699,27 @@ func saveSavedTemplates(list []ruleTemplate) error {
 	return os.WriteFile(templatesFile, b, 0644)
 }
 
-// currentTemplateLines snapshots the draft (or live) rules as clean template
-// lines (rule bodies + section headers, without blank/comment trivia).
+// currentTemplateLines snapshots the whole policy (every rule file, draft-or-live)
+// as clean template lines (rule bodies + section headers, without blank/comment
+// trivia).
 func currentTemplateLines() []string {
-	text, _ := draftRulesText()
-	items, _ := parseDraftRules(text)
 	var lines []string
-	for _, it := range items {
-		if it.Kind == "section" {
-			lines = append(lines, "## "+it.Title)
-			continue
+	for _, rf := range ruleFileList() {
+		items, _ := parseDraftRules(draftTextFor(rf))
+		for _, it := range items {
+			if it.Kind == "section" {
+				lines = append(lines, "## "+it.Title)
+				continue
+			}
+			l := it.Body
+			if it.Disabled {
+				l = "# " + l
+			}
+			if it.Name != "" {
+				l += " # " + it.Name
+			}
+			lines = append(lines, l)
 		}
-		l := it.Body
-		if it.Disabled {
-			l = "# " + l
-		}
-		if it.Name != "" {
-			l += " # " + it.Name
-		}
-		lines = append(lines, l)
 	}
 	return lines
 }
@@ -1663,14 +1787,19 @@ func handleTemplateDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"deleted": true})
 }
 
-// handleRulesImport prepends a template's rules/sections to the draft (they still
-// need a Commit to deploy).
+// handleRulesImport prepends a template's rules/sections to a file's draft (they
+// still need a Commit to deploy).
 func handleRulesImport(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID string `json:"id"`
+		File string `json:"file"`
+		ID   string `json:"id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	rf := reqRuleFile(w, req.File)
+	if rf == nil {
 		return
 	}
 	tpl := findTemplate(req.ID)
@@ -1679,9 +1808,8 @@ func handleRulesImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tplItems, _ := parseDraftRules(strings.Join(tpl.Lines, "\n"))
-	text, _ := draftRulesText()
-	cur, tail := parseDraftRules(text)
-	if err := writeDraftRules(append(tplItems, cur...), tail); err != nil {
+	cur, tail := parseDraftRules(draftTextFor(*rf))
+	if err := writeDraftFor(*rf, append(tplItems, cur...), tail); err != nil {
 		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
 		return
 	}
@@ -1753,6 +1881,7 @@ func buildRuleBody(action, dir, proto, port, target, iface string) (string, erro
 
 func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		File                                    string
 		ID                                      *int
 		Action, Dir, Proto, Port, Target, Iface string
 		Name                                    string
@@ -1761,14 +1890,17 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
+	rf := reqRuleFile(w, req.File)
+	if rf == nil {
+		return
+	}
 	body, err := buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface)
 	if err != nil {
 		http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
 		return
 	}
 	name := sanitizeComment(req.Name)
-	text, _ := draftRulesText()
-	rules, tail := parseDraftRules(text)
+	rules, tail := parseDraftRules(draftTextFor(*rf))
 	if req.ID != nil {
 		var found *draftRule
 		for _, rr := range rules {
@@ -1784,7 +1916,7 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 	} else {
 		rules = append(rules, &draftRule{ID: -1, Body: body, Name: name})
 	}
-	if err := writeDraftRules(rules, tail); err != nil {
+	if err := writeDraftFor(*rf, rules, tail); err != nil {
 		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
 		return
 	}
@@ -1793,14 +1925,18 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 
 func handleRulesDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID int `json:"id"`
+		File string `json:"file"`
+		ID   int    `json:"id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
-	text, _ := draftRulesText()
-	rules, tail := parseDraftRules(text)
+	rf := reqRuleFile(w, req.File)
+	if rf == nil {
+		return
+	}
+	rules, tail := parseDraftRules(draftTextFor(*rf))
 	idx := -1
 	for i, rr := range rules {
 		if rr.ID == req.ID {
@@ -1820,7 +1956,7 @@ func handleRulesDelete(w http.ResponseWriter, r *http.Request) {
 		tail = append(append([]string{}, trivia...), tail...)
 	}
 	rules = append(rules[:idx], rules[idx+1:]...)
-	if err := writeDraftRules(rules, tail); err != nil {
+	if err := writeDraftFor(*rf, rules, tail); err != nil {
 		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
 		return
 	}
