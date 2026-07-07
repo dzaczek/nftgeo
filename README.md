@@ -600,9 +600,13 @@ pipeline: `validate → plan` (shown as a diff) `→ apply --confirm`, guarded b
 deadman. An in-page countdown then lets you **Keep** the change or **Roll back**;
 if you do neither, the deadman reverts the kernel ruleset *and* the panel restores
 `rules.conf` from its backup, so a broken or lock-out deploy can never persist.
-Read-only sessions never see the editor and are refused (403) on any write. This
-is the foundation (a raw draft editor); the visual, object-oriented policy editor
-is the next roadmap step (P6 Phase B).
+Read-only sessions never see the editor and are refused (403) on any write.
+
+The **Objects** tab is likewise editable: create/edit/delete **address groups**
+(`GROUP_*`) and **custom regions** (`REGION_*`) in a slide-out drawer. These are
+saved to a UI-owned drop-in (`groups.d/ui-objects.conf`) and deployed through the
+*same* Commit pipeline as rules, so one Deploy carries rules and objects together.
+The visual, drag-and-drop policy table is the next roadmap step (P6 Phase B, M6B.3).
 
 ## Roadmap / TODO
 

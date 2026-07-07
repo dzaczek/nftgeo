@@ -9,6 +9,22 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.19.0] - 2026-07-07
+
+### Added
+- **nftgeo-ui Objects editor (roadmap Phase B, M6B.2).** The Objects tab is now
+  editable (read-write sessions): create/edit/delete **address groups**
+  (`GROUP_*`) and **custom regions** (`REGION_*`) in a right slide-out drawer,
+  with member chips. Objects are stored in a UI-owned drop-in
+  `groups.d/ui-objects.conf` and staged through the *same* Commit pipeline as
+  rules — validate → plan → `apply --confirm` deadman — so a deploy now carries
+  rules and objects together, and the Commit bar shows a per-stage change count.
+  Member/name input is strictly sanitised (rejects shell metacharacters) before
+  it reaches the shell-sourced config. Read-only sessions see the objects but
+  cannot edit them. `SERVICE_*`/`HOST_*` objects await the internal firewall
+  (P5). New endpoint: `GET/PUT /api/objects/draft`; the commit endpoints now
+  stage every draft file.
+
 ## [1.18.0] - 2026-07-07
 
 ### Added
@@ -313,6 +329,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.19.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.19.0
 [1.18.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.18.0
 [1.17.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.17.1
 [1.17.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.17.0

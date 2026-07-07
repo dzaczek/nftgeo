@@ -174,10 +174,12 @@ count.
   apply --confirm` with the deadman, plus UI-side `rules.conf` backup/restore so
   a timed-out or interrupted deploy can never persist. Foundation raw editor +
   top Commit bar included; the visual editor (M6B.2–M6B.5) builds on this.
-- [ ] **M6B.2 Objects module.** Tabs: **Addresses** (single IP / subnet),
-  **Geo** (country objects, e.g. `GEO-RU`), **Services/Ports** (`SERVICE_*`,
-  built-ins), **Groups** (group any of the above, incl. drag-drop membership).
-  Backed by `GROUP_*` / `SERVICE_*` / `HOST_*`; CRUD into the draft.
+- [x] **M6B.2 Objects module.** *(Shipped 1.19.0.)* Editable tabs for **Address
+  groups** (`GROUP_*`) and **Custom regions** (`REGION_*`) with a right slide-out
+  drawer and member chips, stored in a UI-owned `groups.d/ui-objects.conf` drop-in
+  and staged through the same Commit pipeline (input sanitised against shell
+  metacharacters). Services/host-label objects (`SERVICE_*`/`HOST_*`) follow with
+  the internal firewall (P5).
 - [ ] **M6B.3 Policy table (Palo-Alto style).** Columns: **№ · Status toggle ·
   Name · Source · Destination · Service · Action · Hits**. Object references
   render as **chips** with a hover tooltip of their contents; Action is

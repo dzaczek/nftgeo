@@ -97,6 +97,22 @@
   #draftbox{width:100%;min-height:60vh;background:var(--bg);color:var(--fg);border:1px solid var(--line);
     border-radius:10px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.5;resize:vertical}
   .cdnum{font-variant-numeric:tabular-nums;font-weight:700}
+  .tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line)}
+  .tab{background:transparent;border:0;color:var(--mut);padding:9px 14px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent}
+  .tab.active{color:var(--fg);border-bottom-color:var(--drop);font-weight:600}
+  .objitem.editable{cursor:pointer;border-radius:8px;padding:8px;transition:background .12s}
+  .objitem.editable:hover{background:var(--bg)}
+  .editlink{float:right;color:var(--drop);font-size:12px}
+  .fld{display:flex;flex-direction:column;gap:5px;font-size:13px}
+  .fld span{color:var(--mut)}
+  .fld input,.fld textarea{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:9px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+  .fld input[readonly]{opacity:.6}
+  .drawer{position:fixed;inset:0;background:#0007;display:none;z-index:25}
+  .drawer.open{display:block}
+  .drawercard{position:absolute;top:0;right:0;height:100%;width:min(460px,94vw);background:var(--card);border-left:1px solid var(--line);
+    box-shadow:-8px 0 30px #0006;padding:20px;overflow:auto;display:flex;flex-direction:column;gap:14px}
+  .drawerhead{display:flex;justify-content:space-between;align-items:center;font-size:16px;font-weight:600}
+  .drawer .x{cursor:pointer;color:var(--mut)}
   @media(max-width:760px){.app{grid-template-columns:1fr}.side{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px}
     .brand{border:0;padding:12px 14px}.nav{display:flex;flex-wrap:wrap;padding:0 8px}.nav a{padding:8px 10px}
     .sidefoot{margin:0 0 0 auto;border:0}.g2,.g3{grid-template-columns:1fr!important}}
@@ -204,14 +220,36 @@
 
     <!-- OBJECTS -->
     <section class="view" id="v-objects">
+      <div class="tabs" id="obj-tabs">
+        <button class="tab active" data-ot="groups">Address groups</button>
+        <button class="tab" data-ot="regions">Custom regions</button>
+        <button class="tab" data-ot="ref">Reference</button>
+      </div>
+      <div class="ot" id="ot-groups">
+        <div class="filters" style="justify-content:space-between">
+          <span class="muted" style="align-self:center">Named sets of IPs / CIDRs / countries / regions — reference them by name in a rule target.</span>
+          <button class="btn-go" id="newgroup">+ New group</button>
+        </div>
+        <div class="card"><div id="o-groups-edit"></div></div>
+      </div>
+      <div class="ot" id="ot-regions" style="display:none">
+        <div class="filters" style="justify-content:space-between">
+          <span class="muted" style="align-self:center">Named groupings of country codes (and other regions) — reusable geo targets.</span>
+          <button class="btn-go" id="newregion">+ New region</button>
+        </div>
+        <div class="card"><div id="o-regions-edit"></div></div>
+      </div>
+      <div class="ot" id="ot-ref" style="display:none">
       <div class="grid g3">
-        <div class="card"><h3>Address groups</h3><div id="o-groups"></div></div>
-        <div class="card"><h3>Custom regions</h3><div id="o-regions"></div></div>
+        <div class="card"><h3>All live groups</h3><div id="o-groups"></div></div>
+        <div class="card"><h3>All live regions</h3><div id="o-regions"></div></div>
         <div class="card"><h3>Whitelist</h3><div id="o-wl"></div></div>
       </div>
       <div class="grid g2" style="margin-top:14px">
         <div class="card"><h3>nftables sets (live sizes)</h3><div id="o-sets"></div></div>
         <div class="card"><h3>Abuse feeds</h3><div id="o-feeds"></div></div>
+      </div>
+      <p class="muted" style="margin-top:10px;font-size:12px">Service &amp; host-label objects (SERVICE_*/HOST_*) arrive with the internal firewall (roadmap P5).</p>
       </div>
     </section>
   </main>
@@ -227,6 +265,13 @@
     <p class="muted">and open the printed link. For long-term read-only access:</p>
     <pre>sudo nftgeo-ui token --ro</pre>
     <p id="lockmsg" style="color:var(--drop)"></p>
+  </div>
+</div>
+
+<div id="drawer" class="drawer">
+  <div class="drawercard">
+    <div class="drawerhead"><span id="drawertitle">Edit</span><span class="x" onclick="closeDrawer()">✕</span></div>
+    <div id="drawerbody" style="display:flex;flex-direction:column;gap:14px;flex:1"></div>
   </div>
 </div>
 
@@ -293,8 +338,10 @@ async function refreshCommitBar(){
     $('#cbtxt').innerHTML='⏳ Deployed with deadman — confirm to keep, or auto-rollback in <span class="cdnum">'+Math.max(0,st.remaining)+'s</span>';
     startCountdown();return;}
   bar.classList.remove('pending');stopCountdown();$('#cbpending').style.display='none';$('#cbedit').style.display=MODE==='ro'?'none':'';
-  if(DRAFT.changed>0&&MODE!=='ro'){bar.style.display='flex';
-    $('#cbtxt').innerHTML='<b>'+DRAFT.changed+'</b> pending change'+(DRAFT.changed===1?'':'s')+' in draft — not yet deployed.';}
+  const ch=st.changed||0;
+  if(ch>0&&MODE!=='ro'){bar.style.display='flex';
+    const parts=(st.stages||[]).map(s=>s.changed+' '+s.name).join(', ');
+    $('#cbtxt').innerHTML='<b>'+ch+'</b> pending change'+(ch===1?'':'s')+' in draft'+(parts?' ('+esc(parts)+')':'')+' — not yet deployed.';}
   else bar.style.display='none';}
 function startCountdown(){if(cdTimer)return;cdTimer=setInterval(async()=>{
   let st;try{st=await j('/api/commit/status');}catch(e){return;}
@@ -385,7 +432,68 @@ async function loadObjects(){
   $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
   $('#o-feeds').innerHTML=(o.feeds||[]).length?o.feeds.map(x=>`<div class="row"><span class="mono" style="font-size:11px">${esc(x)}</span></div>`).join(''):'<span class="muted">none</span>';
   $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
+  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[]}; renderManaged();
 }
+
+// ---- editable objects (M6B.2) ----
+let OBJ={groups:[],regions:[]};
+function plainchip(m){return `<span class="chip">${esc(m)}</span>`;}
+function objEditList(arr,kind){
+  if(!arr.length)return `<span class="muted">none yet — use “New ${kind}” to add one.</span>`;
+  return arr.map((e,i)=>`<div class="objitem editable" data-kind="${kind}" data-i="${i}">
+    <div class="objhead">${esc(e.name)} <span class="muted">(${e.members.length})</span>${MODE==='ro'?'':'<span class="editlink">edit ✎</span>'}</div>
+    <div class="chips">${e.members.map(plainchip).join('')||'<span class="muted">empty</span>'}</div></div>`).join('');
+}
+function renderManaged(){
+  $('#o-groups-edit').innerHTML=objEditList(OBJ.groups,'group');
+  $('#o-regions-edit').innerHTML=objEditList(OBJ.regions,'region');
+}
+function switchObjTab(ot){$$('#obj-tabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.ot===ot));
+  $$('.ot').forEach(s=>s.style.display='none');$('#ot-'+ot).style.display='';}
+function openDrawer(){$('#drawer').classList.add('open');}
+function closeDrawer(){$('#drawer').classList.remove('open');}
+function editObj(kind,i){
+  if(MODE==='ro')return;
+  const list=kind==='group'?OBJ.groups:OBJ.regions, isNew=i<0, e=isNew?{name:'',members:[]}:list[i];
+  const label=kind==='group'?'address group':'custom region';
+  const hint=kind==='group'?'IPs, CIDRs, country codes, region or group names — space/comma separated.':'Country codes (e.g. ru cn kp) and/or other region names.';
+  $('#drawertitle').textContent=(isNew?'New ':'Edit ')+label;
+  $('#drawerbody').innerHTML=`
+    <label class="fld"><span>Name</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="OFFICE" autocomplete="off"></label>
+    <label class="fld"><span>Members</span><textarea id="objmembers" rows="7" placeholder="10.0.0.0/24 1.2.3.4 ru">${esc(e.members.join(' '))}</textarea></label>
+    <p class="muted" style="font-size:12px">${hint}<br>Use it in a rule by name, e.g. <code>deny in any - ${esc(e.name||'NAME')}</code>. Changes go to the draft — deploy via Commit.</p>
+    <div style="display:flex;gap:8px;margin-top:auto">
+      <button class="btn-go" onclick="saveObj('${kind}',${i})">Save to draft</button>
+      ${isNew?'':`<button class="btn-rb" onclick="deleteObj('${kind}',${i})">Delete</button>`}
+      <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
+    </div>`;
+  openDrawer();
+}
+async function saveObj(kind,i){
+  const name=$('#objname').value.trim();
+  const members=$('#objmembers').value.split(/[\s,]+/).filter(Boolean);
+  if(!/^[A-Za-z0-9_]+$/.test(name)){toast('Name: letters, digits, underscore only.');return;}
+  const list=kind==='group'?OBJ.groups:OBJ.regions;
+  if(i>=0){list[i]={name,members};}
+  else{if(list.some(x=>x.name.toUpperCase()===name.toUpperCase())){toast('That name already exists.');return;}list.push({name,members});}
+  await putObjects();closeDrawer();
+}
+async function deleteObj(kind,i){(kind==='group'?OBJ.groups:OBJ.regions).splice(i,1);await putObjects();closeDrawer();}
+async function putObjects(){
+  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions})});
+  if(r.status===401||r.status===403){showLock('Read-only session — cannot edit objects.');return;}
+  const d=await r.json();
+  if(d.error){toast('Rejected: '+d.error);return;}
+  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[]};renderManaged();
+  refreshCommitBar();toast('Saved to draft.');
+}
+$('#v-objects').addEventListener('click',e=>{
+  const tab=e.target.closest('[data-ot]');if(tab){switchObjTab(tab.dataset.ot);return;}
+  if(e.target.id==='newgroup'){editObj('group',-1);return;}
+  if(e.target.id==='newregion'){editObj('region',-1);return;}
+  const item=e.target.closest('.objitem.editable');if(item){editObj(item.dataset.kind,+item.dataset.i);return;}
+});
+$('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer')closeDrawer();});
 function toggleTheme(){document.body.classList.toggle('light');localStorage.setItem('nftgeo-theme',document.body.classList.contains('light')?'light':'dark');}
 if(localStorage.getItem('nftgeo-theme')==='light')document.body.classList.add('light');
 
@@ -399,7 +507,7 @@ async function lookup(ip){const m=$('#modal'),b=$('#modalbody');m.style.display=
     if(!Object.keys(w).length)h+='<tr><td colspan="2" class="muted">no RDAP data</td></tr>';h+='</table></div>';b.innerHTML=h;
   }catch(e){b.innerHTML='lookup failed';}}
 document.addEventListener('click',e=>{const t=e.target.closest('.ipl');if(t&&t.dataset.ip)lookup(t.dataset.ip);});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeDrawer();}});
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
 
 async function boot(){
@@ -418,7 +526,8 @@ async function boot(){
     if(me.ok){const d=await me.json();MODE=d.mode||MODE;if(d.auth===false)$('#modebadge').textContent='no-auth';}
   }catch(e){showLock('');return;}
   hideLock();
-  if(MODE==='ro'){$('#modebadge').textContent='read-only';$('#nav-rules').style.display='none';}
+  if(MODE==='ro'){$('#modebadge').textContent='read-only';$('#nav-rules').style.display='none';
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();
