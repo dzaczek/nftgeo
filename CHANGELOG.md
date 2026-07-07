@@ -9,6 +9,32 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.24.0] - 2026-07-07
+
+### Added
+- **Service objects (`SERVICE_*`) — named ports & port groups (roadmap P5, M5.1).**
+  Define a service in the config or a `groups.d` drop-in and use its name in a
+  rule's port field:
+  ```
+  SERVICE_WEB="80 443"
+  SERVICE_STACK="web 8080-8090"     # services can nest other services
+  allow in tcp web any
+  allow in tcp stack any
+  ```
+  The engine resolves a port token that is a number, a range (`N-M`), a
+  comma/space list, or a `SERVICE_` name (recursively, with a cycle guard) into a
+  normalized set and emits `tcp dport { … }`. In **nftgeo-ui** the Objects tab now
+  has a **Services** section to create/edit/delete these, and the rule editor's
+  port field autocompletes service names. Input is sanitised before it reaches the
+  shell-sourced config.
+
+### Fixed
+- **`deny <dir> <proto> <port> any` now works.** The deny path always emitted an
+  address-set match, so a deny rule with the `any` target referenced a
+  non-existent `@g_any` set and failed to load; it now drops on the protocol/port
+  alone (both families, honouring `LOG_DROPS`), mirroring the allow path. Surfaced
+  while adding service objects (`deny in tcp <service> any`).
+
 ## [1.23.0] - 2026-07-07
 
 ### Added
@@ -387,6 +413,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.24.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.24.0
 [1.23.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.23.0
 [1.22.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.22.0
 [1.21.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.21.0

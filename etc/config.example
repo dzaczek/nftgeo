@@ -92,3 +92,10 @@ HARDEN=""
 # GROUP_OFFICE="203.0.113.5 198.51.100.0/24 2001:db8:1::/48"
 # GROUP_ADMINS="203.0.113.10 10.0.0.0/8"
 # GROUP_PARTNERS="de fr 192.0.2.0/24"
+#
+# Named service objects, referenced by name in a rule's PORT field. A service is
+# a reusable list of ports, ranges, and/or other service names (nested). Use the
+# lowercased part after SERVICE_ in a rule (SERVICE_WEB -> web). Examples:
+# SERVICE_WEB="80 443"
+# SERVICE_MAIL="25 465 587 993"
+# SERVICE_STACK="web 8080-8090"        # services can nest other services

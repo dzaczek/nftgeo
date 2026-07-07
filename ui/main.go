@@ -1155,11 +1155,11 @@ type objEntry struct {
 	Members []string `json:"members"`
 }
 
-var objLineRe = regexp.MustCompile(`^(GROUP|REGION)_([A-Za-z0-9_]+)=(.*)$`)
+var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE)_([A-Za-z0-9_]+)=(.*)$`)
 var objNameRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 var objMemberRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 
-func parseObjects(text string) (groups, regions []objEntry) {
+func parseObjects(text string) (groups, regions, services []objEntry) {
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -1171,16 +1171,19 @@ func parseObjects(text string) (groups, regions []objEntry) {
 		}
 		val := strings.Trim(strings.TrimSpace(m[3]), `"`)
 		e := objEntry{Name: m[2], Members: strings.Fields(val)}
-		if m[1] == "GROUP" {
+		switch m[1] {
+		case "GROUP":
 			groups = append(groups, e)
-		} else {
+		case "REGION":
 			regions = append(regions, e)
+		default:
+			services = append(services, e)
 		}
 	}
 	return
 }
 
-func serializeObjects(groups, regions []objEntry) string {
+func serializeObjects(groups, regions, services []objEntry) string {
 	var b strings.Builder
 	b.WriteString("# Managed by nftgeo-ui (Objects tab). Do not hand-edit; the panel overwrites this file.\n")
 	for _, g := range groups {
@@ -1189,12 +1192,15 @@ func serializeObjects(groups, regions []objEntry) string {
 	for _, rg := range regions {
 		fmt.Fprintf(&b, "REGION_%s=\"%s\"\n", strings.ToUpper(rg.Name), strings.Join(rg.Members, " "))
 	}
+	for _, sv := range services {
+		fmt.Fprintf(&b, "SERVICE_%s=\"%s\"\n", strings.ToUpper(sv.Name), strings.Join(sv.Members, " "))
+	}
 	return b.String()
 }
 
-// sanitizeObjects rejects anything that isn't a plain name / member token -
-// these values are sourced by the shell engine, so metacharacters must not pass.
-func sanitizeObjects(lists ...[]objEntry) error {
+// checkNames validates names/members and rejects duplicates within one namespace
+// (the values are sourced by the shell engine, so metacharacters must not pass).
+func checkNames(lists ...[]objEntry) error {
 	seen := map[string]bool{}
 	for _, list := range lists {
 		for _, e := range list {
@@ -1216,6 +1222,15 @@ func sanitizeObjects(lists ...[]objEntry) error {
 	return nil
 }
 
+// sanitizeObjects validates the two namespaces separately: address names
+// (groups + regions, which share the rule-target namespace) and service names.
+func sanitizeObjects(groups, regions, services []objEntry) error {
+	if err := checkNames(groups, regions); err != nil {
+		return err
+	}
+	return checkNames(services)
+}
+
 func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -1224,28 +1239,32 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if exists == nil {
 			text = readFileStr(objDraftFile)
 		}
-		g, rg := parseObjects(text)
+		g, rg, sv := parseObjects(text)
 		if g == nil {
 			g = []objEntry{}
 		}
 		if rg == nil {
 			rg = []objEntry{}
 		}
-		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg})
+		if sv == nil {
+			sv = []objEntry{}
+		}
+		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv})
 	case http.MethodPut:
 		var req struct {
-			Groups  []objEntry `json:"groups"`
-			Regions []objEntry `json:"regions"`
+			Groups   []objEntry `json:"groups"`
+			Regions  []objEntry `json:"regions"`
+			Services []objEntry `json:"services"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
-		if err := sanitizeObjects(req.Groups, req.Regions); err != nil {
+		if err := sanitizeObjects(req.Groups, req.Regions, req.Services); err != nil {
 			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
 			return
 		}
-		out := serializeObjects(req.Groups, req.Regions)
+		out := serializeObjects(req.Groups, req.Regions, req.Services)
 		if err := os.WriteFile(objDraftFile, []byte(out), 0644); err != nil {
 			http.Error(w, `{"error":"cannot write objects draft"}`, http.StatusInternalServerError)
 			return
@@ -1672,7 +1691,9 @@ func handleRulesImport(w http.ResponseWriter, r *http.Request) {
 // ---- rule add / edit / delete (M6B.4) ----
 
 var (
-	rulePortRe   = regexp.MustCompile(`^[0-9]+([-,][0-9]+)*$`)
+	// a number, range, comma list, or a SERVICE_ name (letters) - the engine
+	// resolves and re-validates services, so names are allowed here.
+	rulePortRe   = regexp.MustCompile(`^[A-Za-z0-9_,-]+$`)
 	ruleTargetRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 	ruleIfaceRe  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	ruleProtos   = map[string]bool{"tcp": true, "udp": true, "any": true, "icmp": true, "icmpv6": true}

@@ -72,8 +72,9 @@ rule, so you choose its exact scope (see below).
 - `proto` - port-based: `tcp`, `udp`, `sctp`, or `all` (tcp and udp). Port-less:
   `icmp` (IPv4 only), `icmpv6` (IPv6 only), `esp`, `ah`, `gre`, or `any` (every
   protocol and port).
-- `port` - a single port (`22`) or a range (`5060-5070`); use `-` for port-less
-  protocols (including `any`).
+- `port` - a single port (`22`), a range (`5060-5070`), a comma list
+  (`80,443`), or the name of a `SERVICE_<NAME>` (see below); use `-` for
+  port-less protocols (including `any`).
 - `target` - what the source/destination address is matched against: any mix of,
   comma-separated, country codes (`pl`), region names (`europe`), literal IPv4/
   IPv6 addresses (`203.0.113.5`, `2001:db8::1`), IPv4/IPv6 with a mask
@@ -98,6 +99,20 @@ GROUP_PARTNERS="de fr 192.0.2.0/24"
 ```
 
 Groups cannot reference other groups.
+
+Define reusable **service objects** as `SERVICE_<NAME>` variables — named ports
+and port groups you use in a rule's port field by name. A service may contain
+ports, ranges, and other service names (nested), and resolves to a
+`tcp dport { … }` set:
+
+```sh
+SERVICE_WEB="80 443"
+SERVICE_STACK="web 8080-8090"     # services can nest other services
+```
+```
+allow in tcp web   any            # -> tcp dport { 80, 443 }
+allow in tcp stack any            # -> tcp dport { 80, 443, 8080-8090 }
+```
 
 Every generated rule carries a `counter`, so `nft list table inet nftgeo`
 reports per-rule packet and byte totals.
@@ -603,7 +618,8 @@ if you do neither, the deadman reverts the kernel ruleset *and* the panel restor
 Read-only sessions never see the editor and are refused (403) on any write.
 
 The **Objects** tab is likewise editable: create/edit/delete **address groups**
-(`GROUP_*`) and **custom regions** (`REGION_*`) in a slide-out drawer. These are
+(`GROUP_*`), **custom regions** (`REGION_*`) and **services** (`SERVICE_*`, named
+ports / port groups) in a slide-out drawer. These are
 saved to a UI-owned drop-in (`groups.d/ui-objects.conf`) and deployed through the
 *same* Commit pipeline as rules, so one Deploy carries rules and objects together.
 The **Policy** tab is a visual editor over the draft rules — columns for

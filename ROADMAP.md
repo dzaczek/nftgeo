@@ -109,8 +109,9 @@ the destination segment (oifname + daddr subnets); services expand to ports;
 `from <geo>` layers geo on top; per zone-pair deny-by-default applies.
 
 Milestones:
-- [ ] **M5.1** Service names + `SERVICE_<NAME>` groups (usable in the port field,
-  e.g. `allow in tcp ssh ...` / `allow web -> db db`).
+- [x] **M5.1** Service names + `SERVICE_<NAME>` groups *(shipped 1.24.0)* — named
+  ports and port groups usable in a rule's port field (`allow in tcp web any`),
+  nestable, resolved to `dport { … }`. Editable in the nftgeo-ui Objects tab.
 - [ ] **M5.2** Host/IP labels (`HOST_<NAME>` / `LABEL_<NAME>`) — single-IP names,
   usable as any target.
 - [ ] **M5.3** Zones (`ZONE_<NAME>` = interfaces + subnets) as source/destination.

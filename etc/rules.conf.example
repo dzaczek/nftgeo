@@ -9,7 +9,8 @@
 #   proto  : tcp | udp | sctp | all   (port-based; all = tcp and udp)
 #            icmp | icmpv6 | esp | ah | gre   (no port; use "-" in the port field)
 #            any   (every protocol and port; use "-" in the port field)
-#   port   : single port (22) or a range (5060-5070); "-" for port-less protocols
+#   port   : single port (22), range (5060-5070), list (80,443), or a
+#            SERVICE_<NAME> from config (e.g. web); "-" for port-less protocols
 #   target : what to match the address against - any mix of, comma-separated:
 #              country code (pl), region name (europe),
 #              literal IPv4/IPv6 address (203.0.113.5, 2001:db8::1),
@@ -58,6 +59,7 @@
 # allow in      all 5060-5070 de       # SIP (tcp+udp) port range, only from Germany
 # allow in      tcp 5061      us        # SIPS reachable only from the US
 # allow in      tcp 443       any       # HTTPS open to the world (still abuse-filtered)
+# allow in      tcp web       any       # named ports via SERVICE_WEB="80 443"
 # deny  in      tcp 5060      ru,cn     # block Russia and China on inbound 5060
 # allow out     tcp 443       europe,us # only allow outbound HTTPS to Europe and US
 # allow out     udp 53        any       # allow outbound DNS anywhere

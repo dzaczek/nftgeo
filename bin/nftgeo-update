@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.23.0"
+NFTGEO_VERSION="1.24.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -129,6 +129,11 @@ resolve_group() {
 	eval "printf '%s' \"\${GROUP_${u}:-}\""
 }
 
+resolve_service() {
+	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
+	eval "printf '%s' \"\${SERVICE_${u}:-}\""
+}
+
 add_one_member() {
 	# $1 geosan, $2 single token: literal IPv4/IPv6 (with optional mask),
 	# country code, or region name. Records it in GEO_TOKENS (+ NEEDED_CC for
@@ -221,6 +226,32 @@ valid_port() {
 	esac
 }
 
+expand_ports() {
+	# $1: a port field - a number N, a range N-M, a comma/space list, or the name
+	# of a SERVICE_<NAME> (which may itself contain ports, ranges and other
+	# service names, nested). Echoes a normalized comma-separated list of ports/
+	# ranges; returns 1 if any leaf is not a valid port or known service. $2 is an
+	# internal recursion guard. Recursive calls run in $() subshells, so the shared
+	# variable names below are safe across the recursion.
+	_depth="${2:-0}"
+	[ "$_depth" -ge 10 ] && return 1
+	_out=""
+	for _tok in $(printf '%s' "$1" | tr ',' ' '); do
+		if printf '%s' "$_tok" | grep -Eq '^[0-9]+(-[0-9]+)?$'; then
+			valid_port "$_tok" || return 1
+			_out="${_out},${_tok}"
+		else
+			_svc="$(resolve_service "$_tok")"
+			[ -n "$_svc" ] || return 1
+			_sub="$(expand_ports "$_svc" "$((_depth + 1))")" || return 1
+			_out="${_out},${_sub}"
+		fi
+	done
+	_out="${_out#,}"
+	[ -n "$_out" ] || return 1
+	printf '%s' "$_out"
+}
+
 l4_match() {
 	# $1 proto, $2 port, $3 family (4|6). Echo the protocol/port match clause for
 	# that family, the literal "any" when the rule should match every
@@ -228,7 +259,12 @@ l4_match() {
 	# that family.
 	case "$1" in
 		any)          printf 'any' ;;
-		tcp|udp|sctp) printf '%s dport %s' "$1" "$2" ;;
+		tcp|udp|sctp)
+			case "$2" in
+				*,*) printf '%s dport { %s }' "$1" "$2" ;;
+				*)   printf '%s dport %s' "$1" "$2" ;;
+			esac
+			;;
 		esp|ah|gre)   printf 'meta l4proto %s' "$1" ;;
 		icmp)   [ "$3" = 4 ] && printf 'meta l4proto icmp' || true ;;
 		icmpv6) [ "$3" = 6 ] && printf 'meta l4proto icmpv6' || true ;;
@@ -314,10 +350,11 @@ parse_rules_file() {
 		esac
 		case "$proto" in
 			tcp|udp|sctp|all)
-				if ! valid_port "$port"; then
-					echo "${rf}:${lineno}: bad port '${port}' (use N or N-M, 1-65535)" >&2
+				if ! _pnorm="$(expand_ports "$port")"; then
+					echo "${rf}:${lineno}: bad port/service '${port}' (a number, N-M, a list, or a SERVICE_ name)" >&2
 					exit 1
 				fi
+				port="$_pnorm"
 				;;
 			any|icmp|icmpv6|esp|ah|gre)
 				case "$port" in
@@ -814,8 +851,24 @@ emit_chain() {
 	# rule names (use "deny <dir> any - abuse" to block every protocol and port).
 	awk -v h="$hook" '$1=="deny" && $2==h' "$RULES_NORM" | while read -r _a _h side proto port geosan iface; do
 		ifc="$(if_match "$side" "$iface")"
-		emit_set_match "$(l4_match "$proto" "$port" 4)" ip  "$side" "$(set_name "$geosan" 4)" drop "$ifc"
-		emit_set_match "$(l4_match "$proto" "$port" 6)" ip6 "$side" "$(set_name "$geosan" 6)" drop "$ifc"
+		m4="$(l4_match "$proto" "$port" 4)"
+		m6="$(l4_match "$proto" "$port" 6)"
+		if [ "$geosan" = "any" ]; then
+			# No address set: drop on the proto/port alone (both families).
+			pre=""; [ -n "$ifc" ] && pre="${ifc} "
+			printed=""
+			for m in "$m4" "$m6"; do
+				[ -n "$m" ] || continue
+				case "$printed" in *"|${m}|"*) continue ;; esac
+				printed="${printed}|${m}|"
+				mm=""; [ "$m" != any ] && mm="$m "
+				[ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s log prefix "%s"\n' "$pre" "$mm" "$LOG_LIMIT" "$LOG_PREFIX"
+				printf '\t\t%s%scounter drop\n' "$pre" "$mm"
+			done
+		else
+			emit_set_match "$m4" ip  "$side" "$(set_name "$geosan" 4)" drop "$ifc"
+			emit_set_match "$m6" ip6 "$side" "$(set_name "$geosan" 6)" drop "$ifc"
+		fi
 	done
 
 	# Geo allows.

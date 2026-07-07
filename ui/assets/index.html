@@ -215,6 +215,7 @@
         </span>
       </div>
       <datalist id="tgtlist"></datalist>
+      <datalist id="svclist"></datalist>
       <div class="card"><div class="tablewrap"><table class="poltable">
         <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
@@ -253,6 +254,7 @@
       <div class="tabs" id="obj-tabs">
         <button class="tab active" data-ot="groups">Address groups</button>
         <button class="tab" data-ot="regions">Custom regions</button>
+        <button class="tab" data-ot="services">Services</button>
         <button class="tab" data-ot="ref">Reference</button>
       </div>
       <div class="ot" id="ot-groups">
@@ -268,6 +270,13 @@
           <button class="btn-go" id="newregion">+ New region</button>
         </div>
         <div class="card"><div id="o-regions-edit"></div></div>
+      </div>
+      <div class="ot" id="ot-services" style="display:none">
+        <div class="filters" style="justify-content:space-between">
+          <span class="muted" style="align-self:center">Named ports and port groups — reference them in a rule's port field, e.g. <code>allow in tcp WEB any</code>.</span>
+          <button class="btn-go" id="newservice">+ New service</button>
+        </div>
+        <div class="card"><div id="o-services-edit"></div></div>
       </div>
       <div class="ot" id="ot-ref" style="display:none">
       <div class="grid g3">
@@ -426,15 +435,18 @@ function renderLogs(){
 }
 
 // ---- policy table (M6B.3): enterprise view of the draft rules ----
-let OBJMAP={}; // name(upper) -> members, for chip tooltips
+let OBJMAP={}, SVCS=[]; // name(upper) -> members (chip tooltips); service names (port autocomplete)
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
-  fillTargets();
+  try{const od=await j('/api/objects/draft');SVCS=(od.services||[]).map(s=>s.name);
+    (od.groups||[]).concat(od.regions||[]).forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=g.members||[]);}catch(e){}
+  fillTargets(); fillServices();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; renderPolicy();
 }
 const REGIONS=['europe','asia','africa','north_america','south_america','middle_east','oceania','caribbean'];
 function fillTargets(){$('#tgtlist').innerHTML=[...Object.keys(OBJMAP),'any','abuse',...REGIONS].map(o=>`<option value="${esc(o)}">`).join('');}
+function fillServices(){$('#svclist').innerHTML=SVCS.map(s=>`<option value="${esc(s)}">`).join('');}
 function tchip(t){
   if(!t||t==='any')return '<span class="chip any">any</span>';
   if(t==='abuse')return '<span class="chip abuse" title="AbuseIPDB + feeds blocklist">abuse</span>';
@@ -554,7 +566,7 @@ function ruleDrawer(id){
     </div>
     <div style="display:flex;gap:10px">
       <label class="fld" style="flex:1"><span>Protocol</span><select id="r-proto" onchange="rProtoChange()">${opt(['tcp','udp','any','icmp','icmpv6'],v.proto)}</select></label>
-      <label class="fld" style="flex:1"><span>Port</span><input id="r-port" value="${esc(v.port)}" placeholder="443 or 80,443"></label>
+      <label class="fld" style="flex:1"><span>Port / service</span><input id="r-port" list="svclist" value="${esc(v.port)}" placeholder="443, 80,443 or a service"></label>
     </div>
     <label class="fld"><span>Target</span><input id="r-target" list="tgtlist" value="${esc(v.target)}" placeholder="any / abuse / country / region / group / IP" autocomplete="off"></label>
     <label class="fld"><span>Interface (optional)</span><input id="r-iface" value="${esc(v.iface)}" placeholder="e.g. eth0 — blank = any" autocomplete="off"></label>
@@ -626,11 +638,12 @@ async function loadObjects(){
   $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
   $('#o-feeds').innerHTML=(o.feeds||[]).length?o.feeds.map(x=>`<div class="row"><span class="mono" style="font-size:11px">${esc(x)}</span></div>`).join(''):'<span class="muted">none</span>';
   $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
-  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[]}; renderManaged();
+  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[]}; renderManaged();
 }
 
-// ---- editable objects (M6B.2) ----
-let OBJ={groups:[],regions:[]};
+// ---- editable objects (M6B.2 groups/regions, M6B.7/services) ----
+let OBJ={groups:[],regions:[],services:[]};
+function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:OBJ.services;}
 function plainchip(m){return `<span class="chip">${esc(m)}</span>`;}
 function objEditList(arr,kind){
   if(!arr.length)return `<span class="muted">none yet — use “New ${kind}” to add one.</span>`;
@@ -641,6 +654,7 @@ function objEditList(arr,kind){
 function renderManaged(){
   $('#o-groups-edit').innerHTML=objEditList(OBJ.groups,'group');
   $('#o-regions-edit').innerHTML=objEditList(OBJ.regions,'region');
+  $('#o-services-edit').innerHTML=objEditList(OBJ.services,'service');
 }
 function switchObjTab(ot){$$('#obj-tabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.ot===ot));
   $$('.ot').forEach(s=>s.style.display='none');$('#ot-'+ot).style.display='';}
@@ -648,14 +662,15 @@ function openDrawer(){$('#drawer').classList.add('open');}
 function closeDrawer(){$('#drawer').classList.remove('open');}
 function editObj(kind,i){
   if(MODE==='ro')return;
-  const list=kind==='group'?OBJ.groups:OBJ.regions, isNew=i<0, e=isNew?{name:'',members:[]}:list[i];
-  const label=kind==='group'?'address group':'custom region';
-  const hint=kind==='group'?'IPs, CIDRs, country codes, region or group names — space/comma separated.':'Country codes (e.g. ru cn kp) and/or other region names.';
-  $('#drawertitle').textContent=(isNew?'New ':'Edit ')+label;
+  const list=listFor(kind), isNew=i<0, e=isNew?{name:'',members:[]}:list[i];
+  const meta={group:['address group','IPs, CIDRs, country codes, region or group names — space/comma separated.','10.0.0.0/24 1.2.3.4 ru','deny in any - ',''],
+    region:['custom region','Country codes (e.g. ru cn kp) and/or other region names.','ru cn kp','deny in any - ',''],
+    service:['service','Ports (443), ranges (8000-8100), and/or other service names — space/comma separated.','80 443 8080-8090','allow in tcp ',' any']}[kind];
+  $('#drawertitle').textContent=(isNew?'New ':'Edit ')+meta[0];
   $('#drawerbody').innerHTML=`
-    <label class="fld"><span>Name</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="OFFICE" autocomplete="off"></label>
-    <label class="fld"><span>Members</span><textarea id="objmembers" rows="7" placeholder="10.0.0.0/24 1.2.3.4 ru">${esc(e.members.join(' '))}</textarea></label>
-    <p class="muted" style="font-size:12px">${hint}<br>Use it in a rule by name, e.g. <code>deny in any - ${esc(e.name||'NAME')}</code>. Changes go to the draft — deploy via Commit.</p>
+    <label class="fld"><span>Name</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="${kind==='service'?'WEB':'OFFICE'}" autocomplete="off"></label>
+    <label class="fld"><span>Members</span><textarea id="objmembers" rows="7" placeholder="${meta[2]}">${esc(e.members.join(' '))}</textarea></label>
+    <p class="muted" style="font-size:12px">${meta[1]}<br>Use it in a rule, e.g. <code>${meta[3]}${esc(e.name||'NAME')}${meta[4]}</code>. Changes go to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveObj('${kind}',${i})">Save to draft</button>
       ${isNew?'':`<button class="btn-rb" onclick="deleteObj('${kind}',${i})">Delete</button>`}
@@ -667,24 +682,25 @@ async function saveObj(kind,i){
   const name=$('#objname').value.trim();
   const members=$('#objmembers').value.split(/[\s,]+/).filter(Boolean);
   if(!/^[A-Za-z0-9_]+$/.test(name)){toast('Name: letters, digits, underscore only.');return;}
-  const list=kind==='group'?OBJ.groups:OBJ.regions;
+  const list=listFor(kind);
   if(i>=0){list[i]={name,members};}
   else{if(list.some(x=>x.name.toUpperCase()===name.toUpperCase())){toast('That name already exists.');return;}list.push({name,members});}
   await putObjects();closeDrawer();
 }
-async function deleteObj(kind,i){(kind==='group'?OBJ.groups:OBJ.regions).splice(i,1);await putObjects();closeDrawer();}
+async function deleteObj(kind,i){listFor(kind).splice(i,1);await putObjects();closeDrawer();}
 async function putObjects(){
-  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions})});
+  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions,services:OBJ.services})});
   if(r.status===401||r.status===403){showLock('Read-only session — cannot edit objects.');return;}
   const d=await r.json();
   if(d.error){toast('Rejected: '+d.error);return;}
-  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[]};renderManaged();
+  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[],services:dd.services||[]};renderManaged();
   refreshCommitBar();toast('Saved to draft.');
 }
 $('#v-objects').addEventListener('click',e=>{
   const tab=e.target.closest('[data-ot]');if(tab){switchObjTab(tab.dataset.ot);return;}
   if(e.target.id==='newgroup'){editObj('group',-1);return;}
   if(e.target.id==='newregion'){editObj('region',-1);return;}
+  if(e.target.id==='newservice'){editObj('service',-1);return;}
   const item=e.target.closest('.objitem.editable');if(item){editObj(item.dataset.kind,+item.dataset.i);return;}
 });
 $('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer')closeDrawer();});
@@ -721,7 +737,7 @@ async function boot(){
   }catch(e){showLock('');return;}
   hideLock();
   if(MODE==='ro'){$('#modebadge').textContent='read-only';$('#nav-rules').style.display='none';
-    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#templatesbtn').style.display='none';}
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#templatesbtn').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();

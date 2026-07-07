@@ -8,7 +8,7 @@ Rule line: `<action> <dir> <proto> <port> <target> [on <iface>]`
 - **action** `allow` | `deny`
 - **dir** `in` | `out` | `fwd-in` | `fwd-out`
 - **proto** `tcp` `udp` `sctp` `all` | `any` `icmp` `icmpv6` `esp` `ah` `gre`
-- **port** `22` | `5060-5070` | `-` (port-less protos)
+- **port** `22` | `5060-5070` | `80,443` | service name `web` | `-` (port-less protos)
 - **target** country `pl` · region `europe` · IP `203.0.113.5` · CIDR `10.0.0.0/8`
   · group `office` · `any` · `abuse` (deny-only)
 - **on `<iface>`** (optional) scope to one interface: `iifname` for the source
@@ -33,6 +33,7 @@ nftgeo-update --version               # installed version
 allow in  tcp 22   pl                  # SSH only from Poland
 allow in  tcp 22   203.0.113.10        # + one fixed admin IP
 allow in  tcp 22   office              # + a GROUP_OFFICE list from config
+allow in  tcp web  any                 # named ports: SERVICE_WEB="80 443"
 allow in  tcp 443  any                 # public HTTPS (whole world)
 allow in  tcp 443  europe              # HTTPS from Europe only
 allow in  tcp 25   any                 # inbound mail (any MTA)
