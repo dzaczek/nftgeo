@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>nftgeo-ui</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/css/jsvectormap.min.css">
+<link rel="stylesheet" href="vendor/jsvectormap.min.css">
 <style>
   :root{
     --bg:#0c1020;--nav:#0a1c2b;--nav2:#0e2740;--card:#141a2e;--line:#243049;
@@ -188,8 +188,8 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/js/jsvectormap.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/maps/world.js"></script>
+<script src="vendor/jsvectormap.min.js"></script>
+<script src="vendor/world.js"></script>
 <script>
 const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));

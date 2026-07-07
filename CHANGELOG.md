@@ -9,6 +9,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.17.1] - 2026-07-07
+
+### Fixed
+- **Offline world map.** nftgeo-ui loaded jsVectorMap from a CDN, so over an SSH
+  tunnel (or any box without outbound internet in the browser) the map failed and
+  the panel showed "Map library unavailable — see the country list." The library
+  (`jsvectormap.min.js/.css`) and the world geometry (`world.js`) are now vendored
+  into the embedded assets and served from `/vendor/`, so the map renders with no
+  external requests. (Roadmap M6A.8, offline map assets.)
+
 ## [1.17.0] - 2026-07-07
 
 ### Added
@@ -285,6 +295,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.17.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.17.1
 [1.17.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.17.0
 [1.16.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.16.1
 [1.16.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.16.0

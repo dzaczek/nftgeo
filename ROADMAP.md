@@ -148,8 +148,9 @@ source of truth. Localhost-only by default.
 - [x] **M6A.6** world map of drops by country (jsVectorMap), ingress focus.
 - [x] **M6A.7** live stats — top source countries, top blocked ports; auto-refresh.
 - [ ] **M6A.7b** drops-over-time chart (time series).
-- [ ] **M6A.8** offline map assets (bundle jsVectorMap), prebuilt release binaries,
-  hardened service (drop root/caps), tests.
+- [~] **M6A.8** offline map assets (bundle jsVectorMap), prebuilt release binaries,
+  hardened service (drop root/caps), tests. *(Map assets vendored & served from
+  `/vendor/` in 1.17.1 — no CDN; release binaries / hardening still open.)*
 
 ### Phase B — visual editor (writes) 📋
 - [ ] **M6B.1** parse `rules.conf`/`config` into a structured model and back.
