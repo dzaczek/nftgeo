@@ -1,0 +1,50 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: install nfpm
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: test
+        run: make test
+
+      - name: build artifacts (binaries, tarball, packages)
+        run: make build tarball package
+
+      - name: checksums
+        run: |
+          cd dist
+          sha256sum nftgeo-ui-linux-* nftgeo-*.tar.gz *.deb *.rpm > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            dist/nftgeo-ui-linux-amd64
+            dist/nftgeo-ui-linux-arm64
+            dist/nftgeo-*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/SHA256SUMS

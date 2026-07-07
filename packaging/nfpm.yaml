@@ -1,0 +1,57 @@
+# nfpm config for nftgeo .deb / .rpm. Built per-arch via the Makefile / release
+# workflow, which set VERSION and ARCH in the environment (nfpm expands ${...}).
+name: nftgeo
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+maintainer: "dzaczek <sirjacek@gmail.com>"
+description: |
+  Declarative nftables geo/abuse firewall with an operator CLI and a local
+  dashboard/policy-editor. Filter by country/region/IP/group, block AbuseIPDB
+  feeds, rate-limit brute force, and edit rules from a web UI - all as one tool.
+vendor: dzaczek
+homepage: https://github.com/dzaczek/nftgeo
+license: MIT
+section: net
+priority: optional
+depends:
+  - nftables
+recommends:
+  - curl
+  - ca-certificates
+contents:
+  - src: bin/nftgeo-update
+    dst: /usr/sbin/nftgeo-update
+    file_info:
+      mode: 0755
+  - src: bin/nftgeo
+    dst: /usr/sbin/nftgeo
+    file_info:
+      mode: 0755
+  - src: dist/nftgeo-ui
+    dst: /usr/sbin/nftgeo-ui
+    file_info:
+      mode: 0755
+  - src: etc/config.example
+    dst: /etc/nftgeo/config.example
+    type: config
+  - src: etc/rules.conf.example
+    dst: /etc/nftgeo/rules.conf.example
+    type: config
+  - src: dist/units/nftgeo.service
+    dst: /usr/lib/systemd/system/nftgeo.service
+  - src: dist/units/nftgeo.timer
+    dst: /usr/lib/systemd/system/nftgeo.timer
+  - src: dist/units/nftgeo-ui.service
+    dst: /usr/lib/systemd/system/nftgeo-ui.service
+  - src: README.md
+    dst: /usr/share/doc/nftgeo/README.md
+  - src: CHEATSHEET.md
+    dst: /usr/share/doc/nftgeo/CHEATSHEET.md
+  - dst: /etc/nftgeo/rules.d
+    type: dir
+  - dst: /etc/nftgeo/groups.d
+    type: dir
+scripts:
+  postinstall: packaging/postinstall.sh
+  preremove: packaging/preremove.sh

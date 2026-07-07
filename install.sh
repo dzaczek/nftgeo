@@ -6,6 +6,7 @@ if [ "$(id -u)" -ne 0 ]; then
 	exit 1
 fi
 
+# shellcheck disable=SC1007  # "CDPATH= cd" is an intentional env-var prefix
 BASE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 if ! command -v apt-get >/dev/null 2>&1; then

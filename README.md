@@ -179,20 +179,39 @@ Without an AbuseIPDB key the script still works; the AbuseIPDB sets stay empty.
 
 ## Installation
 
+### Package (.deb / .rpm)
+
+Grab the package for your arch from the [latest
+release](https://github.com/dzaczek/nftgeo/releases/latest):
+
+```sh
+sudo apt install ./nftgeo_<version>_amd64.deb     # Debian/Ubuntu
+sudo dnf install ./nftgeo-<version>-1.x86_64.rpm   # Fedora/RHEL
+```
+
+Packages install to FHS paths (`/usr/sbin`, `/etc/nftgeo`,
+`/usr/lib/systemd/system`), seed `config`/`rules.conf` on first install, and
+enable **nothing** automatically. Then:
+
+```sh
+sudoedit /etc/nftgeo/config /etc/nftgeo/rules.conf
+sudo systemctl enable --now nftgeo.timer          # scheduled refresh
+sudo systemctl start nftgeo.service               # build & load now
+sudo systemctl enable --now nftgeo-ui.service      # optional dashboard :8787
+```
+
+### From source
+
 ```sh
 cd /root/nftgeo
 sudo ./install.sh
 ```
 
-The installer:
-
-- installs `curl`, `nftables`, and `ca-certificates`,
-- copies the engine to `/usr/local/sbin/nftgeo-update` and the operator CLI to
-  `/usr/local/sbin/nftgeo`,
-- creates `/etc/nftgeo/config` and `/etc/nftgeo/rules.conf`, plus empty
-  `rules.d/` and `groups.d/` directories for drop-in files,
-- installs `nftgeo.service` and `nftgeo.timer`,
-- enables the service at boot and the twice-daily timer.
+The installer installs `curl`/`nftables`/`ca-certificates`, copies the engine and
+CLI to `/usr/local/sbin`, creates `/etc/nftgeo/{config,rules.conf}` plus empty
+`rules.d/` and `groups.d/`, installs `nftgeo.service` + `nftgeo.timer`, and enables
+the service at boot and the twice-daily timer. Build the dashboard binary with
+`make build` (or `go build -o /usr/local/sbin/nftgeo-ui ./ui`).
 
 ## Configuration
 

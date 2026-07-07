@@ -15,3 +15,6 @@ GEMINI.md
 *.swp
 *~
 .DS_Store
+
+# Build output
+/dist/

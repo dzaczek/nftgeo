@@ -9,6 +9,25 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.29.0] - 2026-07-07
+
+### Added
+- **Releases & packaging (track B).** nftgeo now ships prebuilt artifacts:
+  - `.deb` and `.rpm` packages (amd64 + arm64, built with nfpm) that install the
+    engine, CLI, dashboard binary, systemd units and example configs to FHS paths
+    (`/usr/sbin`, `/etc/nftgeo`, `/usr/lib/systemd/system`), seed config on first
+    install, and never auto-enable anything.
+  - Prebuilt `nftgeo-ui` binaries (linux amd64 + arm64) and a source tarball.
+  - A `Makefile` (`build` / `test` / `lint` / `package` / `tarball`) and a
+    `release` GitHub workflow that tests, builds and publishes all of the above to
+    a GitHub Release on every `v*` tag.
+
+### Changed
+- **Hardened the `nftgeo-ui` service** and corrected its description (it is a
+  dashboard *and* editor now, not read-only): `PrivateTmp`, `ProtectSystem=full`
+  (keeps `/etc` writable for commits), on top of the existing `NoNewPrivileges` /
+  `ProtectHome`.
+
 ## [1.28.0] - 2026-07-07
 
 ### Added
@@ -509,6 +528,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.29.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.29.0
 [1.28.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.28.0
 [1.27.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.27.0
 [1.26.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.26.1
