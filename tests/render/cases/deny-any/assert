@@ -1,0 +1,4 @@
+# regression: deny + any target must not reference a nonexistent geo set
++ udp dport 53 counter drop
++ tcp dport 22 counter drop
+- @g_any

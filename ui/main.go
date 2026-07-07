@@ -1438,7 +1438,14 @@ func parseDraftRules(text string) ([]*draftRule, []string) {
 	var rules []*draftRule
 	var trivia []string
 	id := 0
-	for _, raw := range strings.Split(text, "\n") {
+	lines := strings.Split(text, "\n")
+	// Drop the final empty element that a trailing newline produces, so a
+	// round-trip (serialize always ends each line with "\n") is stable and does
+	// not accumulate blank lines at EOF.
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	for _, raw := range lines {
 		trimmed := strings.TrimSpace(raw)
 		if strings.HasPrefix(trimmed, "##") {
 			// "## Title" is a section header (grouping label).

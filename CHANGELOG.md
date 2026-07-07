@@ -9,6 +9,33 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.28.0] - 2026-07-07
+
+### Added
+- **Test suite + CI.** First automated tests for a firewall that had none:
+  - `tests/render/` — golden/snippet render tests: each fixture renders offline
+    and asserts on the generated ruleset (must/must-not contain) or on the
+    expected error. Covers regressions and features: `deny … any` (must not emit
+    a phantom geo set), service→`dport { … }` buckets, mixed `all` proto, throttle
+    sets/rules, HARDEN, interfaces, groups, and invalid-input rejection.
+  - `tests/render/nft-check.sh` — renders every fixture through a real `nft -c`.
+  - `ui/main_test.go` — table-driven Go tests for the parsers (`buildRuleBody`
+    incl. injection rejection, `parseDraftRules`/`serializeDraftRules` round-trip,
+    objects round-trip, `sanitizeObjects`).
+  - `.github/workflows/ci.yml` — shellcheck, `gofmt`/`go vet`/`go test`/build, and
+    both render harnesses on every push.
+
+### Fixed
+- **Draft round-trip no longer accumulates blank lines.** `parseDraftRules`
+  treated a file's trailing newline as a blank line, so each save-through added an
+  empty line at EOF; it now drops the terminator. (Caught by the new Go tests.)
+
+### Changed
+- **Render-only runs are unprivileged and side-effect-free.** `validate` / `plan`
+  and the test harness no longer require root and no longer create `STATE_DIR` or
+  touch the live `nft` path; the kernel check is skipped when `nft` is absent or
+  `NFTGEO_SKIP_NFT_CHECK=1` (a real load still requires both).
+
 ## [1.27.0] - 2026-07-07
 
 ### Added
@@ -482,6 +509,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.28.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.28.0
 [1.27.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.27.0
 [1.26.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.26.1
 [1.26.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.26.0

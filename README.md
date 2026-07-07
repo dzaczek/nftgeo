@@ -577,6 +577,22 @@ Releases follow [Semantic Versioning](https://semver.org/) and are tagged
 each run logs it. See [CHANGELOG.md](CHANGELOG.md) for what changed between
 releases.
 
+## Development / tests
+
+CI (`.github/workflows/ci.yml`) runs on every push: `shellcheck` on the shell
+tools, `gofmt` / `go vet` / `go test` / build for the dashboard, and two render
+harnesses. Run them locally:
+
+```sh
+sh tests/render/run.sh          # offline: render fixtures, assert on the output
+go test ./ui/                   # dashboard parser tests
+sudo sh tests/render/nft-check.sh   # optional: real `nft -c` over every fixture
+```
+
+Render tests live in `tests/render/cases/<name>/` (a `rules.conf`, optional
+`config`, and an `assert` file: `+`/`-` for must/must-not-contain, `!` for an
+expected error). Add a case when you fix a bug or add a rule form.
+
 ## Dashboard (nftgeo-ui)
 
 `nftgeo-ui` is an optional, **read-only** local web dashboard (roadmap P6,

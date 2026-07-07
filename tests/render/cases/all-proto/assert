@@ -1,0 +1,2 @@
++ tcp dport 5060 counter accept
++ udp dport 5060 counter accept

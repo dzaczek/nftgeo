@@ -1,0 +1,4 @@
++ set throttle_block4
++ limit rate over 5/minute
++ add @throttle_block4 { ip saddr timeout 2h }
++ ip saddr @throttle_block4 counter drop

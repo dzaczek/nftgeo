@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.27.0"
+NFTGEO_VERSION="1.28.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -72,7 +72,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ "$(id -u)" -ne 0 ]; then
+# Loading the ruleset needs root; a render-only run (validate/plan/tests) is
+# read-only and does not, so it can run unprivileged.
+if [ -z "${RENDER_ONLY:-}" ] && [ "$(id -u)" -ne 0 ]; then
 	echo "Run as root." >&2
 	exit 1
 fi
@@ -89,7 +91,13 @@ if [ -d "$GROUPS_DIR" ]; then
 	done
 fi
 
-mkdir -p "$STATE_DIR" "$ZONE_DIR" "$(dirname "$NFT_FILE")"
+if [ -n "${RENDER_ONLY:-}" ]; then
+	# Render is read-only: only the zone dir is read; don't touch STATE_DIR or the
+	# live nft path (which may be root-owned and irrelevant to a render).
+	mkdir -p "$ZONE_DIR" 2>/dev/null || true
+else
+	mkdir -p "$STATE_DIR" "$ZONE_DIR" "$(dirname "$NFT_FILE")"
+fi
 
 # RENDER_ONLY renders and validates the ruleset without loading it (used by
 # "nftgeo validate" / "nftgeo plan"): skip the lock, the AbuseIPDB/feed network
@@ -1098,7 +1106,15 @@ scrub_abuse
 build_whitelist
 generate
 
-nft -c -f "${TMP_DIR}/nftgeo.nft"
+# Validate the generated ruleset against the kernel. Skippable for offline
+# golden/text tests (NFTGEO_SKIP_NFT_CHECK=1) or when nft is absent; a real load
+# (below) always requires nft, so this only relaxes render-only runs.
+if [ -z "${NFTGEO_SKIP_NFT_CHECK:-}" ] && command -v nft >/dev/null 2>&1; then
+	nft -c -f "${TMP_DIR}/nftgeo.nft"
+elif [ -z "$RENDER_ONLY" ]; then
+	echo "nft not found; cannot load the ruleset" >&2
+	exit 1
+fi
 
 if [ -n "$RENDER_ONLY" ]; then
 	[ -n "$RENDER_OUT" ] && install -m 0644 "${TMP_DIR}/nftgeo.nft" "$RENDER_OUT"

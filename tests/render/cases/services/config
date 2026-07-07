@@ -1,0 +1,2 @@
+SERVICE_WEB="80 443"
+SERVICE_DNS="53/tcp 53/udp"
