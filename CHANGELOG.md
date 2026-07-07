@@ -9,6 +9,24 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.18.0] - 2026-07-07
+
+### Added
+- **nftgeo-ui draft + commit pipeline (roadmap Phase B, M6B.1).** The dashboard
+  can now change rules — safely, and only from a read-write session. Edits go to
+  a **server-side draft** of `rules.conf`; the live file is never touched until
+  you press **Commit / Deploy**, which runs the engine's own pipeline:
+  `validate → plan` (shown as a visual diff) `→ apply --confirm` guarded by the
+  deadman. An in-page countdown lets you **Keep** the change or **Roll back**;
+  if you do neither, the deadman auto-reverts the kernel ruleset *and* the UI
+  restores `rules.conf` from its backup — so a bad deploy can never persist. A
+  top **Commit bar** shows the pending-change count; a new **Rules (edit)** tab
+  hosts the (foundation) raw draft editor. New endpoints (all read-write only):
+  `PUT /api/draft`, `POST /api/draft/discard`, `/api/commit/preview|apply|keep|
+  rollback|status`. Read-only sessions never see the editor and are refused
+  (403) on every write. The visual, object-oriented policy editor builds on this
+  foundation next.
+
 ## [1.17.1] - 2026-07-07
 
 ### Fixed
@@ -295,6 +313,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.18.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.18.0
 [1.17.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.17.1
 [1.17.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.17.0
 [1.16.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.16.1

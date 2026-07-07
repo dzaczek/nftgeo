@@ -589,6 +589,21 @@ making the map global (~240 outbound requests; off by default).
 The read-only JSON API it serves: `/api/status`, `/api/sets`, `/api/rules`,
 `/api/objects`, `/api/drops`, `/api/lookup`, `/api/geo`.
 
+### Editing rules from the panel (draft → commit)
+
+A **read-write** session (a `nftgeo-ui token` link, not `--ro`) can change rules
+without ever risking a lock-out. The **Rules (edit)** tab edits a *draft* of
+`rules.conf` held server-side (`UI_DRAFT_FILE`, default
+`/var/lib/nftgeo/ui-draft.rules`) — **the live firewall is untouched** until you
+press **Commit / Deploy** on the top bar. Commit runs the engine's own safe
+pipeline: `validate → plan` (shown as a diff) `→ apply --confirm`, guarded by the
+deadman. An in-page countdown then lets you **Keep** the change or **Roll back**;
+if you do neither, the deadman reverts the kernel ruleset *and* the panel restores
+`rules.conf` from its backup, so a broken or lock-out deploy can never persist.
+Read-only sessions never see the editor and are refused (403) on any write. This
+is the foundation (a raw draft editor); the visual, object-oriented policy editor
+is the next roadmap step (P6 Phase B).
+
 ## Roadmap / TODO
 
 nftgeo is growing from a geo/abuse edge filter into a single-tool declarative

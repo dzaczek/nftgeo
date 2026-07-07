@@ -153,13 +153,53 @@ source of truth. Localhost-only by default.
   `/vendor/` in 1.17.1 — no CDN; release binaries / hardening still open.)*
 
 ### Phase B — visual editor (writes) 📋
-- [ ] **M6B.1** parse `rules.conf`/`config` into a structured model and back.
-- [ ] **M6B.2** drag-and-drop group/zone builder (`GROUP_*` / `ZONE_*`).
-- [ ] **M6B.3** rule editor that renders `rules.conf`.
-- [ ] **M6B.4** apply pipeline in the UI: `validate` → `plan` (visual diff) →
-  `apply --confirm` with an in-page confirm / rollback (the deadman guards it).
-- [ ] **M6B.5** templates: save / load / drag-drop reusable rule sets.
-- [~] **M6B.6** auth + TLS for non-localhost use; minimal RBAC. *(Auth shipped in
+
+An **enterprise-grade, object-oriented policy editor** (Palo Alto / Fortinet
+ergonomics) that stays faithful to nftgeo's model: the UI is a *view + editor*
+over `rules.conf`/`config`, and every change flows through **Draft → Commit**
+(`validate → plan → apply --confirm`, deadman-guarded). Writes require a
+read-write session token; `--ro` sessions never leave read-only. Guiding rule:
+**you never lose your context and you never deploy by accident.**
+
+**Layout (M6B.0)** — three-pane shell: left sidebar (Dashboard / Objects /
+Firewall Rules / Templates / Logs), central work area (data tables), and a
+right **slide-out drawer** for editing (no pop-ups — the table stays visible
+behind). A persistent **Commit/Deploy bar** across the top shows pending-change
+count.
+
+- [x] **M6B.1 Draft engine (backend).** *(Shipped 1.18.0.)* Server-side draft of
+  `rules.conf` (read-write sessions only); all edits mutate the draft, never the
+  live file. `GET/PUT /api/draft`, `/api/draft/discard`, and the commit pipeline
+  `/api/commit/preview|apply|keep|rollback|status` — `validate → plan →
+  apply --confirm` with the deadman, plus UI-side `rules.conf` backup/restore so
+  a timed-out or interrupted deploy can never persist. Foundation raw editor +
+  top Commit bar included; the visual editor (M6B.2–M6B.5) builds on this.
+- [ ] **M6B.2 Objects module.** Tabs: **Addresses** (single IP / subnet),
+  **Geo** (country objects, e.g. `GEO-RU`), **Services/Ports** (`SERVICE_*`,
+  built-ins), **Groups** (group any of the above, incl. drag-drop membership).
+  Backed by `GROUP_*` / `SERVICE_*` / `HOST_*`; CRUD into the draft.
+- [ ] **M6B.3 Policy table (Palo-Alto style).** Columns: **№ · Status toggle ·
+  Name · Source · Destination · Service · Action · Hits**. Object references
+  render as **chips** with a hover tooltip of their contents; Action is
+  color-coded (DROP red / ACCEPT green / REJECT amber); Hits come from the live
+  chain counters (spot dead rules). Row **drag-drop reorder** (order = top-down
+  precedence) and live filter.
+- [ ] **M6B.4 Rule editor drawer + inline edit.** Full rule editing in the right
+  drawer (object pickers with search, direction, geo, `on <iface>`); plus
+  **inline editing** — click a Source/Service cell for a searchable dropdown
+  without opening the full drawer.
+- [ ] **M6B.5 Sections / rule groups.** Insert titled section headers between
+  rules ("DMZ rules", "Geo-drops") to keep large policies readable; sections are
+  comment-anchored in `rules.conf` so they round-trip.
+- [ ] **M6B.6 Commit / Deploy pipeline.** Top-bar **Commit** button → change
+  summary ("+1 rule, ~1 object") → `validate` → `plan` visual diff → on confirm
+  `apply --confirm` with the in-page deadman countdown / one-click rollback.
+  Pending edits are highlighted (yellow) until committed. Nothing touches the
+  live firewall before this step.
+- [ ] **M6B.7 Templates / building blocks.** Predefined rule blocks ("Basic
+  Geo-Drop", "Safe Web Server") importable at the top of the policy; save / load
+  reusable sets. Import inserts into the draft (still needs a Commit).
+- [~] **M6B.8** auth + TLS for non-localhost use; minimal RBAC. *(Auth shipped in
   1.17.0: root-minted per-session tokens, single-use read-write with inactivity
   TTL, long-lived read-only; TLS still expected via a front proxy.)*
 

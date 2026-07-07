@@ -1,7 +1,10 @@
-// nftgeo-ui - a small, read-only local dashboard for the nftgeo firewall.
-// Phase A of the P6 roadmap: it shells out to nft / journalctl / nftgeo-update
-// and geolocates dropped IPs from the local ipdeny zones. It never writes; the
-// firewall's source of truth stays in /etc/nftgeo and the CLI.
+// nftgeo-ui - a small local dashboard and policy editor for the nftgeo firewall.
+// Phase A (read-only view) shells out to nft / journalctl / nftgeo-update and
+// geolocates dropped IPs from the local ipdeny zones. Phase B (M6B.1) adds a
+// server-side *draft* of rules.conf that read-write sessions edit and Commit via
+// the engine's own safe pipeline (validate -> plan -> apply --confirm deadman);
+// the live file is never touched until an explicit Deploy. rules.conf and the
+// CLI remain the single source of truth - the draft is just a staging copy.
 package main
 
 import (
@@ -943,6 +946,273 @@ func tokenCmd(args []string) {
 	}
 }
 
+// ---- draft + commit pipeline (M6B.1) ----------------------------------------
+//
+// The UI edits a server-side *draft* of rules.conf; the live file is untouched
+// until the operator commits. Commit runs the engine's own safe pipeline:
+// validate -> plan -> apply --confirm (deadman). Every mutating endpoint below
+// is POST/PUT, so requireAuth already restricts them to read-write sessions
+// (read-only sessions get 403 on any non-GET). The live firewall never changes
+// before an explicit Deploy, and a timed-out deadman auto-restores rules.conf.
+
+var (
+	nftgeoBin  = env("NFTGEO_BIN", "/usr/local/sbin/nftgeo")
+	stateDir   = env("STATE_DIR", "/var/lib/nftgeo")
+	draftFile  = env("UI_DRAFT_FILE", filepath.Join(stateDir, "ui-draft.rules"))
+	backupFile = filepath.Join(stateDir, "ui-commit-backup.rules")
+	sentinel   = env("SENTINEL", filepath.Join(stateDir, ".pending-confirm"))
+)
+
+var (
+	commitMu sync.Mutex
+	pending  struct {
+		active   bool
+		deadline time.Time
+		seconds  int
+	}
+)
+
+func readFileStr(p string) string { b, _ := os.ReadFile(p); return string(b) }
+
+// liveRules is the current on-disk rules.conf.
+func liveRules() string { return readFileStr(rulesFile) }
+
+// draftOrLive returns the draft text (and true) if a draft exists, else the
+// live rules (and false).
+func draftOrLive() (string, bool) {
+	if b, err := os.ReadFile(draftFile); err == nil {
+		return string(b), true
+	}
+	return liveRules(), false
+}
+
+// diffLive returns a unified diff live->draft and the number of changed lines.
+func diffLive(draft string) (string, int) {
+	if draft == liveRules() {
+		return "", 0
+	}
+	tmp, err := os.CreateTemp("", "nftgeo-draft-*.rules")
+	if err != nil {
+		return "", 0
+	}
+	defer os.Remove(tmp.Name())
+	tmp.WriteString(draft)
+	tmp.Close()
+	out, _ := run("diff", "-u", "--label", "live", "--label", "draft", rulesFile, tmp.Name())
+	n := 0
+	for _, l := range strings.Split(out, "\n") {
+		if (strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++")) ||
+			(strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---")) {
+			n++
+		}
+	}
+	return out, n
+}
+
+// runEnv runs a command with extra environment, capturing stdout+stderr (so the
+// engine's "INVALID:" validation messages come through).
+func runEnv(extra []string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Env = append(os.Environ(), extra...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func copyFile(src, dst string) error {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, b, 0644)
+}
+
+// validateDraft renders the draft (RULES_FILE override) without touching live.
+func validateDraft() (string, bool) {
+	out, err := runEnv([]string{"RULES_FILE=" + draftFile}, nftgeoBin, "validate")
+	return strings.TrimSpace(out), err == nil
+}
+
+func handleDraft(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		text, exists := draftOrLive()
+		diff, changed := "", 0
+		if exists {
+			diff, changed = diffLive(text)
+		}
+		writeJSON(w, map[string]interface{}{
+			"exists": exists, "live": liveRules(), "draft": text,
+			"diff": diff, "changed": changed,
+		})
+	case http.MethodPut:
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			http.Error(w, `{"error":"read failed"}`, http.StatusBadRequest)
+			return
+		}
+		if err := os.WriteFile(draftFile, body, 0644); err != nil {
+			http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+			return
+		}
+		diff, changed := diffLive(string(body))
+		writeJSON(w, map[string]interface{}{"saved": true, "changed": changed, "diff": diff})
+	default:
+		http.Error(w, `{"error":"method"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+func handleDraftDiscard(w http.ResponseWriter, r *http.Request) {
+	os.Remove(draftFile)
+	writeJSON(w, map[string]interface{}{"discarded": true})
+}
+
+func handleCommitPreview(w http.ResponseWriter, r *http.Request) {
+	if _, err := os.Stat(draftFile); err != nil {
+		http.Error(w, `{"error":"no draft to preview"}`, http.StatusBadRequest)
+		return
+	}
+	msg, ok := validateDraft()
+	if !ok {
+		writeJSON(w, map[string]interface{}{"valid": false, "message": msg})
+		return
+	}
+	plan, _ := runEnv([]string{"RULES_FILE=" + draftFile}, nftgeoBin, "plan")
+	writeJSON(w, map[string]interface{}{"valid": true, "message": msg, "plan": strings.TrimSpace(plan)})
+}
+
+func commitStatus() map[string]interface{} {
+	_, serr := os.Stat(sentinel)
+	m := map[string]interface{}{"pending": pending.active, "sentinel": serr == nil}
+	if pending.active {
+		m["remaining"] = int(time.Until(pending.deadline).Seconds())
+		m["seconds"] = pending.seconds
+	}
+	return m
+}
+
+func handleCommitStatus(w http.ResponseWriter, r *http.Request) {
+	commitMu.Lock()
+	defer commitMu.Unlock()
+	writeJSON(w, commitStatus())
+}
+
+func handleCommitApply(w http.ResponseWriter, r *http.Request) {
+	commitMu.Lock()
+	defer commitMu.Unlock()
+	if pending.active {
+		http.Error(w, `{"error":"a deploy is already pending; keep or roll it back first"}`, http.StatusConflict)
+		return
+	}
+	if _, err := os.Stat(sentinel); err == nil {
+		http.Error(w, `{"error":"a confirm is already pending on the host"}`, http.StatusConflict)
+		return
+	}
+	if _, err := os.Stat(draftFile); err != nil {
+		http.Error(w, `{"error":"no draft to deploy"}`, http.StatusBadRequest)
+		return
+	}
+	// Never deploy an invalid ruleset - validate the draft before touching live.
+	if msg, ok := validateDraft(); !ok {
+		writeJSON(w, map[string]interface{}{"deployed": false, "valid": false, "message": msg})
+		return
+	}
+	var req struct {
+		Seconds int `json:"seconds"`
+	}
+	json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req)
+	T := req.Seconds
+	if T < 20 || T > 600 {
+		T = 90
+	}
+	// Back up live, promote draft to live, then apply with the engine deadman.
+	if err := copyFile(rulesFile, backupFile); err != nil {
+		http.Error(w, `{"error":"cannot back up live rules"}`, http.StatusInternalServerError)
+		return
+	}
+	if err := copyFile(draftFile, rulesFile); err != nil {
+		http.Error(w, `{"error":"cannot stage draft to live"}`, http.StatusInternalServerError)
+		return
+	}
+	out, err := run(nftgeoBin, "apply", "--confirm", strconv.Itoa(T))
+	if err != nil {
+		// Apply failed to load - restore live immediately.
+		copyFile(backupFile, rulesFile)
+		os.Remove(backupFile)
+		writeJSON(w, map[string]interface{}{"deployed": false, "message": strings.TrimSpace(out)})
+		return
+	}
+	pending.active = true
+	pending.deadline = time.Now().Add(time.Duration(T) * time.Second)
+	pending.seconds = T
+	go watchDeadman(T)
+	writeJSON(w, map[string]interface{}{"deployed": true, "seconds": T, "message": strings.TrimSpace(out)})
+}
+
+// watchDeadman restores rules.conf from the backup if the engine deadman fires
+// (the kernel ruleset it reverts, but the on-disk rules.conf it does not).
+func watchDeadman(T int) {
+	deadline := time.Now().Add(time.Duration(T+4) * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(time.Second)
+		if _, err := os.Stat(sentinel); err != nil {
+			// Sentinel gone: either kept (backup already removed) or the deadman
+			// rolled back. If a backup is still around, the deploy was not kept.
+			commitMu.Lock()
+			if pending.active {
+				if _, berr := os.Stat(backupFile); berr == nil {
+					copyFile(backupFile, rulesFile)
+					os.Remove(backupFile)
+				}
+				pending.active = false
+			}
+			commitMu.Unlock()
+			return
+		}
+	}
+}
+
+func handleCommitKeep(w http.ResponseWriter, r *http.Request) {
+	commitMu.Lock()
+	defer commitMu.Unlock()
+	out, err := run(nftgeoBin, "apply", "--commit")
+	if err != nil {
+		http.Error(w, `{"error":`+strconv.Quote(strings.TrimSpace(out))+`}`, http.StatusInternalServerError)
+		return
+	}
+	os.Remove(draftFile)
+	os.Remove(backupFile)
+	pending.active = false
+	writeJSON(w, map[string]interface{}{"kept": true, "message": strings.TrimSpace(out)})
+}
+
+func handleCommitRollback(w http.ResponseWriter, r *http.Request) {
+	commitMu.Lock()
+	defer commitMu.Unlock()
+	out, _ := run(nftgeoBin, "rollback")
+	if _, err := os.Stat(backupFile); err == nil {
+		copyFile(backupFile, rulesFile)
+		os.Remove(backupFile)
+	}
+	pending.active = false
+	// Keep the draft so the operator can fix and retry.
+	writeJSON(w, map[string]interface{}{"rolledBack": true, "message": strings.TrimSpace(out)})
+}
+
+// reconcileCommit recovers a deploy interrupted by a UI restart: a leftover
+// backup with no pending sentinel means an apply was never kept, so restore the
+// live rules.conf from the backup.
+func reconcileCommit() {
+	if _, err := os.Stat(backupFile); err != nil {
+		return
+	}
+	if _, err := os.Stat(sentinel); err == nil {
+		return // a real confirm is still pending on the host; leave it
+	}
+	copyFile(backupFile, rulesFile)
+	os.Remove(backupFile)
+	log.Printf("nftgeo-ui: recovered an unconfirmed deploy - restored %s from backup", rulesFile)
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "token" {
 		tokenCmd(os.Args[2:])
@@ -961,6 +1231,8 @@ func main() {
 		authOn = true
 		go sweepSessions()
 	}
+
+	reconcileCommit()
 
 	geo.load()
 	go func() {
@@ -1038,10 +1310,19 @@ func main() {
 		writeJSON(w, doLookup(ip))
 	})
 
+	// Draft + commit pipeline (mutations are POST/PUT -> read-write sessions only).
+	api("/api/draft", handleDraft)
+	api("/api/draft/discard", handleDraftDiscard)
+	api("/api/commit/preview", handleCommitPreview)
+	api("/api/commit/status", handleCommitStatus)
+	api("/api/commit/apply", handleCommitApply)
+	api("/api/commit/keep", handleCommitKeep)
+	api("/api/commit/rollback", handleCommitRollback)
+
 	mode := "auth on"
 	if !authOn {
 		mode = "AUTH OFF"
 	}
-	log.Printf("nftgeo-ui: serving on http://%s (read-only, %s)", *addr, mode)
+	log.Printf("nftgeo-ui: serving on http://%s (%s)", *addr, mode)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }

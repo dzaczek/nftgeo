@@ -84,6 +84,19 @@
   .lockcard .locktitle{font-size:19px;margin-bottom:14px}
   .lockcard pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;text-align:left;font-size:13px;overflow:auto}
   .modebadge{color:var(--warnc);font-size:11px}
+  .commitbar{display:none;align-items:center;gap:12px;background:#3a2f12;border:1px solid #6b5518;color:#f4d98a;
+    border-radius:10px;padding:10px 14px;margin-bottom:14px}
+  .commitbar.pending{background:#123a2a;border-color:#1c6b4a;color:#8af4c0}
+  .commitbar .cbtxt{flex:1;font-size:13px}
+  .commitbar button{border:0;border-radius:7px;padding:7px 13px;font-size:13px;cursor:pointer;font-weight:600}
+  .btn-ghost{background:transparent;border:1px solid currentColor!important;color:inherit}
+  .btn-go{background:#2ecc71;color:#06210f}
+  .btn-keep{background:#2ecc71;color:#06210f}
+  .btn-rb{background:#ff5568;color:#2a0810}
+  .drafted{background:#3a2f12!important;border-left:3px solid #f4d98a!important}
+  #draftbox{width:100%;min-height:60vh;background:var(--bg);color:var(--fg);border:1px solid var(--line);
+    border-radius:10px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.5;resize:vertical}
+  .cdnum{font-variant-numeric:tabular-nums;font-weight:700}
   @media(max-width:760px){.app{grid-template-columns:1fr}.side{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px}
     .brand{border:0;padding:12px 14px}.nav{display:flex;flex-wrap:wrap;padding:0 8px}.nav a{padding:8px 10px}
     .sidefoot{margin:0 0 0 auto;border:0}.g2,.g3{grid-template-columns:1fr!important}}
@@ -96,6 +109,7 @@
     <nav class="nav" id="nav">
       <a data-v="dashboard" class="active"><span class="ic">▚</span>Dashboard</a>
       <a data-v="policy"><span class="ic">▤</span>Policy</a>
+      <a data-v="rules" id="nav-rules"><span class="ic">✎</span>Rules (edit)</a>
       <a data-v="logs"><span class="ic">≣</span>Logs &amp; Drops</a>
       <a data-v="objects"><span class="ic">◈</span>Objects</a>
     </nav>
@@ -111,6 +125,20 @@
       <h2 id="title">Dashboard</h2>
       <div class="spacer"></div>
       <div class="meta">updated <span id="upd">—</span></div>
+    </div>
+
+    <!-- COMMIT / DEPLOY BAR -->
+    <div class="commitbar" id="commitbar">
+      <span class="cbtxt" id="cbtxt"></span>
+      <span id="cbedit">
+        <button class="btn-ghost" onclick="discardDraft()">Discard</button>
+        <button class="btn-ghost" onclick="previewDeploy()">Preview</button>
+        <button class="btn-go" onclick="startDeploy()">Commit / Deploy</button>
+      </span>
+      <span id="cbpending" style="display:none">
+        <button class="btn-keep" onclick="keepDeploy()">Keep changes</button>
+        <button class="btn-rb" onclick="rollbackDeploy()">Roll back</button>
+      </span>
     </div>
 
     <!-- DASHBOARD -->
@@ -139,11 +167,25 @@
 
     <!-- POLICY -->
     <section class="view" id="v-policy">
-      <div class="warn">Read-only view of your rules. Editing lands in roadmap P6 phase B; for now edit <code>/etc/nftgeo/rules.conf</code> and <code>nftgeo apply</code>.</div>
+      <div class="warn">Read-only view of your loaded rules with live hit counts. To change rules, use the <b>Rules (edit)</b> tab — it edits a draft and deploys safely via Commit.</div>
       <div class="filters"><input id="pf" placeholder="filter rules…" oninput="renderPolicy()"></div>
       <div class="card"><div class="tablewrap"><table>
         <thead id="pol-head"><tr><th data-k="num">#</th><th data-k="action">Action</th><th data-k="dir">Dir</th><th data-k="port">Service</th><th data-k="target">Target</th><th data-k="iface">Interface</th><th data-k="hits">Hits ▾</th><th data-k="file">Source</th><th>Comment</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
+    </section>
+
+    <!-- RULES (DRAFT EDITOR) -->
+    <section class="view" id="v-rules">
+      <div class="warn" style="background:#123a2a;border-color:#1c6b4a;color:#8af4c0">
+        You are editing a <b>draft</b> of <code>/etc/nftgeo/rules.conf</code>. Nothing changes on the
+        firewall until you <b>Commit / Deploy</b> — which runs <code>validate → plan → apply --confirm</code>
+        with a deadman that auto-rolls-back if you don't confirm in time. This is the foundation
+        (raw editor); the visual policy editor lands in the next iteration.
+      </div>
+      <div class="filters" style="justify-content:flex-end">
+        <button class="btn-go" onclick="saveDraft()">Save draft</button>
+      </div>
+      <div class="card"><textarea id="draftbox" spellcheck="false" placeholder="# rules.conf"></textarea></div>
     </section>
 
     <!-- LOGS -->
@@ -205,8 +247,60 @@ function nav(v){
   $('#title').textContent=$(`#nav a[data-v="${v}"]`).textContent.trim();
   if(v==='policy') loadPolicy();
   if(v==='objects') loadObjects();
+  if(v==='rules') loadDraft();
 }
 $('#nav').addEventListener('click',e=>{const a=e.target.closest('a[data-v]'); if(a) nav(a.dataset.v);});
+
+// ---- draft + commit pipeline (M6B.1) ----
+let DRAFT={exists:false,changed:0}, cdTimer=null;
+function openModal(h){$('#modalbody').innerHTML=h;$('#modal').style.display='flex';}
+function toast(m){let t=$('#toast');if(!t){t=document.createElement('div');t.id='toast';document.body.appendChild(t);
+  t.style.cssText='position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#222c44;color:#dfe6f2;padding:10px 16px;border-radius:8px;z-index:30;font-size:13px;box-shadow:0 6px 24px #0008;transition:opacity .3s';}
+  t.textContent=m;t.style.opacity='1';clearTimeout(t._t);t._t=setTimeout(()=>t.style.opacity='0',2800);}
+async function post(u,body){const r=await fetch(u,{method:'POST',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
+  if(r.status===401||r.status===403){showLock('Session expired or read-only — generate a new token on the host.');throw new Error('unauth');}return r.json();}
+
+async function loadDraft(){const d=await j('/api/draft');$('#draftbox').value=d.draft;DRAFT={exists:d.exists,changed:d.changed};refreshCommitBar();}
+async function saveDraft(){
+  const r=await fetch('/api/draft',{method:'PUT',headers:{'Content-Type':'text/plain'},body:$('#draftbox').value});
+  if(r.status===401||r.status===403){showLock('Read-only session — cannot edit.');return;}
+  const d=await r.json();DRAFT={exists:true,changed:d.changed};refreshCommitBar();toast('Draft saved — '+d.changed+' changed line'+(d.changed===1?'':'s'));}
+async function discardDraft(){if(!confirm('Discard all draft changes? The live firewall is unaffected.'))return;
+  await post('/api/draft/discard');await loadDraft();toast('Draft discarded.');}
+
+async function previewDeploy(){
+  const d=await post('/api/commit/preview');
+  let h='<h3 style="margin-top:0">Deploy preview</h3>';
+  if(!d.valid){h+='<div class="warn">Draft is INVALID — fix it before deploying.</div><pre style="white-space:pre-wrap;max-height:50vh;overflow:auto">'+esc(d.message)+'</pre>';}
+  else{h+='<p class="muted mono" style="font-size:12px">'+esc(d.message)+'</p><h4>Policy diff (loaded → draft, set contents elided)</h4>'
+    +'<pre style="max-height:48vh;overflow:auto;font-size:12px">'+esc(d.plan||'(no policy changes)')+'</pre>'
+    +'<div style="text-align:right;margin-top:10px"><button class="btn-go" style="border:0;border-radius:7px;padding:8px 14px;cursor:pointer;font-weight:600" onclick="closeModal();startDeploy()">Deploy with 90s deadman</button></div>';}
+  openModal(h);}
+
+async function startDeploy(){
+  if(!confirm('Deploy the draft now?\nIt applies with a 90s deadman and auto-rolls-back unless you confirm "Keep".'))return;
+  const d=await post('/api/commit/apply',{seconds:90});
+  if(!d.deployed){toast('Deploy blocked: '+(d.message||'invalid draft'));if(d.valid===false)previewDeploy();return;}
+  refreshCommitBar();}
+async function keepDeploy(){const d=await post('/api/commit/keep');stopCountdown();DRAFT.changed=0;toast('Changes kept.');refreshCommitBar();refresh();}
+async function rollbackDeploy(){const d=await post('/api/commit/rollback');stopCountdown();toast('Rolled back — live rules restored, draft kept.');refreshCommitBar();refresh();}
+
+async function refreshCommitBar(){
+  let st={};try{st=await j('/api/commit/status');}catch(e){return;}
+  const bar=$('#commitbar');
+  if(st.pending){bar.style.display='flex';bar.classList.add('pending');
+    $('#cbedit').style.display='none';$('#cbpending').style.display='';
+    $('#cbtxt').innerHTML='⏳ Deployed with deadman — confirm to keep, or auto-rollback in <span class="cdnum">'+Math.max(0,st.remaining)+'s</span>';
+    startCountdown();return;}
+  bar.classList.remove('pending');stopCountdown();$('#cbpending').style.display='none';$('#cbedit').style.display=MODE==='ro'?'none':'';
+  if(DRAFT.changed>0&&MODE!=='ro'){bar.style.display='flex';
+    $('#cbtxt').innerHTML='<b>'+DRAFT.changed+'</b> pending change'+(DRAFT.changed===1?'':'s')+' in draft — not yet deployed.';}
+  else bar.style.display='none';}
+function startCountdown(){if(cdTimer)return;cdTimer=setInterval(async()=>{
+  let st;try{st=await j('/api/commit/status');}catch(e){return;}
+  if(!st.pending){stopCountdown();DRAFT.changed=0;refreshCommitBar();refresh();return;}
+  $('#cbtxt').innerHTML='⏳ Deployed with deadman — confirm to keep, or auto-rollback in <span class="cdnum">'+Math.max(0,st.remaining)+'s</span>';},1000);}
+function stopCountdown(){if(cdTimer){clearInterval(cdTimer);cdTimer=null;}}
 
 function initMap(){try{map=new jsVectorMap({selector:'#map',map:'world',backgroundColor:'transparent',
   regionStyle:{initial:{fill:'#22304d',stroke:'#141a2e',strokeWidth:.4}},
@@ -244,6 +338,7 @@ async function refresh(){
     renderLogs();
     const st=await j('/api/sets'); const ab=(st||[]).find(x=>x.name==='abuse4'); $('#k-abuse').textContent=ab?ab.count:0;
     window.SETS=st;
+    refreshCommitBar();
   }catch(e){console.error(e);}
 }
 function renderLogs(){
@@ -323,7 +418,7 @@ async function boot(){
     if(me.ok){const d=await me.json();MODE=d.mode||MODE;if(d.auth===false)$('#modebadge').textContent='no-auth';}
   }catch(e){showLock('');return;}
   hideLock();
-  if(MODE==='ro')$('#modebadge').textContent='read-only';
+  if(MODE==='ro'){$('#modebadge').textContent='read-only';$('#nav-rules').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();
