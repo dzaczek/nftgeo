@@ -70,6 +70,10 @@
 # allow out     udp 53        any       # allow outbound DNS anywhere
 # allow fwd-in  tcp 443       europe    # gateway: forward inbound 443 only from Europe
 # allow fwd-out tcp 80        any       # gateway: let the LAN browse out on port 80
+#
+# Egress NAT (gateway - needs net.ipv4.ip_forward=1):
+# masquerade on eth0                     # NAT the LAN out via the WAN interface
+# snat out on eth0 to 203.0.113.7        # ...or a static source IP
 # allow in      icmp -        any       # allow IPv4 ping from anywhere
 # allow in      icmpv6 -      any       # allow IPv6 ping/ND from anywhere
 # allow fwd-in  esp  -        europe    # IPsec/VPN: forward ESP only from Europe

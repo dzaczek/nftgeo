@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.35.0"
+NFTGEO_VERSION="1.36.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -138,6 +138,7 @@ TAB="$(printf '\t')"
 
 RULES_NORM="${TMP_DIR}/rules.norm"
 THROTTLE_NORM="${TMP_DIR}/throttle.norm"
+NAT_NORM="${TMP_DIR}/nat.norm"
 GEO_TOKENS="${TMP_DIR}/geo.tokens"
 GEO_FINAL="${TMP_DIR}/geo.final"
 NEEDED_CC="${TMP_DIR}/cc.needed"
@@ -455,6 +456,30 @@ parse_rules_file() {
 		lineno=$((lineno + 1))
 		case "$action" in ''|\#*) continue ;; esac
 
+		# Egress NAT (P3). Forms:
+		#   masquerade on <iface>              -> oifname <iface> masquerade
+		#   snat out on <iface> to <ip>        -> oifname <iface> snat to <ip>
+		# Re-tokenize the whole line (the fixed 6-field read doesn't fit these).
+		if [ "$action" = masquerade ] || [ "$action" = snat ]; then
+			# shellcheck disable=SC2086
+			set -- $action $dir $proto $port $geo ${_rest%%#*}
+			if [ "$1" = masquerade ]; then
+				[ "$2" = on ] && [ -n "${3:-}" ] || { echo "${rf}:${lineno}: usage: masquerade on <iface>" >&2; exit 1; }
+				_niface="$3"
+				case "$_niface" in ''|*[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: bad interface '${_niface}'" >&2; exit 1 ;; esac
+				printf 'masquerade %s\n' "$_niface" >> "$NAT_NORM"
+			else
+				[ "$2" = out ] && [ "$3" = on ] && [ -n "${4:-}" ] && [ "$5" = to ] && [ -n "${6:-}" ] || {
+					echo "${rf}:${lineno}: usage: snat out on <iface> to <ip>" >&2; exit 1; }
+				_niface="$4"; _nip="$6"
+				case "$_niface" in ''|*[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: bad interface '${_niface}'" >&2; exit 1 ;; esac
+				printf '%s' "$_nip" | grep -Eq "$IPV4_RE" || printf '%s' "$_nip" | grep -Eiq "$IPV6_RE" || {
+					echo "${rf}:${lineno}: snat target '${_nip}' must be an IP address" >&2; exit 1; }
+				printf 'snat %s %s\n' "$_niface" "$_nip" >> "$NAT_NORM"
+			fi
+			continue
+		fi
+
 		# Reactive throttle: rate-limit a port per source and auto-ban offenders.
 		# Form: throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour>
 		#       [ban <dur>] [on <iface>]. Here dir=$dir, proto=$proto, port=$port,
@@ -608,6 +633,7 @@ parse_rules_file() {
 parse_rules() {
 	: > "$RULES_NORM"
 	: > "$THROTTLE_NORM"
+	: > "$NAT_NORM"
 	: > "$GEO_TOKENS"
 	: > "$NEEDED_CC"
 
@@ -622,7 +648,7 @@ parse_rules() {
 		done
 	fi
 
-	if [ ! -s "$RULES_NORM" ] && [ ! -s "$THROTTLE_NORM" ]; then
+	if [ ! -s "$RULES_NORM" ] && [ ! -s "$THROTTLE_NORM" ] && [ ! -s "$NAT_NORM" ]; then
 		echo "No rules found in ${RULES_FILE} or ${RULES_DIR}/*.conf" >&2
 		exit 1
 	fi
@@ -1161,6 +1187,26 @@ generate() {
 		emit_chain "output" "daddr"
 		emit_chain "forward" "saddr daddr"
 
+		# Egress NAT (P3): a source-NAT postrouting chain, emitted only when a
+		# masquerade/snat rule exists (so the filter-only case is unchanged).
+		if [ -s "$NAT_NORM" ]; then
+			printf '\tchain postrouting {\n'
+			printf '\t\ttype nat hook postrouting priority srcnat; policy accept;\n'
+			while read -r _kind _if _ip; do
+				case "$_kind" in
+					masquerade) printf '\t\toifname "%s" counter masquerade\n' "$_if" ;;
+					snat)
+						# inet table: snat needs the family (ip/ip6) spelled out.
+						case "$_ip" in
+							*:*) printf '\t\toifname "%s" counter snat ip6 to %s\n' "$_if" "$_ip" ;;
+							*)   printf '\t\toifname "%s" counter snat ip to %s\n' "$_if" "$_ip" ;;
+						esac
+						;;
+				esac
+			done < "$NAT_NORM"
+			printf '\t}\n'
+		fi
+
 		printf '}\n'
 	} > "${TMP_DIR}/nftgeo.nft"
 }
@@ -1174,6 +1220,12 @@ if [ "$DEFAULT_INPUT" = drop ] &&
 	[ -z "${WHITELIST:-}${WHITELIST_HOSTS:-}" ] &&
 	! awk '$1=="allow" && $2=="input"{f=1} END{exit !f}' "$RULES_NORM"; then
 	echo "warning: DEFAULT_INPUT=drop but no WHITELIST and no inbound 'allow in' rule; new connections (incl. SSH) will be dropped. Add an allow/whitelist and deploy behind the deadman." >&2
+fi
+
+# NAT / forwarding needs IP forwarding enabled; warn (don't manage the sysctl).
+if { [ -s "$NAT_NORM" ] || awk '$2=="forward"{f=1} END{exit !f}' "$RULES_NORM" 2>/dev/null; } &&
+	[ -r /proc/sys/net/ipv4/ip_forward ] && [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = 0 ]; then
+	echo "warning: NAT/forward rules are present but net.ipv4.ip_forward=0; enable it (sysctl net.ipv4.ip_forward=1) for routing to work." >&2
 fi
 
 ensure_zones

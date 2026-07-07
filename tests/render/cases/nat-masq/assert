@@ -1,0 +1,4 @@
+# egress NAT: masquerade postrouting chain
++ chain postrouting
++ type nat hook postrouting priority srcnat
++ oifname "eth0" counter masquerade

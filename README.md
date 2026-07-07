@@ -149,6 +149,20 @@ reports per-rule packet and byte totals.
 `forward` chain and are what you use when the host is a router, gateway, or VPN
 endpoint passing traffic between networks.
 
+### Egress NAT (gateway)
+
+Act as a gateway that NATs an internal network out to the world:
+
+```text
+masquerade on eth0                  # masquerade everything leaving via the WAN
+snat out on eth0 to 203.0.113.7     # or a static source NAT to a fixed IP
+```
+
+These emit a `nat` postrouting chain (only when a NAT rule exists, so a
+filter-only setup is unchanged). Enable IP forwarding yourself
+(`sysctl net.ipv4.ip_forward=1`) — nftgeo warns if a NAT/forward rule is present
+while forwarding is off, but does not manage the sysctl.
+
 ### Replies and "inbound only as a response"
 
 Each chain accepts `established,related` connections first, so a reply to a

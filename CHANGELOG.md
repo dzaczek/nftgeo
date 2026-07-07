@@ -9,6 +9,20 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.36.0] - 2026-07-08
+
+### Added
+- **Egress NAT (roadmap P3).** Turn nftgeo into a NAT gateway:
+  ```
+  masquerade on eth0                  # masquerade the LAN out via the WAN
+  snat out on eth0 to 203.0.113.7     # or a static source NAT
+  ```
+  Emits a `nat` postrouting chain in the `nftgeo` table, only when a NAT rule
+  exists (filter-only setups are byte-identical). `snat` disambiguates the family
+  (`snat ip`/`snat ip6`) for the inet table. `validate` warns when a NAT/forward
+  rule is present but `net.ipv4.ip_forward=0` (the sysctl is not managed).
+  Verified via real `nft -c` in CI/on hermes; not enabled on any host by default.
+
 ## [1.35.0] - 2026-07-08
 
 ### Added
@@ -620,6 +634,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.36.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.36.0
 [1.35.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.35.0
 [1.34.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.34.0
 [1.33.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.33.0

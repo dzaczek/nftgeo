@@ -27,7 +27,7 @@ nftgeo warns about (but does not flip) `ip_forward`/`forwarding` sysctls.
 
 ---
 
-## 🔜 P3 — Egress NAT (masquerade / SNAT)
+## ✅ P3 — Egress NAT (masquerade / SNAT) *(shipped 1.36.0)*
 
 **Goal:** act as a gateway that NATs an internal network out to the world.
 
@@ -37,13 +37,13 @@ snat out on eth0 to 203.0.113.7     # or a static source NAT
 ```
 
 Milestones:
-- [ ] **M3.1** `nat` table + `postrouting` chain scaffolding (emitted only when a
+- [x] **M3.1** `nat` table + `postrouting` chain scaffolding (emitted only when a
   NAT rule exists; coexists with the filter table).
-- [ ] **M3.2** `masquerade on <iface>` → `oifname <iface> masquerade`.
-- [ ] **M3.3** `snat out on <iface> to <ip>` (static source NAT).
-- [ ] **M3.4** warn when IP forwarding is disabled (document; sysctl not managed).
-- [ ] **M3.5** `validate`/`plan`/deadman aware; fail-safe.
-- [ ] **M3.6** docs, examples, Docker (privileged netns) tests.
+- [x] **M3.2** `masquerade on <iface>` → `oifname <iface> masquerade`.
+- [x] **M3.3** `snat out on <iface> to <ip>` (static source NAT).
+- [x] **M3.4** warn when IP forwarding is disabled (document; sysctl not managed).
+- [x] **M3.5** `validate`/`plan`/deadman aware; fail-safe.
+- [x] **M3.6** docs, examples, Docker (privileged netns) tests.
 
 ---
 

@@ -23,6 +23,12 @@ throttle in tcp 3389 3/minute ban 2h   # custom ban length (default THROTTLE_BAN
 ```
 Whitelisted sources are never throttled. Bans live in `throttle_block{4,6}` and expire.
 
+Egress NAT (gateway; needs `net.ipv4.ip_forward=1`):
+```
+masquerade on eth0                 # NAT the LAN out via the WAN
+snat out on eth0 to 203.0.113.7    # or a static source IP
+```
+
 ---
 
 ## Install / update
