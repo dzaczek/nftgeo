@@ -3,3 +3,4 @@
 + log prefix "nftgeo-drop:deny "
 + log prefix "nftgeo-drop:geo "
 + log prefix "nftgeo-drop:default-deny "
++ log prefix "nftgeo-drop:mail-block "

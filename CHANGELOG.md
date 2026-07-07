@@ -9,6 +9,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.34.0] - 2026-07-08
+
+### Changed
+- **Drop logs show the rule's name, not just a category.** If a rule has a
+  trailing `# comment` (a name), the drop's log prefix now uses it
+  (`nftgeo-drop:block others`) so the Logs "policy" column shows exactly which
+  rule dropped a packet. Unnamed and synthesized drops (deny-by-default,
+  default-deny) still show the category (abuse/geo/deny/default-deny). The
+  per-rule counter comment is unchanged (still the full rule line).
+
 ## [1.33.0] - 2026-07-07
 
 ### Changed
@@ -597,6 +607,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.34.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.34.0
 [1.33.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.33.0
 [1.32.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.32.0
 [1.31.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.31.0

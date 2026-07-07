@@ -452,7 +452,10 @@ type DropsResp struct {
 }
 
 var reKV = regexp.MustCompile(`(\w+)=(\S+)`)
-var reReason = regexp.MustCompile(`nftgeo-drop:([a-z-]+)`)
+// The drop-log prefix is "nftgeo-drop:<label>" where <label> is the rule's name
+// or a policy category; capture it up to the nft "KEY=" fields (labels may
+// contain spaces).
+var reReason = regexp.MustCompile(`nftgeo-drop:(.+?)\s+(?:IN|OUT|MAC|PHYSIN|PHYSOUT|SRC|DST)=`)
 
 func drops(since string) DropsResp {
 	resp := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}, Timeline: make([]int, 24)}
