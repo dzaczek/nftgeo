@@ -91,7 +91,8 @@
   .tog.on{background:#2ecc71}
   .tog::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
   .tog.on::after{left:18px}
-  .filerow td{background:var(--bg);font-weight:700;font-size:12px;color:var(--fg);border-top:2px solid var(--acc2);padding:9px 12px}
+  .filecol{white-space:nowrap}
+  .filebadge{font-size:11px;color:var(--mut);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-family:ui-monospace,monospace}
   .secrow td{background:var(--bg);cursor:pointer;border-top:1px solid var(--line)}
   .sectitle{letter-spacing:.6px;text-transform:uppercase;font-size:11px;font-weight:700;color:var(--acc2)}
   .tplitem{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px}
@@ -218,7 +219,7 @@
       <datalist id="tgtlist"></datalist>
       <datalist id="svclist"></datalist>
       <div class="card"><div class="tablewrap"><table class="poltable">
-        <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th></tr></thead>
+        <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th><th id="th-file" style="width:130px">File</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
     </section>
 
@@ -472,12 +473,14 @@ function srcDst(r){
   }
 }
 function svc(r){const p=r.port&&r.port!=='-'?r.port:'';const label=(p?esc(r.proto)+'/'+esc(p):esc(r.proto));return `<span class="chip svc">${label}</span>`;}
-function rowHTML(r,n,ro){
+function fileBadge(f){const d=f==='rules.conf'?'rules.conf':f.replace(/\.conf$/,'');return `<span class="filebadge" title="${esc(f)}">${esc(d)}</span>`;}
+function rowHTML(r,n,ro,multi){
   const fa=`data-file="${esc(r.file)}"`;
+  const fcell=multi?`<td class="filecol">${fileBadge(r.file)}</td>`:'';
   if(r.kind==='section'){
     return `<tr class="prow secrow" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
       <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}</td>
-      <td colspan="7" class="sectitle">§ ${esc(r.title||'(untitled)')}</td></tr>`;
+      <td colspan="7" class="sectitle">§ ${esc(r.title||'(untitled)')}</td>${fcell}</tr>`;
   }
   const [s,d]=srcDst(r);
   const act=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
@@ -488,20 +491,18 @@ function rowHTML(r,n,ro){
     <td>${tog}</td>
     <td>${r.name?esc(r.name):'<span class="muted">—</span>'}</td>
     <td>${s}</td><td>${d}</td><td>${svc(r)}${r.iface?` <span class="chip if" title="interface">${esc(r.iface)}</span>`:''}</td>
-    <td>${act}</td><td style="text-align:right">${hits}</td></tr>`;
+    <td>${act}</td><td style="text-align:right">${hits}</td>${fcell}</tr>`;
 }
 function renderPolicy(){
   const f=$('#pf').value.toLowerCase();
-  const ro=MODE==='ro';
-  let html='';
-  (FILES.length?FILES:[{name:'rules.conf'}]).forEach(file=>{
-    const frows=(RULES||[]).filter(r=>r.file===file.name&&(!f||JSON.stringify(r).toLowerCase().includes(f)));
-    if(!frows.length)return;
-    if(FILES.length>1)html+=`<tr class="filerow"><td colspan="8">📄 ${esc(file.name)}${file.hasDraft?' <span class="muted" style="text-transform:none;letter-spacing:0">(draft)</span>':''}</td></tr>`;
-    let n=0;
-    frows.forEach(r=>{if(r.kind!=='section')n++; html+=rowHTML(r,r.kind==='section'?'':n,ro);});
-  });
-  $('#policy').innerHTML=html||'<tr><td colspan="8" class="muted">no rules</td></tr>';
+  const ro=MODE==='ro', multi=FILES.length>1;
+  $('#th-file').style.display=multi?'':'none';
+  // RULES already arrive in engine order (rules.conf, then rules.d/* by name),
+  // so render a single flat list; sections do the grouping, file is just a badge.
+  const rows=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
+  let n=0, html='';
+  rows.forEach(r=>{if(r.kind!=='section')n++; html+=rowHTML(r,r.kind==='section'?'':n,ro,multi);});
+  $('#policy').innerHTML=html||`<tr><td colspan="${multi?9:8}" class="muted">no rules</td></tr>`;
 }
 // row interactions: toggle · inline target edit · open editor
 $('#policy').addEventListener('click',async e=>{

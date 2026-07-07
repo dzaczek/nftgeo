@@ -9,6 +9,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.26.1] - 2026-07-07
+
+### Changed
+- **nftgeo-ui: sections group, files are just a badge.** Following on from the
+  multi-file editor, the Policy table no longer draws big per-file group headers
+  (which double-grouped alongside sections). Rules render as one flat list in
+  engine order; **sections** (`## …`) remain the grouping mechanism, and the
+  source file shows as a small **File** badge per rule (column hidden entirely
+  when everything lives in `rules.conf`). Editing, the file picker on Add rule,
+  and within-file reordering are unchanged.
+
 ## [1.26.0] - 2026-07-07
 
 ### Changed
@@ -451,6 +462,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.26.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.26.1
 [1.26.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.26.0
 [1.25.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.25.0
 [1.24.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.24.0
