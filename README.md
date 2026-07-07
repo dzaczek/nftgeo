@@ -613,8 +613,10 @@ per-rule **enable/disable toggle**. **+ Add rule** or clicking a row opens a
 slide-out drawer to edit the rule's fields (action, direction, protocol, port,
 target with group/region autocomplete, interface, name) or delete it; clicking a
 target chip does an inline quick-edit, and **+ Section** adds a titled divider
-(`## Title`) to group rules in large policies. Every change writes to the draft and
-deploys via Commit. Next up: templates / building blocks (P6 Phase B, M6B.7).
+(`## Title`) to group rules in large policies. The **Templates** drawer imports
+built-in blocks (*Block abuse feeds*, *Safe Web Server*, *Basic Geo-Drop*) to the
+top of the policy and can save the current policy as a reusable template. Every
+change writes to the draft and deploys via Commit.
 
 ## Roadmap / TODO
 

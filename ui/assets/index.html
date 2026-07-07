@@ -93,6 +93,8 @@
   .tog.on::after{left:18px}
   .secrow td{background:var(--bg);cursor:pointer;border-top:1px solid var(--line)}
   .sectitle{letter-spacing:.6px;text-transform:uppercase;font-size:11px;font-weight:700;color:var(--acc2)}
+  .tplitem{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px}
+  .tplitem button{border:0;border-radius:7px;padding:6px 11px;cursor:pointer;font-weight:600;font-size:12px}
   /* theme toggle + responsive + light theme (dark sidebar stays, FortiGate-style) */
   .themebtn{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:5px 10px;cursor:pointer;margin-top:8px;font:inherit}
   .themebtn:hover{color:var(--fg)}
@@ -207,6 +209,7 @@
         <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
         <span style="display:flex;gap:10px;align-items:center">
           <span class="muted" id="polhint" style="font-size:12px">Drag ⠿ to reorder · toggle to enable/disable · click a row to edit · click a target to change it.</span>
+          <button class="btn-ghost" id="templatesbtn" style="color:var(--fg)">▤ Templates</button>
           <button class="btn-ghost" id="addsection" style="color:var(--fg)">+ Section</button>
           <button class="btn-go" id="addrule">+ Add rule</button>
         </span>
@@ -511,6 +514,31 @@ async function saveSection(id){
   closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Saved to draft.');
 }
 
+// templates / building blocks (M6B.7)
+$('#templatesbtn').addEventListener('click',templatesDrawer);
+async function templatesDrawer(){
+  if(MODE==='ro')return;
+  let list=[]; try{list=await j('/api/templates');}catch(e){return;}
+  const item=t=>`<div class="tplitem">
+    <div style="flex:1"><b>${esc(t.name)}</b>${t.builtin?' <span class="pill" style="background:#1c2740;color:#9db4e6">built-in</span>':''}
+      <div class="muted" style="font-size:12px">${esc(t.description||'')} · ${t.lines.length} lines</div></div>
+    <button class="btn-go" onclick="importTpl('${esc(t.id)}')">Import</button>
+    ${t.builtin?'':`<button class="btn-rb" title="delete" onclick="delTpl('${esc(t.id)}')">✕</button>`}
+  </div>`;
+  $('#drawertitle').textContent='Templates';
+  $('#drawerbody').innerHTML=`
+    <p class="muted" style="font-size:12px">Import inserts the block at the <b>top</b> of your policy (into the draft) — review, position and deploy via Commit.</p>
+    <div style="display:flex;flex-direction:column;gap:8px">${list.map(item).join('')}</div>
+    <div style="margin-top:auto;border-top:1px solid var(--line);padding-top:12px">
+      <label class="fld"><span>Save the current policy as a reusable template</span><input id="tpl-name" placeholder="template name" autocomplete="off"></label>
+      <button class="btn-go" style="margin-top:8px" onclick="saveTpl()">Save current as template</button>
+    </div>`;
+  openDrawer();
+}
+async function importTpl(id){const r=await post('/api/rules/draft/import',{id});if(r&&r.error){toast(r.error);return;}closeDrawer();await loadPolicy();refreshCommitBar();toast('Imported '+(r.rules||0)+' rules to the top — deploy via Commit.');}
+async function delTpl(id){const r=await post('/api/templates/delete',{id});if(r&&r.error){toast(r.error);return;}templatesDrawer();}
+async function saveTpl(){const name=$('#tpl-name').value.trim();if(!name){toast('Name required.');return;}const r=await post('/api/templates',{name,description:''});if(r&&r.error){toast('Rejected: '+r.error);return;}toast('Template saved.');templatesDrawer();}
+
 function ruleDrawer(id){
   if(MODE==='ro')return;
   const r=id!=null?(RULES||[]).find(x=>x.id===id):null;
@@ -693,7 +721,7 @@ async function boot(){
   }catch(e){showLock('');return;}
   hideLock();
   if(MODE==='ro'){$('#modebadge').textContent='read-only';$('#nav-rules').style.display='none';
-    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';}
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#templatesbtn').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();

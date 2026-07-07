@@ -9,6 +9,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.23.0] - 2026-07-07
+
+### Added
+- **nftgeo-ui templates / building blocks (roadmap Phase B, M6B.7).** A
+  **Templates** drawer on the Policy tab offers built-in blocks — *Block abuse
+  feeds*, *Safe Web Server*, *Basic Geo-Drop* — that **import to the top** of the
+  policy (into the draft, each as its own section) for review and Commit. You can
+  also **save the current policy as a reusable template** and delete your saved
+  ones (built-ins are protected). Saved templates live in a UI-owned
+  `ui-templates.json`. New endpoints: `GET/POST /api/templates`,
+  `POST /api/templates/delete`, `POST /api/rules/draft/import`.
+  This rounds out the Phase B visual editor.
+
 ## [1.22.0] - 2026-07-07
 
 ### Added
@@ -374,6 +387,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.23.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.23.0
 [1.22.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.22.0
 [1.21.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.21.0
 [1.20.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.20.0

@@ -152,7 +152,7 @@ source of truth. Localhost-only by default.
   hardened service (drop root/caps), tests. *(Map assets vendored & served from
   `/vendor/` in 1.17.1 — no CDN; release binaries / hardening still open.)*
 
-### Phase B — visual editor (writes) 📋
+### Phase B — visual editor (writes) 🚧 (core shipped in 1.18.0–1.23.0)
 
 An **enterprise-grade, object-oriented policy editor** (Palo Alto / Fortinet
 ergonomics) that stays faithful to nftgeo's model: the UI is a *view + editor*
@@ -201,9 +201,10 @@ count.
   `apply --confirm` with the in-page deadman countdown / one-click rollback.
   Pending edits are highlighted (yellow) until committed. Nothing touches the
   live firewall before this step.
-- [ ] **M6B.7 Templates / building blocks.** Predefined rule blocks ("Basic
-  Geo-Drop", "Safe Web Server") importable at the top of the policy; save / load
-  reusable sets. Import inserts into the draft (still needs a Commit).
+- [x] **M6B.7 Templates / building blocks.** *(Shipped 1.23.0.)* Built-in blocks
+  (*Block abuse feeds*, *Safe Web Server*, *Basic Geo-Drop*) import to the top of
+  the policy as their own section; save the current policy as a reusable template
+  and delete saved ones. Import stages into the draft (still needs a Commit).
 - [~] **M6B.8** auth + TLS for non-localhost use; minimal RBAC. *(Auth shipped in
   1.17.0: root-minted per-session tokens, single-use read-write with inactivity
   TTL, long-lived read-only; TLS still expected via a front proxy.)*

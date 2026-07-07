@@ -1519,6 +1519,156 @@ func handleRulesSection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"saved": true})
 }
 
+// ---- templates / building blocks (M6B.7) ----
+
+type ruleTemplate struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Builtin     bool     `json:"builtin"`
+	Lines       []string `json:"lines"`
+}
+
+var templatesFile = filepath.Join(stateDir, "ui-templates.json")
+
+func builtinTemplates() []ruleTemplate {
+	return []ruleTemplate{
+		{ID: "abuse-block", Name: "Block abuse feeds", Builtin: true,
+			Description: "Drop traffic to and from the AbuseIPDB + feed blocklists.",
+			Lines:       []string{"## Abuse", "deny in any - abuse # abuse in", "deny out any - abuse # abuse out"}},
+		{ID: "safe-web", Name: "Safe Web Server", Builtin: true,
+			Description: "Allow HTTP/HTTPS from anywhere and block known abuse both ways.",
+			Lines:       []string{"## Web server", "allow in tcp 80 any # http", "allow in tcp 443 any # https", "deny in any - abuse # abuse in", "deny out any - abuse # abuse out"}},
+		{ID: "geo-drop", Name: "Basic Geo-Drop", Builtin: true,
+			Description: "Drop all ingress from a few common attack-source countries (edit to taste).",
+			Lines:       []string{"## Geo-Drop", "deny in any - cn # geo-drop", "deny in any - ru # geo-drop", "deny in any - kp # geo-drop"}},
+	}
+}
+
+func loadSavedTemplates() []ruleTemplate {
+	var list []ruleTemplate
+	if b, err := os.ReadFile(templatesFile); err == nil {
+		json.Unmarshal(b, &list)
+	}
+	return list
+}
+
+func saveSavedTemplates(list []ruleTemplate) error {
+	b, _ := json.MarshalIndent(list, "", "  ")
+	return os.WriteFile(templatesFile, b, 0644)
+}
+
+// currentTemplateLines snapshots the draft (or live) rules as clean template
+// lines (rule bodies + section headers, without blank/comment trivia).
+func currentTemplateLines() []string {
+	text, _ := draftRulesText()
+	items, _ := parseDraftRules(text)
+	var lines []string
+	for _, it := range items {
+		if it.Kind == "section" {
+			lines = append(lines, "## "+it.Title)
+			continue
+		}
+		l := it.Body
+		if it.Disabled {
+			l = "# " + l
+		}
+		if it.Name != "" {
+			l += " # " + it.Name
+		}
+		lines = append(lines, l)
+	}
+	return lines
+}
+
+func findTemplate(id string) *ruleTemplate {
+	for _, t := range append(builtinTemplates(), loadSavedTemplates()...) {
+		if t.ID == id {
+			tt := t
+			return &tt
+		}
+	}
+	return nil
+}
+
+func handleTemplates(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, append(builtinTemplates(), loadSavedTemplates()...))
+	case http.MethodPost:
+		var req struct{ Name, Description string }
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+			return
+		}
+		name := sanitizeComment(req.Name)
+		if name == "" {
+			http.Error(w, `{"error":"template needs a name"}`, http.StatusBadRequest)
+			return
+		}
+		lines := currentTemplateLines()
+		if len(lines) == 0 {
+			http.Error(w, `{"error":"no rules to save"}`, http.StatusBadRequest)
+			return
+		}
+		list := loadSavedTemplates()
+		list = append(list, ruleTemplate{
+			ID: fmt.Sprintf("saved-%d", time.Now().UnixNano()), Name: name,
+			Description: sanitizeComment(req.Description), Lines: lines})
+		if err := saveSavedTemplates(list); err != nil {
+			http.Error(w, `{"error":"cannot save template"}`, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]interface{}{"saved": true})
+	default:
+		http.Error(w, `{"error":"method"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+func handleTemplateDelete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req)
+	list := loadSavedTemplates()
+	var keep []ruleTemplate
+	for _, t := range list {
+		if t.ID != req.ID {
+			keep = append(keep, t)
+		}
+	}
+	if err := saveSavedTemplates(keep); err != nil {
+		http.Error(w, `{"error":"cannot write templates"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"deleted": true})
+}
+
+// handleRulesImport prepends a template's rules/sections to the draft (they still
+// need a Commit to deploy).
+func handleRulesImport(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	tpl := findTemplate(req.ID)
+	if tpl == nil {
+		http.Error(w, `{"error":"no such template"}`, http.StatusBadRequest)
+		return
+	}
+	tplItems, _ := parseDraftRules(strings.Join(tpl.Lines, "\n"))
+	text, _ := draftRulesText()
+	cur, tail := parseDraftRules(text)
+	if err := writeDraftRules(append(tplItems, cur...), tail); err != nil {
+		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"imported": true, "rules": len(tplItems)})
+}
+
 // ---- rule add / edit / delete (M6B.4) ----
 
 var (
@@ -1919,6 +2069,9 @@ func main() {
 	api("/api/rules/draft/save", handleRulesSave)
 	api("/api/rules/draft/delete", handleRulesDelete)
 	api("/api/rules/draft/section", handleRulesSection)
+	api("/api/rules/draft/import", handleRulesImport)
+	api("/api/templates", handleTemplates)
+	api("/api/templates/delete", handleTemplateDelete)
 	api("/api/draft/discard", handleDraftDiscard)
 	api("/api/commit/preview", handleCommitPreview)
 	api("/api/commit/status", handleCommitStatus)
