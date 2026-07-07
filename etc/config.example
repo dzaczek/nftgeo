@@ -99,3 +99,6 @@ HARDEN=""
 # SERVICE_WEB="80 443"
 # SERVICE_MAIL="25 465 587 993"
 # SERVICE_STACK="web 8080-8090"        # services can nest other services
+# SERVICE_DNS="53/tcp 53/udp"          # a member may carry a /tcp or /udp proto
+#   A bare port takes the rule's protocol (all/any -> both tcp+udp); a /proto-
+#   tagged port is fixed. Use 'allow in any dns any' to emit every proto it defines.

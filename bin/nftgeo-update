@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.24.0"
+NFTGEO_VERSION="1.25.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -226,30 +226,79 @@ valid_port() {
 	esac
 }
 
-expand_ports() {
-	# $1: a port field - a number N, a range N-M, a comma/space list, or the name
-	# of a SERVICE_<NAME> (which may itself contain ports, ranges and other
-	# service names, nested). Echoes a normalized comma-separated list of ports/
-	# ranges; returns 1 if any leaf is not a valid port or known service. $2 is an
-	# internal recursion guard. Recursive calls run in $() subshells, so the shared
-	# variable names below are safe across the recursion.
-	_depth="${2:-0}"
-	[ "$_depth" -ge 10 ] && return 1
-	_out=""
-	for _tok in $(printf '%s' "$1" | tr ',' ' '); do
-		if printf '%s' "$_tok" | grep -Eq '^[0-9]+(-[0-9]+)?$'; then
-			valid_port "$_tok" || return 1
-			_out="${_out},${_tok}"
+expand_service_leaves() {
+	# $1: a port field - a number N, a range N-M, an optional /proto suffix
+	# (N/tcp, N-M/udp), a comma/space list, or the name of a SERVICE_<NAME> (which
+	# may nest more of the same). Echoes a space-separated list of leaf tokens,
+	# each "port" or "port/proto"; returns 1 if any leaf is not a valid port or
+	# known service. $2 is an internal recursion guard. Recursive calls run in $()
+	# subshells, so the shared variable names below are safe across the recursion.
+	_d="${2:-0}"
+	[ "$_d" -ge 10 ] && return 1
+	_acc=""
+	for _t in $(printf '%s' "$1" | tr ',' ' '); do
+		case "$_t" in
+			*/tcp|*/udp|*/sctp) _pp="${_t##*/}"; _pnum="${_t%/*}" ;;
+			*)                  _pp="";          _pnum="$_t" ;;
+		esac
+		if printf '%s' "$_pnum" | grep -Eq '^[0-9]+(-[0-9]+)?$'; then
+			valid_port "$_pnum" || return 1
+			_acc="${_acc} ${_t}"
 		else
-			_svc="$(resolve_service "$_tok")"
-			[ -n "$_svc" ] || return 1
-			_sub="$(expand_ports "$_svc" "$((_depth + 1))")" || return 1
-			_out="${_out},${_sub}"
+			# a service reference (no /proto suffix allowed on a name)
+			[ -z "$_pp" ] || return 1
+			_sv="$(resolve_service "$_pnum")"
+			[ -n "$_sv" ] || return 1
+			_sub="$(expand_service_leaves "$_sv" "$((_d + 1))")" || return 1
+			_acc="${_acc} ${_sub}"
 		fi
 	done
-	_out="${_out#,}"
-	[ -n "$_out" ] || return 1
-	printf '%s' "$_out"
+	_acc="${_acc# }"
+	[ -n "$_acc" ] || return 1
+	printf '%s' "$_acc"
+}
+
+resolve_service_field() {
+	# $1 rule proto (tcp|udp|sctp|all|any), $2 port/service field. Splits the field
+	# into per-protocol port sets and echoes one "<proto> <comma-ports>" line per
+	# non-empty protocol. Bare (untagged) ports take the rule proto (all|any -> both
+	# tcp and udp); a /proto-tagged port that conflicts with a specific rule proto
+	# is an error. Returns 1 on any invalid or conflicting member.
+	_rp="$1"
+	_leaves="$(expand_service_leaves "$2" 0)" || return 1
+	_tcp=""; _udp=""; _sctp=""
+	for _lf in $_leaves; do
+		case "$_lf" in
+			*/tcp)  _tag=tcp;  _pt="${_lf%/tcp}" ;;
+			*/udp)  _tag=udp;  _pt="${_lf%/udp}" ;;
+			*/sctp) _tag=sctp; _pt="${_lf%/sctp}" ;;
+			*)      _tag="";   _pt="$_lf" ;;
+		esac
+		if [ -n "$_tag" ]; then
+			case "$_rp" in
+				all|any) : ;;
+				"$_tag")  : ;;
+				*) return 1 ;;   # e.g. a /udp member in a "proto tcp" rule
+			esac
+			_dst="$_tag"
+		else
+			case "$_rp" in
+				tcp) _dst=tcp ;; udp) _dst=udp ;; sctp) _dst=sctp ;;
+				all|any) _dst=both ;;
+			esac
+		fi
+		case "$_dst" in
+			tcp)  _tcp="${_tcp},${_pt}" ;;
+			udp)  _udp="${_udp},${_pt}" ;;
+			sctp) _sctp="${_sctp},${_pt}" ;;
+			both) _tcp="${_tcp},${_pt}"; _udp="${_udp},${_pt}" ;;
+		esac
+	done
+	[ -n "${_tcp}${_udp}${_sctp}" ] || return 1
+	[ -n "$_tcp" ]  && printf 'tcp %s\n'  "${_tcp#,}"
+	[ -n "$_udp" ]  && printf 'udp %s\n'  "${_udp#,}"
+	[ -n "$_sctp" ] && printf 'sctp %s\n' "${_sctp#,}"
+	return 0
 }
 
 l4_match() {
@@ -348,17 +397,35 @@ parse_rules_file() {
 			fwd-out) hook=forward;  side=daddr ;;
 			*) echo "${rf}:${lineno}: bad direction '${dir}' (use in|out|fwd-in|fwd-out)" >&2; exit 1 ;;
 		esac
+		# Resolve the port/service field into per-protocol buckets ($_buckets, one
+		# "<proto> <ports>" line each) unless the rule is genuinely port-less.
+		_portless=""; _buckets=""
 		case "$proto" in
 			tcp|udp|sctp|all)
-				if ! _pnorm="$(expand_ports "$port")"; then
-					echo "${rf}:${lineno}: bad port/service '${port}' (a number, N-M, a list, or a SERVICE_ name)" >&2
+				case "$port" in
+					-|any) echo "${rf}:${lineno}: proto '${proto}' needs a port or service" >&2; exit 1 ;;
+				esac
+				if ! _buckets="$(resolve_service_field "$proto" "$port")"; then
+					echo "${rf}:${lineno}: bad port/service '${port}' (a number, N-M, a list, a SERVICE_ name, or a /tcp|/udp tag conflicting with proto '${proto}')" >&2
 					exit 1
 				fi
-				port="$_pnorm"
 				;;
-			any|icmp|icmpv6|esp|ah|gre)
+			any)
+				# "any -" matches every protocol/port; "any <service>" defers the
+				# protocol(s) to the (tagged) service.
 				case "$port" in
-					-|any) port=- ;;
+					-|any) port=-; _portless=yes ;;
+					*)
+						if ! _buckets="$(resolve_service_field "$proto" "$port")"; then
+							echo "${rf}:${lineno}: bad port/service '${port}' (a number, N-M, a list, or a SERVICE_ name)" >&2
+							exit 1
+						fi
+						;;
+				esac
+				;;
+			icmp|icmpv6|esp|ah|gre)
+				case "$port" in
+					-|any) port=-; _portless=yes ;;
 					*) echo "${rf}:${lineno}: proto '${proto}' takes no port (use -)" >&2; exit 1 ;;
 				esac
 				;;
@@ -414,11 +481,15 @@ parse_rules_file() {
 			echo "${rf}:${lineno}: unexpected '${1}' after target (only 'on <iface>' allowed)" >&2; exit 1
 		fi
 
-		if [ "$proto" = "all" ]; then
-			emit_norm "$action" "$hook" "$side" tcp "$port" "$geosan" "$iface"
-			emit_norm "$action" "$hook" "$side" udp "$port" "$geosan" "$iface"
-		else
+		if [ -n "$_portless" ]; then
+			# proto any/icmp/icmpv6/esp/ah/gre with no port
 			emit_norm "$action" "$hook" "$side" "$proto" "$port" "$geosan" "$iface"
+		else
+			# one normalized rule per resolved protocol bucket (tcp/udp/sctp)
+			printf '%s\n' "$_buckets" | while IFS=' ' read -r _bp _bports; do
+				[ -n "$_bp" ] || continue
+				emit_norm "$action" "$hook" "$side" "$_bp" "$_bports" "$geosan" "$iface"
+			done
 		fi
 	done < "$rf"
 }

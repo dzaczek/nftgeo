@@ -108,11 +108,18 @@ ports, ranges, and other service names (nested), and resolves to a
 ```sh
 SERVICE_WEB="80 443"
 SERVICE_STACK="web 8080-8090"     # services can nest other services
+SERVICE_DNS="53/tcp 53/udp"       # a member may carry a /tcp or /udp protocol
 ```
 ```
 allow in tcp web   any            # -> tcp dport { 80, 443 }
 allow in tcp stack any            # -> tcp dport { 80, 443, 8080-8090 }
+allow in any dns   any            # -> tcp dport 53 ; udp dport 53
 ```
+
+A **bare** port takes the rule's protocol (`all`/`any` expand it to both TCP and
+UDP); a **`/proto`-tagged** port is fixed to that protocol. A tag that conflicts
+with a specific rule protocol (a `/udp` member under `proto tcp`) is an error —
+use `any` or `all` to emit every protocol the service defines.
 
 Every generated rule carries a `counter`, so `nft list table inet nftgeo`
 reports per-rule packet and byte totals.

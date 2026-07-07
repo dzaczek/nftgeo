@@ -9,6 +9,28 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.25.0] - 2026-07-07
+
+### Added
+- **Per-protocol service members (`port/proto`).** A `SERVICE_*` member may now
+  carry a protocol tag, so one service can span TCP and UDP:
+  ```sh
+  SERVICE_DNS="53/tcp 53/udp"
+  SERVICE_APP="443/tcp 3478/udp"
+  ```
+  ```
+  allow in any dns any     # -> tcp dport 53 ; udp dport 53
+  allow in tcp web any      # bare ports still take the rule's protocol
+  ```
+  A **bare** port takes the rule's protocol (`all`/`any` → both TCP and UDP); a
+  **tagged** port is fixed to its protocol. A tag that conflicts with a specific
+  rule protocol (e.g. a `/udp` member under `proto tcp`) is a clear error — use
+  `any`/`all` to emit every protocol the service defines. Fully backward
+  compatible: existing bare-port services are unchanged. The engine expands a
+  rule into one normalized line per resolved protocol. In nftgeo-ui the rule
+  editor now offers `all`/`sctp` protocols and keeps the port field editable for
+  `any` (blank = every port, or a service).
+
 ## [1.24.0] - 2026-07-07
 
 ### Added
@@ -413,6 +435,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.25.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.25.0
 [1.24.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.24.0
 [1.23.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.23.0
 [1.22.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.22.0

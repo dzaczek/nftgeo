@@ -565,7 +565,7 @@ function ruleDrawer(id){
       <label class="fld" style="flex:1"><span>Direction</span><select id="r-dir">${opt(['in','out','fwd-in','fwd-out'],v.dir)}</select></label>
     </div>
     <div style="display:flex;gap:10px">
-      <label class="fld" style="flex:1"><span>Protocol</span><select id="r-proto" onchange="rProtoChange()">${opt(['tcp','udp','any','icmp','icmpv6'],v.proto)}</select></label>
+      <label class="fld" style="flex:1"><span>Protocol</span><select id="r-proto" onchange="rProtoChange()">${opt(['tcp','udp','all','sctp','any','icmp','icmpv6'],v.proto)}</select></label>
       <label class="fld" style="flex:1"><span>Port / service</span><input id="r-port" list="svclist" value="${esc(v.port)}" placeholder="443, 80,443 or a service"></label>
     </div>
     <label class="fld"><span>Target</span><input id="r-target" list="tgtlist" value="${esc(v.target)}" placeholder="any / abuse / country / region / group / IP" autocomplete="off"></label>
@@ -579,8 +579,8 @@ function ruleDrawer(id){
   rProtoChange(); openDrawer(); $('#r-name').focus();
 }
 function rProtoChange(){const p=$('#r-proto').value,pt=$('#r-port');
-  if(p==='any'||p==='icmp'||p==='icmpv6'){pt.value='';pt.disabled=true;pt.placeholder='(no port)';}
-  else{pt.disabled=false;pt.placeholder='443 or 80,443';}}
+  if(p==='icmp'||p==='icmpv6'){pt.value='';pt.disabled=true;pt.placeholder='(no port)';}
+  else{pt.disabled=false;pt.placeholder=p==='any'?'blank = every port, or a service (e.g. dns)':'443, 80,443 or a service';}}
 async function saveRule(id){
   const b={action:$('#r-action').value,dir:$('#r-dir').value,proto:$('#r-proto').value,port:$('#r-port').value,
     target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value};
@@ -665,7 +665,7 @@ function editObj(kind,i){
   const list=listFor(kind), isNew=i<0, e=isNew?{name:'',members:[]}:list[i];
   const meta={group:['address group','IPs, CIDRs, country codes, region or group names — space/comma separated.','10.0.0.0/24 1.2.3.4 ru','deny in any - ',''],
     region:['custom region','Country codes (e.g. ru cn kp) and/or other region names.','ru cn kp','deny in any - ',''],
-    service:['service','Ports (443), ranges (8000-8100), and/or other service names — space/comma separated.','80 443 8080-8090','allow in tcp ',' any']}[kind];
+    service:['service','Ports (443), ranges (8000-8100), proto-tagged (53/udp), and/or other service names — space/comma separated. A bare port takes the rule’s protocol; a tagged port is fixed. Use proto <code>any</code>/<code>all</code> in a rule to emit every protocol the service defines.','80 443 53/udp','allow in tcp ',' any']}[kind];
   $('#drawertitle').textContent=(isNew?'New ':'Edit ')+meta[0];
   $('#drawerbody').innerHTML=`
     <label class="fld"><span>Name</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="${kind==='service'?'WEB':'OFFICE'}" autocomplete="off"></label>

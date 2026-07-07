@@ -1691,12 +1691,13 @@ func handleRulesImport(w http.ResponseWriter, r *http.Request) {
 // ---- rule add / edit / delete (M6B.4) ----
 
 var (
-	// a number, range, comma list, or a SERVICE_ name (letters) - the engine
-	// resolves and re-validates services, so names are allowed here.
-	rulePortRe   = regexp.MustCompile(`^[A-Za-z0-9_,-]+$`)
+	// a number, range, comma list, a SERVICE_ name (letters), or a /proto-tagged
+	// port (53/udp) - the engine resolves and re-validates, so this is permissive
+	// but still free of shell metacharacters.
+	rulePortRe   = regexp.MustCompile(`^[A-Za-z0-9_,/-]+$`)
 	ruleTargetRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 	ruleIfaceRe  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-	ruleProtos   = map[string]bool{"tcp": true, "udp": true, "any": true, "icmp": true, "icmpv6": true}
+	ruleProtos   = map[string]bool{"tcp": true, "udp": true, "sctp": true, "all": true, "any": true, "icmp": true, "icmpv6": true}
 )
 
 func sanitizeComment(s string) string {
@@ -1720,16 +1721,22 @@ func buildRuleBody(action, dir, proto, port, target, iface string) (string, erro
 		return "", fmt.Errorf("direction must be in / out / fwd-in / fwd-out")
 	}
 	if !ruleProtos[proto] {
-		return "", fmt.Errorf("protocol must be tcp / udp / any / icmp / icmpv6")
+		return "", fmt.Errorf("protocol must be tcp / udp / sctp / all / any / icmp / icmpv6")
 	}
-	if proto == "any" {
-		port = "-"
-	}
-	if port == "" {
-		port = "-"
+	switch proto {
+	case "icmp", "icmpv6":
+		port = "-" // port-less protocols
+	default:
+		if port == "" {
+			if proto == "any" {
+				port = "-" // "any -" matches every protocol/port
+			} else {
+				return "", fmt.Errorf("proto %s needs a port or service", proto)
+			}
+		}
 	}
 	if port != "-" && !rulePortRe.MatchString(port) {
-		return "", fmt.Errorf("port must be a number, range (n-m) or list (n,m)")
+		return "", fmt.Errorf("port must be a number, range (n-m), list (n,m), or a service")
 	}
 	if !ruleTargetRe.MatchString(target) {
 		return "", fmt.Errorf("target: country / region / group / IP / CIDR / any / abuse")
