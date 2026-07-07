@@ -9,6 +9,20 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.33.0] - 2026-07-07
+
+### Changed
+- **Exact per-rule hit counts.** The dashboard used a best-effort signature match
+  to map a rule to its live counters, which missed rules using a `SERVICE_` name
+  in the port, a multi-port set, or an interface qualifier (they showed 0/unmatched
+  even when the kernel counter wasn't). The engine now stamps every generated rule
+  with a `comment "nftgeo:<the rules.conf line>"`, and the UI reads exact counters
+  via `nft -j`, summing per comment (v4+v6, proto buckets). Hit counts are now
+  correct for every rule form, and `nft list table inet nftgeo` is self-documenting
+  (each line shows its source rule). Allow-rule counts still reflect *new*
+  connections (the stateful `established,related accept` handles the rest), so they
+  are naturally lower than deny counts.
+
 ## [1.32.0] - 2026-07-07
 
 ### Added
@@ -583,6 +597,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.33.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.33.0
 [1.32.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.32.0
 [1.31.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.31.0
 [1.30.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.30.1

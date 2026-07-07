@@ -185,3 +185,18 @@ func TestSanitizeComment(t *testing.T) {
 		t.Errorf("sanitizeComment did not strip # / newline: %q", got)
 	}
 }
+
+func TestRuleComment(t *testing.T) {
+	cases := []struct {
+		action, dir, proto, port, target, iface, want string
+	}{
+		{"allow", "in", "tcp", "22", "any", "", "nftgeo:allow in tcp 22 any"},
+		{"allow", "in", "tcp", "HERMES", "VPN", "wg0", "nftgeo:allow in tcp HERMES VPN on wg0"},
+		{"deny", "in", "any", "-", "abuse", "-", "nftgeo:deny in any - abuse"},
+	}
+	for _, c := range cases {
+		if got := ruleComment(c.action, c.dir, c.proto, c.port, c.target, c.iface); got != c.want {
+			t.Errorf("got %q, want %q", got, c.want)
+		}
+	}
+}

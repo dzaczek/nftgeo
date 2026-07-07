@@ -538,86 +538,69 @@ type PolicyRule struct {
 	Comment string `json:"comment"`
 	File    string `json:"file"`
 	Hits    int64  `json:"hits"`
-	Matches []Rule `json:"matches"`
+	Matched bool   `json:"matched"`
 }
 
-// sanitize mirrors the engine's sanitize_lower: lowercase, non-alphanumeric runs
-// collapsed to '_', edges trimmed - so a target maps to its "g_<name>" set.
-func sanitize(s string) string {
-	s = strings.ToLower(s)
-	var b strings.Builder
-	prevU := false
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			prevU = false
-		} else if !prevU {
-			b.WriteByte('_')
-			prevU = true
-		}
+// ruleComment reproduces the "nftgeo:<line>" tag the engine stamps on every rule
+// it generates, built from the same raw rules.conf fields - so counters map
+// exactly (service ports, interfaces, multi-port sets and all).
+func ruleComment(action, dir, proto, port, target, iface string) string {
+	c := action + " " + dir + " " + proto + " " + port + " " + target
+	if iface != "" && iface != "-" {
+		c += " on " + iface
 	}
-	return strings.Trim(b.String(), "_")
+	return "nftgeo:" + c
 }
 
-// annotate joins each policy rule to the loaded chain rules that implement it,
-// summing their live counters (best-effort: by hook, verdict, port, side, and the
-// target's set name).
-func annotate(rules []PolicyRule, chs []Chain) {
-	byHook := map[string]Chain{}
-	for _, c := range chs {
-		byHook[c.Name] = c
+// ruleCounters reads the live ruleset as JSON and sums packet counters per
+// "nftgeo:" comment (a rule can emit several nft rules - v4/v6, proto buckets -
+// all sharing the source comment).
+func ruleCounters() map[string]int64 {
+	m := map[string]int64{}
+	out, err := run("nft", "-j", "list", "table", fam, table)
+	if err != nil {
+		return m
 	}
-	for i := range rules {
-		r := &rules[i]
-		hook := "input"
-		switch r.Dir {
-		case "out":
-			hook = "output"
-		case "fwd-in", "fwd-out":
-			hook = "forward"
+	var doc struct {
+		Nftables []map[string]json.RawMessage `json:"nftables"`
+	}
+	if json.Unmarshal([]byte(out), &doc) != nil {
+		return m
+	}
+	for _, item := range doc.Nftables {
+		raw, ok := item["rule"]
+		if !ok {
+			continue
 		}
-		verdict := "accept"
-		if r.Action == "deny" {
-			verdict = "drop"
+		var r struct {
+			Comment string                       `json:"comment"`
+			Expr    []map[string]json.RawMessage `json:"expr"`
 		}
-		side := "saddr"
-		if r.Dir == "out" || r.Dir == "fwd-out" {
-			side = "daddr"
+		if json.Unmarshal(raw, &r) != nil || !strings.HasPrefix(r.Comment, "nftgeo:") {
+			continue
 		}
-		portTok := ""
-		if r.Port != "-" {
-			portTok = "dport " + r.Port
-		}
-		var sets []string
-		switch r.Target {
-		case "any":
-		case "abuse":
-			sets = []string{"@abuse4", "@abuse6"}
-		default:
-			b := sanitize(r.Target)
-			sets = []string{"@g_" + b + "4", "@g_" + b + "6"}
-		}
-		for _, cr := range byHook[hook].Rules {
-			if cr.Verdict != verdict {
-				continue
-			}
-			if portTok != "" && !strings.Contains(cr.Text, portTok) {
-				continue
-			}
-			ok := false
-			if r.Target == "any" {
-				ok = !strings.Contains(cr.Text, "@")
-			} else {
-				for _, s := range sets {
-					if strings.Contains(cr.Text, s) && strings.Contains(cr.Text, side) {
-						ok = true
-					}
+		for _, e := range r.Expr {
+			if c, ok := e["counter"]; ok {
+				var ctr struct {
+					Packets int64 `json:"packets"`
+				}
+				if json.Unmarshal(c, &ctr) == nil {
+					m[r.Comment] += ctr.Packets
 				}
 			}
-			if ok {
-				r.Matches = append(r.Matches, cr)
-				r.Hits += cr.Packets
-			}
+		}
+	}
+	return m
+}
+
+// annotate sets each rule's live hit count by matching the engine's per-rule
+// comment against the counter map (from ruleCounters) - exact, not a heuristic.
+func annotate(rules []PolicyRule, ctr map[string]int64) {
+	for i := range rules {
+		r := &rules[i]
+		if h, ok := ctr[ruleComment(r.Action, r.Dir, r.Proto, r.Port, r.Target, r.Iface)]; ok {
+			r.Hits = h
+			r.Matched = true
 		}
 	}
 }
@@ -1564,22 +1547,22 @@ func serializeDraftRules(rules []*draftRule, tail []string) string {
 	return b.String()
 }
 
-// annotateDraft fills live hit counts for enabled rules (best-effort, via the
-// same signature match as the read-only policy view).
-func annotateDraft(rules []*draftRule, chs []Chain) {
+// annotateDraft fills live hit counts for enabled rules via the engine's per-rule
+// comment (ctr from ruleCounters, computed once by the caller).
+func annotateDraft(rules []*draftRule, ctr map[string]int64) {
 	var prs []PolicyRule
 	var idx []int
 	for i, r := range rules {
 		if r.Disabled || r.Kind == "section" {
 			continue
 		}
-		prs = append(prs, PolicyRule{Action: r.Action, Dir: r.Dir, Proto: r.Proto, Port: r.Port, Target: r.Target})
+		prs = append(prs, PolicyRule{Action: r.Action, Dir: r.Dir, Proto: r.Proto, Port: r.Port, Target: r.Target, Iface: r.Iface})
 		idx = append(idx, i)
 	}
-	annotate(prs, chs)
+	annotate(prs, ctr)
 	for k, pr := range prs {
 		rules[idx[k]].Hits = pr.Hits
-		rules[idx[k]].Matched = len(pr.Matches) > 0
+		rules[idx[k]].Matched = pr.Matched
 	}
 }
 
@@ -1596,12 +1579,12 @@ func reqRuleFile(w http.ResponseWriter, rel string) *ruleFile {
 // handleRulesDraft returns the parsed rules across every editable file
 // (rules.conf + rules.d/*.conf, in engine order), each tagged with its file.
 func handleRulesDraft(w http.ResponseWriter, r *http.Request) {
-	chs := chains()
+	ctr := ruleCounters()
 	all := []*draftRule{}
 	var files []map[string]interface{}
 	for _, rf := range ruleFileList() {
 		items, _ := parseDraftRules(draftTextFor(rf))
-		annotateDraft(items, chs)
+		annotateDraft(items, ctr)
 		for _, it := range items {
 			it.File = rf.rel
 			all = append(all, it)
@@ -2307,7 +2290,7 @@ func main() {
 	})
 	api("/api/rules", func(w http.ResponseWriter, r *http.Request) {
 		p := policy()
-		annotate(p, chains())
+		annotate(p, ruleCounters())
 		writeJSON(w, p)
 	})
 	api("/api/objects", func(w http.ResponseWriter, r *http.Request) {

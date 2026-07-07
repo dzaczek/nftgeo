@@ -1,3 +1,4 @@
 + tcp dport 22 counter accept
 + tcp dport 23 counter drop
 + chain output
++ counter accept comment "nftgeo:allow in tcp 22 any"
