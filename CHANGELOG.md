@@ -9,6 +9,23 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.20.0] - 2026-07-07
+
+### Added
+- **nftgeo-ui visual policy table (roadmap Phase B, M6B.3).** The Policy tab is
+  now an enterprise-style editor over the draft rules: columns **№ · On · Name ·
+  Source · Destination · Service · Action · Hits**, with Source/Destination
+  derived from the rule direction, object references shown as **chips** (group /
+  region tooltips resolve their members), colour-coded actions (ACCEPT green /
+  DROP red) and live hit counts. Rows support **drag-and-drop reorder**
+  (top-down precedence) and an **enable/disable toggle** — both write to the
+  draft (a disabled rule is stored commented-out) and deploy via the same Commit
+  pipeline. Parsing is lossless: each rule keeps its leading comments/blank lines
+  and verbatim body, so reorder/toggle round-trip cleanly. Read-only sessions get
+  the view without drag or toggle. New endpoints: `GET /api/rules/draft`,
+  `POST /api/rules/draft/reorder`, `POST /api/rules/draft/toggle`. Adding/editing
+  rule fields (drawer + inline) is next (M6B.4).
+
 ## [1.19.0] - 2026-07-07
 
 ### Added
@@ -329,6 +346,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.20.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.20.0
 [1.19.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.19.0
 [1.18.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.18.0
 [1.17.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.17.1

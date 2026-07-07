@@ -75,6 +75,22 @@
   .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
   .chip{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:2px 9px;font-size:11px;font-family:ui-monospace,monospace}
   .chip.ipl{cursor:pointer}.chip.ipl:hover{border-color:var(--acc2);color:var(--acc2)}
+  .chip.host{background:#1c2740;border-color:#2b3d63;color:#9db4e6}
+  .chip.svc{background:#241b3a;border-color:#3a2d5e;color:#c9b6f0}
+  .chip.abuse{background:#331620;border-color:#5e2a38;color:#ff8a9c}
+  .chip.if{background:#14281a;border-color:#254a30;color:#8fe0a0}
+  .chip.obj{background:#182238;border-color:#2b3d63;color:#cfe0ff}
+  .chip.any{opacity:.65}
+  .poltable td{vertical-align:middle}
+  .hnd{white-space:nowrap}
+  .grip{cursor:grab;color:var(--mut);margin-right:7px}
+  .prow.dragging{opacity:.45;background:var(--bg)}
+  .prow.rdis{opacity:.5}
+  .prow.rdis td:nth-child(3){text-decoration:line-through}
+  .tog{display:inline-block;width:34px;height:18px;border-radius:9px;background:#4a5163;position:relative;cursor:pointer;vertical-align:middle}
+  .tog.on{background:#2ecc71}
+  .tog::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
+  .tog.on::after{left:18px}
   /* theme toggle + responsive + light theme (dark sidebar stays, FortiGate-style) */
   .themebtn{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:5px 10px;cursor:pointer;margin-top:8px;font:inherit}
   .themebtn:hover{color:var(--fg)}
@@ -183,10 +199,12 @@
 
     <!-- POLICY -->
     <section class="view" id="v-policy">
-      <div class="warn">Read-only view of your loaded rules with live hit counts. To change rules, use the <b>Rules (edit)</b> tab — it edits a draft and deploys safely via Commit.</div>
-      <div class="filters"><input id="pf" placeholder="filter rules…" oninput="renderPolicy()"></div>
-      <div class="card"><div class="tablewrap"><table>
-        <thead id="pol-head"><tr><th data-k="num">#</th><th data-k="action">Action</th><th data-k="dir">Dir</th><th data-k="port">Service</th><th data-k="target">Target</th><th data-k="iface">Interface</th><th data-k="hits">Hits ▾</th><th data-k="file">Source</th><th>Comment</th></tr></thead>
+      <div class="filters" style="justify-content:space-between">
+        <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
+        <span class="muted" id="polhint" style="align-self:center;font-size:12px">Drag ⠿ to reorder (top-down precedence) · toggle to enable/disable · changes go to the draft. Add/edit rule fields: M6B.4.</span>
+      </div>
+      <div class="card"><div class="tablewrap"><table class="poltable">
+        <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
     </section>
 
@@ -395,31 +413,77 @@ function renderLogs(){
   $('#recent').innerHTML=rows.slice(0,300).map(r=>`<tr><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td><span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">no drops (enable LOG_DROPS)</td></tr>';
 }
 
-async function loadPolicy(){ RULES=await j('/api/rules'); renderPolicy(); }
-let polSort={key:'num',dir:1};
+// ---- policy table (M6B.3): enterprise view of the draft rules ----
+let OBJMAP={}; // name(upper) -> members, for chip tooltips
+async function loadPolicy(){
+  try{const o=await j('/api/objects');OBJMAP={};
+    [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
+  const d=await j('/api/rules/draft'); RULES=d.rules||[]; renderPolicy();
+}
+function tchip(t){
+  if(!t||t==='any')return '<span class="chip any">any</span>';
+  if(t==='abuse')return '<span class="chip abuse" title="AbuseIPDB + feeds blocklist">abuse</span>';
+  const mem=OBJMAP[t.toUpperCase()];
+  const tip=mem&&mem.length?`${t} → ${mem.join(', ')}`:t;
+  const ipish=/[.:]/.test(t)&&!mem;
+  return `<span class="chip obj${ipish?' ipl':''}"${ipish?` data-ip="${esc(t.split('/')[0])}"`:''} title="${esc(tip)}">${esc(t)}</span>`;
+}
+const HOST='<span class="chip host" title="this firewall host">this host</span>';
+const FWD='<span class="chip host" title="forwarded traffic">forwarded</span>';
+function srcDst(r){
+  const t=tchip(r.target);
+  switch(r.dir){
+    case 'out': return [HOST,t];
+    case 'fwd-in': return [t,FWD];
+    case 'fwd-out': return [FWD,t];
+    default: return [t,HOST]; // in
+  }
+}
+function svc(r){const p=r.port&&r.port!=='-'?r.port:'';const label=(p?esc(r.proto)+'/'+esc(p):esc(r.proto));return `<span class="chip svc">${label}</span>`;}
 function renderPolicy(){
   const f=$('#pf').value.toLowerCase();
-  let rows=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
-  const k=polSort.key,dir=polSort.dir;
-  rows.sort((a,b)=>{let x=a[k],y=b[k];if(typeof x==='string')return dir*x.localeCompare(String(y));return dir*((x||0)-(y||0));});
-  $('#policy').innerHTML=rows.map(r=>`<tr class="prow" data-num="${r.num}"><td class="muted">${r.num}</td><td><span class="pill ${r.action}">${esc(r.action)}</span></td><td><span class="pill dir">${esc(r.dir)}</span></td><td>${esc(r.proto)} ${esc(r.port==='-'?'':r.port)}</td><td class="mono">${esc(r.target)}</td><td>${esc(r.iface||'')}</td><td><b>${r.hits||0}</b></td><td class="muted">${esc(r.file)}</td><td class="muted">${esc(r.comment)}</td></tr>`).join('')||'<tr><td colspan="9" class="muted">no rules</td></tr>';
+  const ro=MODE==='ro';
+  const rows=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
+  $('#policy').innerHTML=rows.map((r,i)=>{
+    const [s,d]=srcDst(r);
+    const act=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
+    const tog=`<span class="tog ${r.disabled?'':'on'}" ${ro?'':`data-toggle="${r.id}"`} title="${r.disabled?'disabled':'enabled'}"></span>`;
+    const hits=r.disabled?'<span class="muted">—</span>':(r.matched?`<b>${r.hits.toLocaleString()}</b>`:'<span class="muted">—</span>');
+    return `<tr class="prow${r.disabled?' rdis':''}" data-id="${r.id}" ${ro?'':'draggable="true"'}>
+      <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${i+1}</span></td>
+      <td>${tog}</td>
+      <td>${r.name?esc(r.name):'<span class="muted">—</span>'}</td>
+      <td>${s}</td><td>${d}</td><td>${svc(r)}${r.iface?` <span class="chip if" title="interface">${esc(r.iface)}</span>`:''}</td>
+      <td>${act}</td><td style="text-align:right">${hits}</td></tr>`;
+  }).join('')||'<tr><td colspan="8" class="muted">no rules in rules.conf</td></tr>';
 }
-document.addEventListener('click',e=>{
-  const th=e.target.closest('#pol-head th[data-k]');
-  if(th){polSort.dir=(polSort.key===th.dataset.k)?-polSort.dir:1;polSort.key=th.dataset.k;renderPolicy();return;}
-  const row=e.target.closest('.prow'); if(row) showRule(+row.dataset.num);
+// toggle enable/disable
+$('#policy').addEventListener('click',async e=>{
+  const t=e.target.closest('[data-toggle]'); if(!t)return;
+  e.stopPropagation();
+  const r=await post('/api/rules/draft/toggle',{id:+t.dataset.toggle});
+  if(r&&r.error){toast(r.error);return;}
+  await loadPolicy(); refreshCommitBar();
 });
-function showRule(num){
-  const r=(RULES||[]).find(x=>x.num===num); if(!r)return;
-  let h=`<h3>#${r.num} · ${esc(r.action)} ${esc(r.dir)} ${esc(r.proto)} ${esc(r.port==='-'?'':r.port)} ${esc(r.target)}${r.iface?' on '+esc(r.iface):''}</h3>`;
-  if(r.comment)h+=`<div class="muted" style="margin-bottom:10px">${esc(r.comment)} · <code>${esc(r.file)}</code></div>`;
-  h+=`<div class="lk"><b>Total hits</b><div style="font-size:22px">${r.hits||0}</div></div>`;
-  h+='<div class="lk"><b>Generated nft rules</b><table>';
-  (r.matches||[]).forEach(m=>{h+=`<tr><td class="mono" style="width:auto">${esc(m.text.replace(/counter packets.*/,'').trim())}</td><td style="text-align:right">${m.packets}</td></tr>`;});
-  if(!(r.matches||[]).length)h+='<tr><td class="muted">no matching loaded rules (target may resolve to nothing, or counters reset on reload)</td></tr>';
-  h+='</table></div>';
-  $('#modalbody').innerHTML=h; $('#modal').style.display='flex';
-}
+// drag-and-drop reorder
+const polBody=$('#policy');
+polBody.addEventListener('dragstart',e=>{const row=e.target.closest('.prow');if(row){row.classList.add('dragging');}});
+polBody.addEventListener('dragover',e=>{
+  e.preventDefault();const dragging=polBody.querySelector('.dragging');if(!dragging)return;
+  const after=[...polBody.querySelectorAll('.prow:not(.dragging)')].reduce((c,ch)=>{
+    const box=ch.getBoundingClientRect();const off=e.clientY-box.top-box.height/2;
+    return off<0&&off>c.off?{off,el:ch}:c;},{off:-Infinity,el:null}).el;
+  if(after==null)polBody.appendChild(dragging);else polBody.insertBefore(dragging,after);
+});
+polBody.addEventListener('dragend',async e=>{
+  const row=e.target.closest('.prow');if(row)row.classList.remove('dragging');
+  const order=[...polBody.querySelectorAll('.prow')].map(r=>+r.dataset.id);
+  const cur=(RULES||[]).map(r=>r.id);
+  if(order.length===cur.length&&order.every((v,i)=>v===cur[i]))return; // no change
+  const res=await post('/api/rules/draft/reorder',{order});
+  if(res&&res.error){toast(res.error);loadPolicy();return;}
+  await loadPolicy(); refreshCommitBar();
+});
 
 function chip(m){const ipish=/[.:]/.test(m);return `<span class="chip ${ipish?'ipl':''}"${ipish?` data-ip="${esc(m.split('/')[0])}"`:''}>${esc(m)}</span>`;}
 function objBlock(arr){return arr&&arr.length?arr.map(g=>{const mem=(g.value||'').split(/[ ,]+/).filter(Boolean);

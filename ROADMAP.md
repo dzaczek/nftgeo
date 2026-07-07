@@ -180,12 +180,13 @@ count.
   and staged through the same Commit pipeline (input sanitised against shell
   metacharacters). Services/host-label objects (`SERVICE_*`/`HOST_*`) follow with
   the internal firewall (P5).
-- [ ] **M6B.3 Policy table (Palo-Alto style).** Columns: **№ · Status toggle ·
-  Name · Source · Destination · Service · Action · Hits**. Object references
-  render as **chips** with a hover tooltip of their contents; Action is
-  color-coded (DROP red / ACCEPT green / REJECT amber); Hits come from the live
-  chain counters (spot dead rules). Row **drag-drop reorder** (order = top-down
-  precedence) and live filter.
+- [x] **M6B.3 Policy table (Palo-Alto style).** *(Shipped 1.20.0.)* Columns
+  **№ · On · Name · Source · Destination · Service · Action · Hits**; object
+  references render as chips with member tooltips; Action colour-coded
+  (DROP red / ACCEPT green); Hits from the live counters. Row **drag-drop
+  reorder** (top-down precedence), an **enable/disable toggle** (disabled = stored
+  commented-out), and a live filter — all writing to the draft. Lossless parse
+  keeps each rule's trivia + verbatim body.
 - [ ] **M6B.4 Rule editor drawer + inline edit.** Full rule editing in the right
   drawer (object pickers with search, direction, geo, `on <iface>`); plus
   **inline editing** — click a Source/Service cell for a searchable dropdown

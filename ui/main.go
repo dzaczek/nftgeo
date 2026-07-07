@@ -1257,6 +1257,208 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ---- structured rules draft (M6B.3) ----
+//
+// Parse rules.conf losslessly into ordered rule entries, each carrying its
+// leading trivia (blank/comment lines) so reorder and enable/disable round-trip
+// through the file. Body is kept verbatim (field parsing is for display only),
+// so these ops never rewrite a rule's own text. Field editing is M6B.4.
+
+type draftRule struct {
+	ID       int      `json:"id"`
+	Disabled bool     `json:"disabled"`
+	Action   string   `json:"action"`
+	Dir      string   `json:"dir"`
+	Proto    string   `json:"proto"`
+	Port     string   `json:"port"`
+	Target   string   `json:"target"`
+	Iface    string   `json:"iface"`
+	Name     string   `json:"name"`
+	Body     string   `json:"body"`
+	Trivia   []string `json:"-"`
+	Hits     int64    `json:"hits"`
+	Matched  bool     `json:"matched"`
+}
+
+// ruleFields splits a candidate rule line into fields + trailing comment, and
+// reports whether it is a valid allow/deny rule.
+func ruleFields(s string) (fields []string, body, comment string, ok bool) {
+	body = s
+	if i := strings.Index(body, "#"); i >= 0 {
+		comment = strings.TrimSpace(body[i+1:])
+		body = body[:i]
+	}
+	body = strings.TrimSpace(body)
+	f := strings.Fields(body)
+	if len(f) >= 5 && (f[0] == "allow" || f[0] == "deny") {
+		return f, body, comment, true
+	}
+	return nil, "", "", false
+}
+
+func mkDraftRule(id int, disabled bool, f []string, body, comment string, trivia []string) *draftRule {
+	r := &draftRule{ID: id, Disabled: disabled, Body: body, Name: comment, Trivia: trivia,
+		Action: f[0], Dir: f[1], Proto: f[2], Port: f[3], Target: f[4]}
+	for i := 5; i < len(f)-1; i++ {
+		if f[i] == "on" {
+			r.Iface = f[i+1]
+		}
+	}
+	return r
+}
+
+func parseDraftRules(text string) ([]*draftRule, []string) {
+	var rules []*draftRule
+	var trivia []string
+	id := 0
+	for _, raw := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "#") {
+			// A commented line that parses as a rule is a disabled rule.
+			if f, body, comment, ok := ruleFields(strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))); ok {
+				rules = append(rules, mkDraftRule(id, true, f, body, comment, trivia))
+				id++
+				trivia = nil
+				continue
+			}
+		} else if f, body, comment, ok := ruleFields(trimmed); ok {
+			rules = append(rules, mkDraftRule(id, false, f, body, comment, trivia))
+			id++
+			trivia = nil
+			continue
+		}
+		trivia = append(trivia, raw)
+	}
+	return rules, trivia
+}
+
+func serializeDraftRules(rules []*draftRule, tail []string) string {
+	var b strings.Builder
+	for _, r := range rules {
+		for _, t := range r.Trivia {
+			b.WriteString(t)
+			b.WriteByte('\n')
+		}
+		if r.Disabled {
+			b.WriteString("# ")
+		}
+		b.WriteString(r.Body)
+		if r.Name != "" {
+			b.WriteString(" # " + r.Name)
+		}
+		b.WriteByte('\n')
+	}
+	for _, t := range tail {
+		b.WriteString(t)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func draftRulesText() (string, bool) {
+	if b, err := os.ReadFile(draftFile); err == nil {
+		return string(b), true
+	}
+	return readFileStr(rulesFile), false
+}
+
+// annotateDraft fills live hit counts for enabled rules (best-effort, via the
+// same signature match as the read-only policy view).
+func annotateDraft(rules []*draftRule, chs []Chain) {
+	var prs []PolicyRule
+	var idx []int
+	for i, r := range rules {
+		if r.Disabled {
+			continue
+		}
+		prs = append(prs, PolicyRule{Action: r.Action, Dir: r.Dir, Proto: r.Proto, Port: r.Port, Target: r.Target})
+		idx = append(idx, i)
+	}
+	annotate(prs, chs)
+	for k, pr := range prs {
+		rules[idx[k]].Hits = pr.Hits
+		rules[idx[k]].Matched = len(pr.Matches) > 0
+	}
+}
+
+func writeDraftRules(rules []*draftRule, tail []string) error {
+	return os.WriteFile(draftFile, []byte(serializeDraftRules(rules, tail)), 0644)
+}
+
+func handleRulesDraft(w http.ResponseWriter, r *http.Request) {
+	text, hasDraft := draftRulesText()
+	rules, _ := parseDraftRules(text)
+	annotateDraft(rules, chains())
+	if rules == nil {
+		rules = []*draftRule{}
+	}
+	writeJSON(w, map[string]interface{}{"hasDraft": hasDraft, "rules": rules})
+}
+
+func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Order []int `json:"order"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	text, _ := draftRulesText()
+	rules, tail := parseDraftRules(text)
+	if len(req.Order) != len(rules) {
+		http.Error(w, `{"error":"order length mismatch"}`, http.StatusBadRequest)
+		return
+	}
+	byID := map[int]*draftRule{}
+	for _, rr := range rules {
+		byID[rr.ID] = rr
+	}
+	var nr []*draftRule
+	seen := map[int]bool{}
+	for _, id := range req.Order {
+		rr := byID[id]
+		if rr == nil || seen[id] {
+			http.Error(w, `{"error":"invalid order"}`, http.StatusBadRequest)
+			return
+		}
+		seen[id] = true
+		nr = append(nr, rr)
+	}
+	if err := writeDraftRules(nr, tail); err != nil {
+		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"saved": true})
+}
+
+func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID int `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	text, _ := draftRulesText()
+	rules, tail := parseDraftRules(text)
+	var found *draftRule
+	for _, rr := range rules {
+		if rr.ID == req.ID {
+			found = rr
+		}
+	}
+	if found == nil {
+		http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
+		return
+	}
+	found.Disabled = !found.Disabled
+	if err := writeDraftRules(rules, tail); err != nil {
+		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"saved": true, "disabled": found.Disabled})
+}
+
 // ---- commit pipeline (all stages) ----
 
 func handleCommitPreview(w http.ResponseWriter, r *http.Request) {
@@ -1521,6 +1723,9 @@ func main() {
 	// Draft + commit pipeline (mutations are POST/PUT -> read-write sessions only).
 	api("/api/draft", handleDraft)
 	api("/api/objects/draft", handleObjectsDraft)
+	api("/api/rules/draft", handleRulesDraft)
+	api("/api/rules/draft/reorder", handleRulesReorder)
+	api("/api/rules/draft/toggle", handleRulesToggle)
 	api("/api/draft/discard", handleDraftDiscard)
 	api("/api/commit/preview", handleCommitPreview)
 	api("/api/commit/status", handleCommitStatus)

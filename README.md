@@ -606,7 +606,12 @@ The **Objects** tab is likewise editable: create/edit/delete **address groups**
 (`GROUP_*`) and **custom regions** (`REGION_*`) in a slide-out drawer. These are
 saved to a UI-owned drop-in (`groups.d/ui-objects.conf`) and deployed through the
 *same* Commit pipeline as rules, so one Deploy carries rules and objects together.
-The visual, drag-and-drop policy table is the next roadmap step (P6 Phase B, M6B.3).
+The **Policy** tab is a visual editor over the draft rules — columns for
+Source / Destination / Service / Action with object chips, colour-coded verdicts
+and live hit counts, **drag-and-drop reordering** (top-down precedence) and a
+per-rule **enable/disable toggle**. Reorder and toggle write to the draft and
+deploy via Commit. Adding/editing rule fields in a drawer is the next step
+(P6 Phase B, M6B.4).
 
 ## Roadmap / TODO
 
