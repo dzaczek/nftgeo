@@ -9,6 +9,26 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.27.0] - 2026-07-07
+
+### Added
+- **Reactive auto-block: `throttle` rules (brute-force protection).** Rate-limit a
+  port per source and auto-ban offenders, entirely in the kernel (no daemon):
+  ```
+  throttle in tcp 22 5/minute            # >5 new SSH conns/min from one IP -> ban
+  throttle in tcp 3389 3/minute ban 2h   # custom ban duration
+  throttle fwd-in udp 5060 20/second on eth0
+  ```
+  Under the rate, traffic is untouched; over it, the source is added to a dynamic
+  timeout set and dropped for `THROTTLE_BAN` (default `1h`, per-rule `ban <dur>`).
+  Implemented with the nftables meter→blackhole idiom (a per-port meter set holds
+  the per-source `limit rate over`, a shared `throttle_block{4,6}` set holds the
+  bans). Runs after the whitelist, so **whitelisted sources are never throttled**.
+  Supports `in` / `fwd-in`, `tcp` / `udp`, ports / ranges / lists, and `on <iface>`.
+  This is the reactive half of `nftgeo block`. The block-set sizes show up in the
+  dashboard's live-sets view; the visual editor preserves throttle lines untouched
+  (configure them in `rules.conf` / the raw editor for now).
+
 ## [1.26.1] - 2026-07-07
 
 ### Changed
@@ -462,6 +482,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.27.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.27.0
 [1.26.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.26.1
 [1.26.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.26.0
 [1.25.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.25.0

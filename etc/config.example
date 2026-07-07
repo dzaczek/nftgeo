@@ -71,6 +71,11 @@ LOG_DROPS=""
 # types IPv6 needs (so fencing v6 cannot break Neighbor Discovery). Off by default.
 HARDEN=""
 
+# Default ban duration for "throttle" rules (reactive brute-force auto-block): a
+# source that exceeds the rate is dropped for this long. Per-rule override with
+# "ban <dur>". Format: N[smhd], e.g. 30m, 1h, 2d.
+# THROTTLE_BAN="1h"
+
 # Region macros referenced by name in rules.conf. Values are ISO 3166-1 alpha-2
 # lowercase codes. The following regions are built in and need no entry here:
 #   europe, north_america, caribbean, south_america, middle_east, asia,

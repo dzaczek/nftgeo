@@ -60,6 +60,11 @@
 # allow in      tcp 5061      us        # SIPS reachable only from the US
 # allow in      tcp 443       any       # HTTPS open to the world (still abuse-filtered)
 # allow in      tcp web       any       # named ports via SERVICE_WEB="80 443"
+#
+# Reactive throttle - rate-limit a port per source and auto-ban offenders:
+#   throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]
+# throttle in tcp 22   5/minute          # ban IPs doing >5 new SSH conns/min
+# throttle in tcp 3389 3/minute ban 2h   # custom ban length (default 1h)
 # deny  in      tcp 5060      ru,cn     # block Russia and China on inbound 5060
 # allow out     tcp 443       europe,us # only allow outbound HTTPS to Europe and US
 # allow out     udp 53        any       # allow outbound DNS anywhere

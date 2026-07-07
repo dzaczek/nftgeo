@@ -100,6 +100,24 @@ GROUP_PARTNERS="de fr 192.0.2.0/24"
 
 Groups cannot reference other groups.
 
+### Reactive throttle (brute-force auto-block)
+
+A `throttle` rule rate-limits a port **per source** and auto-bans offenders — the
+reactive counterpart to `nftgeo block`, done entirely in the kernel (no daemon):
+
+```
+throttle in tcp 22 5/minute            # >5 new SSH conns/min from one IP → ban
+throttle in tcp 3389 3/minute ban 2h   # custom ban length
+throttle fwd-in udp 5060 20/second on eth0
+```
+
+Form: `throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>]
+[on <iface>]`. Under the rate nothing changes; over it, the source is added to a
+dynamic timeout set and dropped for `THROTTLE_BAN` (default `1h`; override
+per-rule with `ban <dur>`). It runs **after the whitelist**, so whitelisted
+sources are never throttled. Bans live in the `throttle_block{4,6}` sets (visible
+in the dashboard's live-sets panel); they expire automatically.
+
 Define reusable **service objects** as `SERVICE_<NAME>` variables — named ports
 and port groups you use in a rule's port field by name. A service may contain
 ports, ranges, and other service names (nested), and resolves to a

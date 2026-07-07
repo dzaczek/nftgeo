@@ -217,8 +217,8 @@ count.
 
 ## Backlog (unscheduled ideas)
 
-- Auto-throttle brute-force: kernel-native `limit rate ... add @dyn_block` (the
-  reactive half of `nftgeo block`).
+- ✅ Auto-throttle brute-force *(shipped 1.27.0)*: kernel-native `throttle` rules
+  (`limit rate over ... add @throttle_block`) — the reactive half of `nftgeo block`.
 - Conntrack limits: per-source connection caps (`ct count`), SYN-flood / synproxy.
 - Anti-spoofing / rpfilter, MSS clamping (VPN/PPPoE gateways), flowtable offload.
 - Prometheus metrics export; fail2ban as an actuator; userspace log listener.

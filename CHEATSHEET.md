@@ -15,6 +15,14 @@ Rule line: `<action> <dir> <proto> <port> <target> [on <iface>]`
   side (`in`/`fwd-in`), `oifname` for the destination (`out`/`fwd-out`). Any real
   name works (`eth0`, `eth0.100`, `br-lan`, `wg0`, `home-Client-10`).
 
+Reactive throttle (auto-ban brute force):
+`throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]`
+```
+throttle in tcp 22   5/minute          # ban IPs doing >5 new SSH conns/min
+throttle in tcp 3389 3/minute ban 2h   # custom ban length (default THROTTLE_BAN=1h)
+```
+Whitelisted sources are never throttled. Bans live in `throttle_block{4,6}` and expire.
+
 ---
 
 ## Install / update
