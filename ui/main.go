@@ -432,13 +432,14 @@ func be32(b []byte) uint32 {
 // ---- drops from journald ----------------------------------------------------
 
 type Drop struct {
-	Time  string `json:"time"`
-	Src   string `json:"src"`
-	Dst   string `json:"dst"`
-	Dport string `json:"dport"`
-	Proto string `json:"proto"`
-	Dir   string `json:"dir"` // ingress|egress|forward
-	CC    string `json:"cc"`
+	Time   string `json:"time"`
+	Src    string `json:"src"`
+	Dst    string `json:"dst"`
+	Dport  string `json:"dport"`
+	Proto  string `json:"proto"`
+	Dir    string `json:"dir"` // ingress|egress|forward
+	CC     string `json:"cc"`
+	Reason string `json:"reason"` // which policy dropped it: abuse|geo|deny|default-deny
 }
 type DropsResp struct {
 	Enabled     bool           `json:"enabled"`
@@ -451,6 +452,7 @@ type DropsResp struct {
 }
 
 var reKV = regexp.MustCompile(`(\w+)=(\S+)`)
+var reReason = regexp.MustCompile(`nftgeo-drop:([a-z-]+)`)
 
 func drops(since string) DropsResp {
 	resp := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}, Timeline: make([]int, 24)}
@@ -474,6 +476,9 @@ func drops(since string) DropsResp {
 			f[m[1]] = m[2]
 		}
 		d := Drop{Src: f["SRC"], Dst: f["DST"], Dport: f["DPT"], Proto: f["PROTO"]}
+		if m := reReason.FindStringSubmatch(rec.Msg); m != nil {
+			d.Reason = m[1]
+		}
 		if us, e := strconv.ParseInt(rec.TS, 10, 64); e == nil {
 			t := time.UnixMicro(us)
 			d.Time = t.UTC().Format(time.RFC3339)
@@ -697,7 +702,43 @@ func objects() map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{"groups": groups, "regions": regions,
-		"whitelist": wl, "whitelistHosts": wlh, "feeds": feeds}
+		"whitelist": wl, "whitelistHosts": wlh, "feeds": feeds,
+		"abuseSources": abuseSources()}
+}
+
+func countLines(p string) int {
+	b, err := os.ReadFile(p)
+	if err != nil || len(b) == 0 {
+		return 0
+	}
+	n := strings.Count(string(b), "\n")
+	if !strings.HasSuffix(string(b), "\n") {
+		n++
+	}
+	return n
+}
+
+// abuseSources reports what populates the "abuse" blocklist: the AbuseIPDB
+// retained state plus each cached ABUSE_FEEDS file, with entry count and age.
+func abuseSources() []map[string]interface{} {
+	var out []map[string]interface{}
+	add := func(name, path string, fi os.FileInfo) {
+		age := time.Since(fi.ModTime())
+		out = append(out, map[string]interface{}{"name": name, "count": countLines(path),
+			"ageHours": int(age.Hours()), "fresh": age < 26*time.Hour})
+	}
+	stateFile := env("ABUSEIPDB_STATE_FILE", filepath.Join(stateDir, "abuseipdb.tsv"))
+	if fi, err := os.Stat(stateFile); err == nil {
+		add("AbuseIPDB", stateFile, fi)
+	}
+	if ents, err := os.ReadDir(feedsDir); err == nil {
+		for _, e := range ents {
+			if fi, err := e.Info(); err == nil {
+				add(shortFeed(e.Name()), filepath.Join(feedsDir, e.Name()), fi)
+			}
+		}
+	}
+	return out
 }
 
 // ---- per-IP lookup: reverse DNS + RDAP (whois) -----------------------------

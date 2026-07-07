@@ -118,8 +118,8 @@
   .btn-keep{background:#2ecc71;color:#06210f}
   .btn-rb{background:#ff5568;color:#2a0810}
   .drafted{background:#3a2f12!important;border-left:3px solid #f4d98a!important}
-  #draftbox{width:100%;min-height:60vh;background:var(--bg);color:var(--fg);border:1px solid var(--line);
-    border-radius:10px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.5;resize:vertical}
+  #rawbox{width:100%;min-height:52vh;background:var(--bg);color:var(--fg);border:1px solid var(--line);
+    border-radius:10px;padding:12px;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.5;resize:vertical}
   .cdnum{font-variant-numeric:tabular-nums;font-weight:700}
   .tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line)}
   .tab{background:transparent;border:0;color:var(--mut);padding:9px 14px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent}
@@ -151,7 +151,6 @@
     <nav class="nav" id="nav">
       <a data-v="dashboard" class="active"><span class="ic">▚</span>Dashboard</a>
       <a data-v="policy"><span class="ic">▤</span>Policy</a>
-      <a data-v="rules" id="nav-rules"><span class="ic">✎</span>Rules (edit)</a>
       <a data-v="logs"><span class="ic">≣</span>Logs &amp; Drops</a>
       <a data-v="objects"><span class="ic">◈</span>Objects</a>
     </nav>
@@ -216,6 +215,7 @@
           <button class="btn-ghost" id="templatesbtn" style="color:var(--fg)">▤ Templates</button>
           <button class="btn-ghost" id="addsection" style="color:var(--fg)">+ Section</button>
           <button class="btn-ghost" id="addthrottle" style="color:var(--fg)">+ Throttle</button>
+          <button class="btn-ghost" id="rawbtn" style="color:var(--mut)" title="Raw text edit of a file's draft">Raw</button>
           <button class="btn-go" id="addrule">+ Add rule</button>
         </span>
       </div>
@@ -224,20 +224,6 @@
       <div class="card"><div class="tablewrap"><table class="poltable">
         <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th><th id="th-file" style="width:130px">File</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
-    </section>
-
-    <!-- RULES (DRAFT EDITOR) -->
-    <section class="view" id="v-rules">
-      <div class="warn" style="background:#123a2a;border-color:#1c6b4a;color:#8af4c0">
-        You are editing a <b>draft</b> of <code>/etc/nftgeo/rules.conf</code>. Nothing changes on the
-        firewall until you <b>Commit / Deploy</b> — which runs <code>validate → plan → apply --confirm</code>
-        with a deadman that auto-rolls-back if you don't confirm in time. This is the foundation
-        (raw editor); the visual policy editor lands in the next iteration.
-      </div>
-      <div class="filters" style="justify-content:flex-end">
-        <button class="btn-go" onclick="saveDraft()">Save draft</button>
-      </div>
-      <div class="card"><textarea id="draftbox" spellcheck="false" placeholder="# rules.conf"></textarea></div>
     </section>
 
     <!-- LOGS -->
@@ -250,7 +236,7 @@
         <span class="meta" id="lf-count" style="align-self:center"></span>
       </div>
       <div class="card"><div class="tablewrap"><table>
-        <thead><tr><th>time (UTC)</th><th>dir</th><th>source → destination</th><th>port</th><th>proto</th><th>cc</th></tr></thead>
+        <thead><tr><th>time (UTC)</th><th>dir</th><th>source → destination</th><th>port</th><th>proto</th><th>cc</th><th>policy</th></tr></thead>
         <tbody id="recent"></tbody></table></div></div>
     </section>
 
@@ -291,7 +277,7 @@
       </div>
       <div class="grid g2" style="margin-top:14px">
         <div class="card"><h3>nftables sets (live sizes)</h3><div id="o-sets"></div></div>
-        <div class="card"><h3>Abuse feeds</h3><div id="o-feeds"></div></div>
+        <div class="card"><h3>Abuse sources <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— what fills the abuse blocklist</span></h3><div id="o-feeds"></div></div>
       </div>
       <p class="muted" style="margin-top:10px;font-size:12px">Service &amp; host-label objects (SERVICE_*/HOST_*) arrive with the internal firewall (roadmap P5).</p>
       </div>
@@ -336,12 +322,11 @@ function nav(v){
   $('#title').textContent=$(`#nav a[data-v="${v}"]`).textContent.trim();
   if(v==='policy') loadPolicy();
   if(v==='objects') loadObjects();
-  if(v==='rules') loadDraft();
 }
 $('#nav').addEventListener('click',e=>{const a=e.target.closest('a[data-v]'); if(a) nav(a.dataset.v);});
 
 // ---- draft + commit pipeline (M6B.1) ----
-let DRAFT={exists:false,changed:0}, cdTimer=null;
+let cdTimer=null;
 function openModal(h){$('#modalbody').innerHTML=h;$('#modal').style.display='flex';}
 function toast(m){let t=$('#toast');if(!t){t=document.createElement('div');t.id='toast';document.body.appendChild(t);
   t.style.cssText='position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#222c44;color:#dfe6f2;padding:10px 16px;border-radius:8px;z-index:30;font-size:13px;box-shadow:0 6px 24px #0008;transition:opacity .3s';}
@@ -349,13 +334,28 @@ function toast(m){let t=$('#toast');if(!t){t=document.createElement('div');t.id=
 async function post(u,body){const r=await fetch(u,{method:'POST',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
   if(r.status===401||r.status===403){showLock('Session expired or read-only — generate a new token on the host.');throw new Error('unauth');}return r.json();}
 
-async function loadDraft(){const d=await j('/api/draft');$('#draftbox').value=d.draft;DRAFT={exists:d.exists,changed:d.changed};refreshCommitBar();}
-async function saveDraft(){
-  const r=await fetch('/api/draft',{method:'PUT',headers:{'Content-Type':'text/plain'},body:$('#draftbox').value});
+// Raw editor (power-user escape hatch): direct text edit of a file's draft.
+async function rawEditor(file){
+  if(MODE==='ro')return;
+  const fileSel=FILES.length>1?`<label class="fld" style="margin-bottom:10px"><span>File</span><select id="raw-file" onchange="rawLoad()">${FILES.map(f=>`<option${f.name===file?' selected':''}>${esc(f.name)}</option>`).join('')}</select></label>`:'';
+  openModal(`<h3 style="margin-top:0">Raw editor</h3>
+    <p class="muted" style="font-size:12px">Direct text edit of the file's draft — for bulk changes or lines the visual editor doesn't model. Saved to the draft; deploy via Commit.</p>
+    ${fileSel}
+    <textarea id="rawbox" spellcheck="false" placeholder="# rules"></textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+      <button class="btn-ghost" style="color:var(--fg)" onclick="closeModal()">Cancel</button>
+      <button class="btn-go" onclick="rawSave()">Save to draft</button>
+    </div>`);
+  rawLoad();
+}
+async function rawLoad(){const f=$('#raw-file')?$('#raw-file').value:firstFile();
+  try{const d=await j('/api/draft?file='+encodeURIComponent(f));$('#rawbox').value=d.draft;}catch(e){}}
+async function rawSave(){const f=$('#raw-file')?$('#raw-file').value:firstFile();
+  const r=await fetch('/api/draft?file='+encodeURIComponent(f),{method:'PUT',headers:{'Content-Type':'text/plain'},body:$('#rawbox').value});
   if(r.status===401||r.status===403){showLock('Read-only session — cannot edit.');return;}
-  const d=await r.json();DRAFT={exists:true,changed:d.changed};refreshCommitBar();toast('Draft saved — '+d.changed+' changed line'+(d.changed===1?'':'s'));}
+  closeModal(); await loadPolicy(); refreshCommitBar(); toast('Raw draft saved.');}
 async function discardDraft(){if(!confirm('Discard all draft changes? The live firewall is unaffected.'))return;
-  await post('/api/draft/discard');await loadDraft();toast('Draft discarded.');}
+  await post('/api/draft/discard');await loadPolicy();refreshCommitBar();toast('Draft discarded.');}
 
 async function previewDeploy(){
   const d=await post('/api/commit/preview');
@@ -378,7 +378,7 @@ async function startDeploy(){
     return;
   }
   refreshCommitBar();}
-async function keepDeploy(){const d=await post('/api/commit/keep');stopCountdown();DRAFT.changed=0;toast('Changes kept.');refreshCommitBar();refresh();}
+async function keepDeploy(){const d=await post('/api/commit/keep');stopCountdown();toast('Changes kept.');refreshCommitBar();refresh();}
 async function rollbackDeploy(){const d=await post('/api/commit/rollback');stopCountdown();toast('Rolled back — live rules restored, draft kept.');refreshCommitBar();refresh();}
 
 async function refreshCommitBar(){
@@ -396,7 +396,7 @@ async function refreshCommitBar(){
   else bar.style.display='none';}
 function startCountdown(){if(cdTimer)return;cdTimer=setInterval(async()=>{
   let st;try{st=await j('/api/commit/status');}catch(e){return;}
-  if(!st.pending){stopCountdown();DRAFT.changed=0;refreshCommitBar();refresh();return;}
+  if(!st.pending){stopCountdown();refreshCommitBar();refresh();return;}
   $('#cbtxt').innerHTML='⏳ Deployed with deadman — confirm to keep, or auto-rollback in <span class="cdnum">'+Math.max(0,st.remaining)+'s</span>';},1000);}
 function stopCountdown(){if(cdTimer){clearInterval(cdTimer);cdTimer=null;}}
 
@@ -439,11 +439,14 @@ async function refresh(){
     refreshCommitBar();
   }catch(e){console.error(e);}
 }
+function reasonBadge(x){if(!x)return '<span class="muted">—</span>';
+  const col={abuse:'#ff8a9c',geo:'#9db4e6',deny:'#f4d98a','default-deny':'#ff8a9c',drop:'#c9c9c9'}[x]||'var(--mut)';
+  return `<span class="pill" style="background:#161d2e;color:${col};text-transform:none">${esc(x)}</span>`;}
 function renderLogs(){
   const dir=$('#lf-dir').value,cc=$('#lf-cc').value.toUpperCase(),port=$('#lf-port').value,ip=$('#lf-ip').value;
   const rows=(DROPS.recent||[]).filter(r=>(!dir||r.dir===dir)&&(!cc||(r.cc||'').toUpperCase().includes(cc))&&(!port||r.dport===port)&&(!ip||(r.src+r.dst).includes(ip)));
   $('#lf-count').textContent=rows.length+' shown';
-  $('#recent').innerHTML=rows.slice(0,300).map(r=>`<tr><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td><span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">no drops (enable LOG_DROPS)</td></tr>';
+  $('#recent').innerHTML=rows.slice(0,300).map(r=>`<tr><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td><span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td><td>${reasonBadge(r.reason)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">no drops (enable LOG_DROPS)</td></tr>';
 }
 
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
@@ -543,6 +546,7 @@ const firstFile=()=>FILES[0]?FILES[0].name:'rules.conf';
 $('#addrule').addEventListener('click',()=>ruleDrawer(firstFile(),null));
 $('#addsection').addEventListener('click',()=>sectionDrawer(firstFile(),null));
 $('#addthrottle').addEventListener('click',()=>throttleDrawer(firstFile(),null));
+$('#rawbtn').addEventListener('click',()=>rawEditor(firstFile()));
 
 function throttleDrawer(file,id){
   if(MODE==='ro')return;
@@ -721,7 +725,7 @@ async function loadObjects(){
   $('#o-regions').innerHTML=objBlock(o.regions);
   const wl=[...(o.whitelist||[]).map(x=>['ip',x]),...(o.whitelistHosts||[]).map(x=>['host',x])];
   $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
-  $('#o-feeds').innerHTML=(o.feeds||[]).length?o.feeds.map(x=>`<div class="row"><span class="mono" style="font-size:11px">${esc(x)}</span></div>`).join(''):'<span class="muted">none</span>';
+  $('#o-feeds').innerHTML=(o.abuseSources||[]).length?o.abuseSources.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
   $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
   const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[]}; renderManaged();
 }
@@ -821,8 +825,8 @@ async function boot(){
     if(me.ok){const d=await me.json();MODE=d.mode||MODE;if(d.auth===false)$('#modebadge').textContent='no-auth';}
   }catch(e){showLock('');return;}
   hideLock();
-  if(MODE==='ro'){$('#modebadge').textContent='read-only';$('#nav-rules').style.display='none';
-    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#templatesbtn').style.display='none';}
+  if(MODE==='ro'){$('#modebadge').textContent='read-only';
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();

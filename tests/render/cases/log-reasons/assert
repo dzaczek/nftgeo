@@ -1,0 +1,5 @@
+# per-policy drop-log reasons
++ log prefix "nftgeo-drop:abuse "
++ log prefix "nftgeo-drop:deny "
++ log prefix "nftgeo-drop:geo "
++ log prefix "nftgeo-drop:default-deny "

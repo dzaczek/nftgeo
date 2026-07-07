@@ -9,6 +9,23 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.32.0] - 2026-07-07
+
+### Added
+- **Drops show which policy dropped them.** The engine now tags each drop's log
+  prefix with a reason — `nftgeo-drop:abuse` / `:geo` / `:deny` / `:default-deny`
+  — and the dashboard's Logs table gains a **policy** column showing it. (Needs
+  `LOG_DROPS`; existing logs from before this release show "—".)
+- **Abuse sources in the Objects reference.** The old "Abuse feeds" panel is now
+  **Abuse sources**: it lists what actually fills the `abuse` blocklist —
+  AbuseIPDB and each cached feed — with the **entry count** and age per source.
+
+### Changed
+- **Removed the "Rules (edit)" tab; the Policy tab is the editor.** The raw
+  textarea (the M6B.1 foundation) was redundant now that the visual editor covers
+  the whole grammar. A discreet **Raw** button on the Policy toolbar still opens a
+  per-file raw text editor for power users / bulk edits (`GET/PUT /api/draft` kept).
+
 ## [1.31.0] - 2026-07-07
 
 ### Added
@@ -566,6 +583,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.32.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.32.0
 [1.31.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.31.0
 [1.30.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.30.1
 [1.30.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.30.0

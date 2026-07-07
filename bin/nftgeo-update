@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.31.0"
+NFTGEO_VERSION="1.32.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -29,6 +29,9 @@ ZONE_CACHE_HOURS="${ZONE_CACHE_HOURS:-20}"
 LOG_DROPS="${LOG_DROPS:-}"
 LOG_PREFIX="${LOG_PREFIX:-nftgeo-drop }"
 LOG_LIMIT="${LOG_LIMIT:-limit rate 10/second}"
+# The drop reason (abuse|geo|deny|default-deny) is appended as ":<reason>" to the
+# log prefix, so the dashboard can show which policy dropped a packet.
+LOG_PREFIX_BASE="$(printf '%s' "$LOG_PREFIX" | sed 's/[[:space:]]*$//')"
 
 # Default ban duration for "throttle" rules: a source that exceeds the rate is
 # added to a dynamic block set for this long. Per-rule override with "ban <dur>".
@@ -371,21 +374,25 @@ emit_set_match() {
 		mpfx="${ifc}$1 $2 $3 @$4"
 	fi
 	if [ "$5" = drop ] && [ -n "$LOG_DROPS" ]; then
-		printf '\t\t%s %s log prefix "%s"\n' "$mpfx" "$LOG_LIMIT" "$LOG_PREFIX"
+		# Reason for the log: the set name says why (abuse blocklist vs a geo set).
+		case "$4" in abuse*) _lr=abuse ;; g_*) _lr=geo ;; *) _lr=drop ;; esac
+		printf '\t\t%s %s log prefix "%s:%s "\n' "$mpfx" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$_lr"
 	fi
 	printf '\t\t%s counter %s\n' "$mpfx" "$5"
 }
 
 emit_drop() {
 	# Emit a drop, optionally preceded by a rate-limited log twin (LOG_DROPS).
-	# $1 = match clause ("any" or "" for a bare drop, otherwise a clause).
+	# $1 = match clause ("any"/"" for a bare drop, otherwise a clause). $2 = log
+	# reason (default "geo": emit_drop backs the geo-fenced deny-by-default).
+	_lr="${2:-geo}"
 	case "$1" in
 		any|'')
-			[ -n "$LOG_DROPS" ] && printf '\t\t%s log prefix "%s"\n' "$LOG_LIMIT" "$LOG_PREFIX"
+			[ -n "$LOG_DROPS" ] && printf '\t\t%s log prefix "%s:%s "\n' "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$_lr"
 			printf '\t\tcounter drop\n'
 			;;
 		*)
-			[ -n "$LOG_DROPS" ] && printf '\t\t%s %s log prefix "%s"\n' "$1" "$LOG_LIMIT" "$LOG_PREFIX"
+			[ -n "$LOG_DROPS" ] && printf '\t\t%s %s log prefix "%s:%s "\n' "$1" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$_lr"
 			printf '\t\t%s counter drop\n' "$1"
 			;;
 	esac
@@ -1021,7 +1028,7 @@ emit_chain() {
 				case "$printed" in *"|${m}|"*) continue ;; esac
 				printed="${printed}|${m}|"
 				mm=""; [ "$m" != any ] && mm="$m "
-				[ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s log prefix "%s"\n' "$pre" "$mm" "$LOG_LIMIT" "$LOG_PREFIX"
+				[ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s log prefix "%s:deny "\n' "$pre" "$mm" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
 				printf '\t\t%s%scounter drop\n' "$pre" "$mm"
 			done
 		else
@@ -1064,6 +1071,13 @@ emit_chain() {
 			done
 		done
 	done
+
+	# Under default-deny, log what the policy would drop so it shows in the panel
+	# (an explicit logged drop just before the implicit "policy drop").
+	if [ "$hook" = input ] && [ "$DEFAULT_INPUT" = drop ] && [ -n "$LOG_DROPS" ]; then
+		printf '\t\t%s log prefix "%s:default-deny "\n' "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+		printf '\t\tcounter drop\n'
+	fi
 
 	printf '\t}\n'
 }
