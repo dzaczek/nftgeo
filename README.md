@@ -177,6 +177,33 @@ dnat tcp 443 to [2001:db8::1]:8443     # IPv6 target
 (dstnat) chain. The `:port` remap and `on <iface>` scope are optional. The
 forward chain policy is accept, so the redirected packet passes through.
 
+### Internal firewall: zones & segmentation
+
+Name network segments by interface (in `config` or a `groups.d/*.conf`) and
+write forward-chain rules between them:
+
+```text
+# config
+ZONE_LAN="eth1"
+ZONE_DMZ="eth2"
+ZONE_GUEST="eth0.100"                  # a VLAN subinterface is just an interface
+SEGMENT_DEFAULT="deny"                 # micro-segmentation: default-deny between zones
+
+# rules.conf
+allow lan -> dmz  tcp 80               # LAN reaches the DMZ web server
+allow wan -> dmz  tcp 443 from europe  # world -> DMZ HTTPS, geo-filtered
+deny  dmz -> lan  any -                # the DMZ can never open into the LAN
+```
+
+`allow|deny <zone> -> <zone> <proto> <port> [from <geo>]` builds forward-chain
+rules matching the source zone's interfaces (`iifname`) against the destination
+zone's (`oifname`). The port field accepts `SERVICE_<NAME>` names; `from <geo>`
+layers a source-geo set on top. Deny is emitted before allow, so an explicit
+deny wins. With `SEGMENT_DEFAULT="deny"`, any forwarded traffic between zone
+interfaces that no rule allows is dropped (established/related still passes).
+VLANs are handled by using their subinterfaces (`eth0.100`) as zone members.
+Enable IP forwarding (`sysctl net.ipv4.ip_forward=1`) for any of this to route.
+
 ### Replies and "inbound only as a response"
 
 Each chain accepts `established,related` connections first, so a reply to a

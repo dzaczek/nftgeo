@@ -70,7 +70,7 @@ Milestones:
 
 ---
 
-## 📋 P5 — Internal firewall / segmentation (VLANs & zones)
+## ✅ P5 — Internal firewall / segmentation (VLANs & zones) *(shipped 1.38.0)*
 
 **Goal:** a real internal firewall. Filter traffic **between segments**
 (VLANs / subnets), not only world↔host — micro-segmentation with rules that read
@@ -88,25 +88,26 @@ SERVICE_DB="postgres mysql"
 HOST_DB1="10.0.20.5"
 HOST_LB="10.0.10.7"
 
-# Zones: a segment = interfaces and/or subnets grouped under one name
-ZONE_WEB="eth0.10 10.0.10.0/24"
-ZONE_DB="eth0.20 10.0.20.0/24"
-ZONE_MGMT="eth0.99 10.0.99.0/24"
+# Zones: a segment = a list of interfaces (incl. VLAN subinterfaces)
+ZONE_WEB="eth0.10"
+ZONE_DB="eth0.20"
+ZONE_MGMT="eth0.99"
 ```
 
 ### Inter-zone rules (forward chain)
 
 ```text
-allow web  -> db    db                 # web tier reaches the DB service group
-allow mgmt -> any   ssh                 # mgmt may SSH into any internal zone
-allow any  -> web   web from europe     # world -> web (http/https), geo-filtered
-allow web  -> db1   postgres            # ...or a single labelled host
-deny  db   -> any   any                 # the DB initiates nothing (egress lockdown)
+allow web  -> db   tcp postgres         # web tier reaches the DB service
+allow mgmt -> any  tcp 22               # mgmt may SSH into any internal zone
+allow any  -> web  tcp web from europe  # world -> web (http/https), geo-filtered
+deny  db   -> any  any -                # the DB initiates nothing (egress lockdown)
 ```
 
-`<zone> -> <zone>` matches the source segment (iifname + saddr subnets) against
-the destination segment (oifname + daddr subnets); services expand to ports;
-`from <geo>` layers geo on top; per zone-pair deny-by-default applies.
+`allow|deny <zone> -> <zone> <proto> <port> [from <geo>]` matches the source
+zone's interfaces (iifname) against the destination zone's (oifname); the port
+field accepts `SERVICE_<NAME>` names; `from <geo>` layers a source-geo set on
+top. `SEGMENT_DEFAULT="deny"` drops all forwarded traffic between zone
+interfaces that no rule allows.
 
 Milestones:
 - [x] **M5.1** Service names + `SERVICE_<NAME>` groups *(shipped 1.24.0)* — named
@@ -114,14 +115,18 @@ Milestones:
   nestable, resolved to `dport { … }`. Editable in the nftgeo-ui Objects tab.
 - [x] **M5.2** Host/IP labels (`HOST_<NAME>`) *(shipped 1.35.0)* — named single
   IP/CIDR usable as any rule target; editable in the nftgeo-ui Objects > Hosts tab.
-- [ ] **M5.3** Zones (`ZONE_<NAME>` = interfaces + subnets) as source/destination.
-- [ ] **M5.4** Inter-zone rule form `allow <zone> -> <zone> <service> [from <geo>]`
-  emitted into the forward chain, with per zone-pair deny-by-default.
-- [ ] **M5.5** 802.1Q VLAN-tag matching (`vlan id <N>`) for trunk ports, on top of
-  VLAN sub-interfaces (`eth0.10`) which already work via `on`.
-- [ ] **M5.6** Optional default-deny between zones (true micro-segmentation
-  posture) — a `SEGMENT_DEFAULT="deny"` switch.
-- [ ] **M5.7** docs, examples, tests; interplay with geo/abuse/HARDEN and P3/P4 NAT.
+- [x] **M5.3** Zones (`ZONE_<NAME>` = interface list, incl. VLAN subinterfaces)
+  as source/destination *(shipped 1.38.0)*. Subnet members remain a future add.
+- [x] **M5.4** Inter-zone rule form `allow|deny <zone> -> <zone> <proto> <port>
+  [from <geo>]` emitted into the forward chain *(shipped 1.38.0)*; deny wins over
+  allow, and `SEGMENT_DEFAULT="deny"` gives per zone-pair deny-by-default.
+- [x] **M5.5** VLANs handled via subinterfaces (`eth0.10`) used directly as zone
+  members *(shipped 1.38.0)*. Explicit 802.1Q `vlan id <N>` matching (trunk ports,
+  before tag strip) is a netdev/bridge concern and stays out of the inet filter.
+- [x] **M5.6** Optional default-deny between zones (`SEGMENT_DEFAULT="deny"`)
+  *(shipped 1.38.0)*.
+- [x] **M5.7** docs, examples, tests; interplay with geo/abuse/HARDEN and P3/P4 NAT
+  *(shipped 1.38.0)*.
 
 ---
 

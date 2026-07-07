@@ -1,0 +1,3 @@
+# basic single-iface inter-zone allow
++ chain forward
++ iifname "eth1" oifname "eth2" tcp dport 80 counter accept

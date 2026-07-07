@@ -78,6 +78,13 @@
 # Ingress NAT / port-forward (gateway):
 # dnat tcp 8080 to 10.0.0.5:80 on eth0   # forward WAN :8080 to an internal host
 # dnat udp 51820 to 10.0.0.9             # forward with no port remap
+#
+# Inter-zone rules (internal firewall; ZONE_* defined in config):
+# allow lan  -> dmz  tcp 80              # LAN may reach the DMZ web server
+# allow mgmt -> any  tcp 22              # mgmt zone may SSH into any zone
+# allow wan  -> dmz  tcp 443 from europe # world -> DMZ HTTPS, geo-filtered
+# deny  dmz  -> lan  any -               # DMZ can never open into the LAN
+#   With SEGMENT_DEFAULT="deny" in config, anything not allowed above is dropped.
 # allow in      icmp -        any       # allow IPv4 ping from anywhere
 # allow in      icmpv6 -      any       # allow IPv6 ping/ND from anywhere
 # allow fwd-in  esp  -        europe    # IPsec/VPN: forward ESP only from Europe

@@ -9,6 +9,30 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.38.0] - 2026-07-07
+
+### Added
+- **Internal firewall: zones & segmentation (roadmap P5).** Name network
+  segments by interface and write forward-chain rules between them:
+  ```
+  # config:
+  ZONE_LAN="eth1"   ZONE_DMZ="eth2"   ZONE_GUEST="eth0.100"
+  SEGMENT_DEFAULT="deny"
+  # rules.conf:
+  allow lan -> dmz  tcp 80
+  allow wan -> dmz  tcp 443 from europe
+  deny  dmz -> lan  any -
+  ```
+  `allow|deny <zone> -> <zone> <proto> <port> [from <geo>]` emits into the
+  forward chain (iifname = source zone, oifname = destination zone); the port
+  field accepts `SERVICE_<NAME>` names and `from <geo>` layers a source-geo set
+  on top. Deny is emitted before allow, so an explicit deny wins.
+  `SEGMENT_DEFAULT="deny"` drops all forwarded traffic between zone interfaces
+  that no rule allows (established/related still passes). VLANs are handled via
+  subinterfaces (`eth0.100`) used directly as zone members. Zone drops log with a
+  `nftgeo-drop:zone` / `nftgeo-drop:segment` prefix under `LOG_DROPS`. Verified
+  via real `nft -c` in CI/on hermes; not enabled on any host.
+
 ## [1.37.0] - 2026-07-07
 
 ### Added
@@ -650,6 +674,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.38.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.38.0
 [1.37.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.37.0
 [1.36.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.36.0
 [1.35.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.35.0

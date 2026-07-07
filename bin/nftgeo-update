@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.37.0"
+NFTGEO_VERSION="1.38.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -47,6 +47,11 @@ ICMPV6_ESSENTIAL="${ICMPV6_ESSENTIAL:-nd-router-solicit, nd-router-advert, nd-ne
 # explicit "allow in" rules get in; everything else is dropped). Loopback is
 # auto-accepted under drop even without HARDEN. Deploy behind the deadman.
 DEFAULT_INPUT="${DEFAULT_INPUT:-accept}"
+
+# Inter-zone forwarding default (roadmap P5). "" (default) leaves forwarding
+# between zones wide open except where a zone rule denies it; "deny" drops all
+# forwarded traffic between zone interfaces that no zone rule explicitly allows.
+SEGMENT_DEFAULT="${SEGMENT_DEFAULT:-}"
 
 ABUSEIPDB_API_KEY="${ABUSEIPDB_API_KEY:-}"
 ABUSEIPDB_CONFIDENCE_MINIMUM="${ABUSEIPDB_CONFIDENCE_MINIMUM:-90}"
@@ -139,6 +144,8 @@ TAB="$(printf '\t')"
 RULES_NORM="${TMP_DIR}/rules.norm"
 THROTTLE_NORM="${TMP_DIR}/throttle.norm"
 NAT_NORM="${TMP_DIR}/nat.norm"
+ZONE_NORM="${TMP_DIR}/zone.norm"
+ZONE_SEG_IF="${TMP_DIR}/zone.segif"
 GEO_TOKENS="${TMP_DIR}/geo.tokens"
 GEO_FINAL="${TMP_DIR}/geo.final"
 NEEDED_CC="${TMP_DIR}/cc.needed"
@@ -166,6 +173,25 @@ resolve_host_label() {
 	# HOST_<NAME> = a named single IP/CIDR (or a few), usable as a rule target.
 	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
 	eval "printf '%s' \"\${HOST_${u}:-}\""
+}
+
+resolve_zone() {
+	# ZONE_<NAME> = a space-separated list of interfaces (incl. VLAN
+	# subinterfaces like eth0.100), the members of a network segment.
+	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
+	eval "printf '%s' \"\${ZONE_${u}:-}\""
+}
+
+iface_set() {
+	# Turn a space-separated interface list into an nft ifname match: a single
+	# name stays bare, several become an anonymous set { "a", "b" }.
+	_n=0; for _i in $1; do _n=$((_n + 1)); done
+	if [ "$_n" = 1 ]; then
+		printf '"%s"' "$1"
+	else
+		_out=""; for _i in $1; do _out="${_out}${_out:+, }\"${_i}\""; done
+		printf '{ %s }' "$_out"
+	fi
 }
 
 add_one_member() {
@@ -370,6 +396,15 @@ set_name() {
 	fi
 }
 
+zone_l4() {
+	# $1 proto, $2 port. Echo a single family-agnostic L4 clause for a zone rule,
+	# or nothing to match every protocol/port. icmpv6 is inherently v6.
+	case "$1" in
+		icmpv6) l4_match icmpv6 "$2" 6 ;;
+		*) _c="$(l4_match "$1" "$2" 4)"; [ "$_c" = any ] && _c=""; printf '%s' "$_c" ;;
+	esac
+}
+
 thr_key() {
 	# $1 proto, $2 port field. Echo a safe set-name key, e.g. tcp_22, tcp_1000_2000.
 	printf 'thr_m_%s_%s' "$1" "$(printf '%s' "$2" | tr -cs 'a-zA-Z0-9' '_' | sed 's/_*$//')"
@@ -543,6 +578,64 @@ parse_rules_file() {
 			continue
 		fi
 
+		# Inter-zone rule (P5): "<allow|deny> <zone> -> <zone> <proto> <port> [from <geo>]".
+		# Detected by the "->" separator; builds forward-chain rules matching the
+		# source zone's interfaces (iifname) against the destination zone's (oifname).
+		if { [ "$action" = allow ] || [ "$action" = deny ]; }; then
+			# shellcheck disable=SC2086
+			set -- $action $dir $proto $port $geo ${_rest%%#*}
+			if [ "${3:-}" = "->" ]; then
+				_zaction="$1"; _zsrc="$2"; _zdst="$4"; _zproto="${5:-}"; _zport="${6:-}"; _zgeo=""
+				[ -n "$_zproto" ] || { echo "${rf}:${lineno}: usage: ${_zaction} <zone> -> <zone> <proto> <port> [from <geo>]" >&2; exit 1; }
+				if [ -n "${7:-}" ]; then
+					[ "$7" = from ] && [ -n "${8:-}" ] || { echo "${rf}:${lineno}: usage: ${_zaction} <zone> -> <zone> <proto> <port> [from <geo>]" >&2; exit 1; }
+					_zgeo="$8"
+				fi
+				# Resolve each zone name to its interface list ("any" = unconstrained).
+				if [ "$_zsrc" = any ]; then _zsrcif=""; else
+					_zsrcif="$(resolve_zone "$_zsrc")"
+					[ -n "$_zsrcif" ] || { echo "${rf}:${lineno}: unknown source zone '${_zsrc}' (define ZONE_$(printf '%s' "$_zsrc" | tr 'a-z' 'A-Z') in config)" >&2; exit 1; }
+				fi
+				if [ "$_zdst" = any ]; then _zdstif=""; else
+					_zdstif="$(resolve_zone "$_zdst")"
+					[ -n "$_zdstif" ] || { echo "${rf}:${lineno}: unknown destination zone '${_zdst}' (define ZONE_$(printf '%s' "$_zdst" | tr 'a-z' 'A-Z') in config)" >&2; exit 1; }
+				fi
+				for _i in $_zsrcif $_zdstif; do printf '%s\n' "$_i" >> "$ZONE_SEG_IF"; done
+				# Proto/port buckets, same grammar as a normal rule.
+				_zportless=""; _zbuckets=""
+				case "$_zproto" in
+					tcp|udp|sctp|all)
+						case "$_zport" in ''|-|any) echo "${rf}:${lineno}: proto '${_zproto}' needs a port or service" >&2; exit 1 ;; esac
+						_zbuckets="$(resolve_service_field "$_zproto" "$_zport")" || { echo "${rf}:${lineno}: bad port/service '${_zport}'" >&2; exit 1; } ;;
+					any)
+						case "$_zport" in ''|-|any) _zport=-; _zportless=yes ;;
+							*) _zbuckets="$(resolve_service_field any "$_zport")" || { echo "${rf}:${lineno}: bad port/service '${_zport}'" >&2; exit 1; } ;;
+						esac ;;
+					icmp|icmpv6|esp|ah|gre)
+						case "$_zport" in ''|-|any) _zport=-; _zportless=yes ;; *) echo "${rf}:${lineno}: proto '${_zproto}' takes no port (use -)" >&2; exit 1 ;; esac ;;
+					*) echo "${rf}:${lineno}: bad proto '${_zproto}' (tcp|udp|sctp|all|any|icmp|icmpv6|esp|ah|gre)" >&2; exit 1 ;;
+				esac
+				# Optional source-geo restriction.
+				_zgeosan="-"
+				if [ -n "$_zgeo" ]; then
+					_zgeosan="$(sanitize_lower "$_zgeo")"
+					add_geo_members "$_zgeosan" "$_zgeo" || { echo "${rf}:${lineno}: bad geo '${_zgeo}' (country, region, IP, IP/mask, or group)" >&2; exit 1; }
+				fi
+				# Interface lists collapse to a comma field ("-" = unconstrained).
+				_zs="$(echo $_zsrcif | tr ' ' ',')"; [ -z "$_zs" ] && _zs="-"
+				_zd="$(echo $_zdstif | tr ' ' ',')"; [ -z "$_zd" ] && _zd="-"
+				if [ -n "$_zportless" ]; then
+					printf '%s %s %s %s %s %s\n' "$_zaction" "$_zs" "$_zd" "$_zproto" "-" "$_zgeosan" >> "$ZONE_NORM"
+				else
+					printf '%s\n' "$_zbuckets" | while IFS=' ' read -r _bp _bports; do
+						[ -n "$_bp" ] || continue
+						printf '%s %s %s %s %s %s\n' "$_zaction" "$_zs" "$_zd" "$_bp" "$_bports" "$_zgeosan" >> "$ZONE_NORM"
+					done
+				fi
+				continue
+			fi
+		fi
+
 		case "$action" in
 			allow|deny) ;;
 			*) echo "${rf}:${lineno}: bad action '${action}' (allow|deny|throttle)" >&2; exit 1 ;;
@@ -664,6 +757,8 @@ parse_rules() {
 	: > "$RULES_NORM"
 	: > "$THROTTLE_NORM"
 	: > "$NAT_NORM"
+	: > "$ZONE_NORM"
+	: > "$ZONE_SEG_IF"
 	: > "$GEO_TOKENS"
 	: > "$NEEDED_CC"
 
@@ -678,7 +773,7 @@ parse_rules() {
 		done
 	fi
 
-	if [ ! -s "$RULES_NORM" ] && [ ! -s "$THROTTLE_NORM" ] && [ ! -s "$NAT_NORM" ]; then
+	if [ ! -s "$RULES_NORM" ] && [ ! -s "$THROTTLE_NORM" ] && [ ! -s "$NAT_NORM" ] && [ ! -s "$ZONE_NORM" ]; then
 		echo "No rules found in ${RULES_FILE} or ${RULES_DIR}/*.conf" >&2
 		exit 1
 	fi
@@ -1063,7 +1158,8 @@ emit_chain() {
 	hook="$1"
 	sides="$2"
 	if ! awk -v h="$hook" 'BEGIN{f=1} $2==h{f=0} END{exit f}' "$RULES_NORM" &&
-	   ! awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$THROTTLE_NORM"; then
+	   ! awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$THROTTLE_NORM" &&
+	   ! { [ "$hook" = forward ] && [ -s "$ZONE_NORM" ]; }; then
 		return 0
 	fi
 
@@ -1173,6 +1269,41 @@ emit_chain() {
 		done
 	done
 
+	# Inter-zone rules (P5): forward-chain accept/deny between named zone
+	# interfaces (iifname = source zone, oifname = destination zone). Denies are
+	# emitted before allows so an explicit deny wins.
+	if [ "$hook" = forward ] && [ -s "$ZONE_NORM" ]; then
+		for _verb in deny allow; do
+			awk -v v="$_verb" '$1==v' "$ZONE_NORM" | while read -r _za _zs _zd _zp _zport _zg; do
+				pre=""
+				[ "$_zs" != "-" ] && pre="iifname $(iface_set "$(echo "$_zs" | tr ',' ' ')") "
+				[ "$_zd" != "-" ] && pre="${pre}oifname $(iface_set "$(echo "$_zd" | tr ',' ' ')") "
+				_vd=accept; [ "$_za" = deny ] && _vd=drop
+				if [ "$_zg" = "-" ]; then
+					_m="$(zone_l4 "$_zp" "$_zport")"; _mm=""; [ -n "$_m" ] && _mm="${_m} "
+					[ "$_vd" = drop ] && [ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s log prefix "%s:zone "\n' "$pre" "$_mm" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+					printf '\t\t%s%scounter %s\n' "$pre" "$_mm" "$_vd"
+				else
+					for _fam in 4 6; do
+						_m="$(l4_match "$_zp" "$_zport" "$_fam")"; [ -n "$_m" ] || continue
+						_ipv=ip; [ "$_fam" = 6 ] && _ipv=ip6
+						_mm=""; [ "$_m" != any ] && _mm="${_m} "
+						_gm="${_ipv} saddr @$(set_name "$_zg" "$_fam")"
+						[ "$_vd" = drop ] && [ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s %s log prefix "%s:zone "\n' "$pre" "$_mm" "$_gm" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+						printf '\t\t%s%s%s counter %s\n' "$pre" "$_mm" "$_gm" "$_vd"
+					done
+				fi
+			done
+		done
+		# Segment default-deny: drop forwarded traffic between zone interfaces that
+		# no rule above allowed (established/related is already accepted above).
+		if [ "$SEGMENT_DEFAULT" = deny ] && [ -s "$ZONE_SEG_IF" ]; then
+			_allif="$(iface_set "$(sort -u "$ZONE_SEG_IF" | tr '\n' ' ')")"
+			[ -n "$LOG_DROPS" ] && printf '\t\tiifname %s oifname %s %s log prefix "%s:segment "\n' "$_allif" "$_allif" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+			printf '\t\tiifname %s oifname %s counter drop\n' "$_allif" "$_allif"
+		fi
+	fi
+
 	# Under default-deny, log what the policy would drop so it shows in the panel
 	# (an explicit logged drop just before the implicit "policy drop").
 	if [ "$hook" = input ] && [ "$DEFAULT_INPUT" = drop ] && [ -n "$LOG_DROPS" ]; then
@@ -1271,7 +1402,7 @@ if [ "$DEFAULT_INPUT" = drop ] &&
 fi
 
 # NAT / forwarding needs IP forwarding enabled; warn (don't manage the sysctl).
-if { [ -s "$NAT_NORM" ] || awk '$2=="forward"{f=1} END{exit !f}' "$RULES_NORM" 2>/dev/null; } &&
+if { [ -s "$NAT_NORM" ] || [ -s "$ZONE_NORM" ] || awk '$2=="forward"{f=1} END{exit !f}' "$RULES_NORM" 2>/dev/null; } &&
 	[ -r /proc/sys/net/ipv4/ip_forward ] && [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = 0 ]; then
 	echo "warning: NAT/forward rules are present but net.ipv4.ip_forward=0; enable it (sysctl net.ipv4.ip_forward=1) for routing to work." >&2
 fi

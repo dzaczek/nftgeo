@@ -1,0 +1,3 @@
+# geo-restricted inter-zone allow -> per-family geo set match
++ iifname "eth0" oifname "eth2" tcp dport 443 ip saddr @g_pl4 counter accept
++ iifname "eth0" oifname "eth2" tcp dport 443 ip6 saddr @g_pl6 counter accept

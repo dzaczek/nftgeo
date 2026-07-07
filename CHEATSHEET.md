@@ -33,6 +33,14 @@ Ingress NAT / port-forward (gateway):
 dnat tcp 8080 to 10.0.0.5:80 on eth0   # forward WAN :8080 to an internal host
 dnat udp 51820 to 10.0.0.9             # forward with no port remap
 ```
+Inter-zone rules (internal firewall; `ZONE_*` in config, forward chain):
+```
+ZONE_LAN="eth1"  ZONE_DMZ="eth2"       # (in config) name segments by interface
+allow lan  -> dmz  tcp 80              # LAN reaches DMZ web
+allow wan  -> dmz  tcp 443 from europe # geo-filtered inter-zone allow
+deny  dmz  -> lan  any -               # DMZ never opens into the LAN
+# SEGMENT_DEFAULT="deny" in config -> drop all inter-zone traffic not allowed
+```
 
 ---
 

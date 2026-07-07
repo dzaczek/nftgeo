@@ -121,3 +121,18 @@ HARDEN=""
 # SERVICE_DNS="53/tcp 53/udp"          # a member may carry a /tcp or /udp proto
 #   A bare port takes the rule's protocol (all/any -> both tcp+udp); a /proto-
 #   tagged port is fixed. Use 'allow in any dns any' to emit every proto it defines.
+#
+# Zones (internal firewall / segmentation): name a network segment as a list of
+# interfaces (including VLAN subinterfaces like eth0.100). Use the lowercased part
+# after ZONE_ in an inter-zone rule (ZONE_LAN -> lan). Inter-zone rules live in
+# rules.conf as "allow|deny <zone> -> <zone> <proto> <port> [from <geo>]" and are
+# emitted into the forward chain (needs net.ipv4.ip_forward=1). Examples:
+# ZONE_LAN="eth1"
+# ZONE_DMZ="eth2"
+# ZONE_GUEST="eth0.100"                 # a VLAN subinterface is just an interface
+#
+# Inter-zone default. "" (default) leaves forwarding between zones open except
+# where a rule denies it; "deny" drops all forwarded traffic between zone
+# interfaces that no "allow ... -> ..." rule permits (micro-segmentation). Enable
+# behind the deadman on a live gateway.
+# SEGMENT_DEFAULT="deny"

@@ -1,0 +1,4 @@
+# multi-iface zone, port list, explicit deny, and segment default-deny catch-all
++ iifname { "eth1", "eth3" } oifname "eth2" tcp dport { 80,443 } counter accept
++ iifname "eth2" oifname { "eth1", "eth3" } counter drop
++ iifname { "eth1", "eth2", "eth3" } oifname { "eth1", "eth2", "eth3" } counter drop
