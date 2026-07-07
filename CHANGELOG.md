@@ -9,6 +9,22 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.17.0] - 2026-07-07
+
+### Added
+- **nftgeo-ui authentication.** The dashboard is now gated by a per-session token
+  minted as root — opening the URL directly shows a lock screen instead of the
+  panel. `nftgeo-ui token` prints a short-lived read-write session link
+  (`/?auth=<token>`); `nftgeo-ui token --ro` prints a long-lived (90-day)
+  read-only link. The page exchanges the token for an `HttpOnly`, `SameSite=Strict`
+  session cookie and strips it from the URL. Read-write sessions are single-use
+  and expire after 15 minutes of inactivity (`UI_SESSION_TTL`); read-only sessions
+  reject every non-`GET` request (403), future-proofing the Phase B editor.
+  Tokens are HMAC-SHA256 signed with a root-only `0600` secret
+  (`/var/lib/nftgeo/ui-secret`, `UI_SECRET_FILE` to relocate), auto-created on
+  first start. `-noauth` disables the gate for a trusted localhost. Still
+  read-only; no firewall mutation.
+
 ## [1.16.1] - 2026-07-06
 
 ### Changed
@@ -269,6 +285,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.17.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.17.0
 [1.16.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.16.1
 [1.16.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.16.0
 [1.15.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.15.0

@@ -554,9 +554,30 @@ systemctl enable --now nftgeo-ui.service      # serves http://127.0.0.1:8787
 ```
 
 The map and drop stats are fed by kernel drop logs, so set `LOG_DROPS="1"` in
-`/etc/nftgeo/config` (and apply) to populate them. Bind it to localhost and put a
-reverse proxy with auth/TLS in front if you need remote access; to view it over
-SSH: `ssh -L 8787:127.0.0.1:8787 <host>`, then open `http://127.0.0.1:8787`.
+`/etc/nftgeo/config` (and apply) to populate them. It binds to localhost; to view
+it over SSH: `ssh -L 8787:127.0.0.1:8787 <host>`, then open
+`http://127.0.0.1:8787`.
+
+### Access & authentication
+
+The panel is gated by a **per-session token you mint as root** — opening the URL
+directly shows a lock screen, not the dashboard. On the host:
+
+```sh
+sudo nftgeo-ui token            # short-lived read-write session link
+sudo nftgeo-ui token --ro       # long-lived read-only session link
+```
+
+Each prints a `http://127.0.0.1:8787/?auth=<token>` link. Open it (over the SSH
+tunnel): the page exchanges the token for a `HttpOnly` session cookie, strips the
+token from the URL, and loads. A read-write session **expires after 15 minutes of
+inactivity** (`UI_SESSION_TTL`) and its token is **single-use**; a `--ro` token is
+valid for 90 days and yields a read-only panel that cannot change the firewall
+(all non-`GET` requests return 403 — the dashboard is read-only today regardless,
+this future-proofs the Phase B editor). The signing secret lives root-only at
+`/var/lib/nftgeo/ui-secret` (`0600`, auto-created on first start;
+`UI_SECRET_FILE` to relocate). Run with `-noauth` only on a fully trusted
+localhost. For remote access still front it with a reverse proxy for TLS.
 
 Geolocation reuses the local ipdeny zones, which nftgeo only downloads for the
 countries your rules reference. So the world map currently colours the countries

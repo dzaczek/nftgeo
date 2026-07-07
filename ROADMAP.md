@@ -158,7 +158,9 @@ source of truth. Localhost-only by default.
 - [ ] **M6B.4** apply pipeline in the UI: `validate` → `plan` (visual diff) →
   `apply --confirm` with an in-page confirm / rollback (the deadman guards it).
 - [ ] **M6B.5** templates: save / load / drag-drop reusable rule sets.
-- [ ] **M6B.6** auth + TLS for non-localhost use; minimal RBAC.
+- [~] **M6B.6** auth + TLS for non-localhost use; minimal RBAC. *(Auth shipped in
+  1.17.0: root-minted per-session tokens, single-use read-write with inactivity
+  TTL, long-lived read-only; TLS still expected via a front proxy.)*
 
 ### Phase C — polish 📋
 - [ ] **M6C.1** template library / presets.

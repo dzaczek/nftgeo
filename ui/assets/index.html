@@ -79,6 +79,11 @@
   .themebtn{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:5px 10px;cursor:pointer;margin-top:8px;font:inherit}
   .themebtn:hover{color:var(--fg)}
   body.light{--bg:#eef1f7;--card:#ffffff;--line:#dde3ee;--fg:#1a2233;--mut:#5c6678}
+  .lockscreen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:20}
+  .lockcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:30px;max-width:480px;text-align:center}
+  .lockcard .locktitle{font-size:19px;margin-bottom:14px}
+  .lockcard pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;text-align:left;font-size:13px;overflow:auto}
+  .modebadge{color:var(--warnc);font-size:11px}
   @media(max-width:760px){.app{grid-template-columns:1fr}.side{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px}
     .brand{border:0;padding:12px 14px}.nav{display:flex;flex-wrap:wrap;padding:0 8px}.nav a{padding:8px 10px}
     .sidefoot{margin:0 0 0 auto;border:0}.g2,.g3{grid-template-columns:1fr!important}}
@@ -96,7 +101,7 @@
     </nav>
     <div class="sidefoot">
       <div><span class="dot" id="loaddot"></span><span id="loadtxt">…</span></div>
-      <div>v<span id="ver">?</span></div>
+      <div>v<span id="ver">?</span> <span class="modebadge" id="modebadge"></span></div>
       <button class="themebtn" id="themebtn" onclick="toggleTheme()" title="Toggle light / dark">◐ theme</button>
     </div>
   </aside>
@@ -172,13 +177,26 @@
 
 <div id="modal" class="modal"><div class="modalcard"><span class="x" onclick="closeModal()">✕</span><div id="modalbody"></div></div></div>
 
+<div id="lock" class="lockscreen" style="display:none">
+  <div class="lockcard">
+    <div class="locktitle">🔒 nftgeo-ui</div>
+    <p class="muted">This panel needs a token. On the host, run:</p>
+    <pre>sudo nftgeo-ui token</pre>
+    <p class="muted">and open the printed link. For long-term read-only access:</p>
+    <pre>sudo nftgeo-ui token --ro</pre>
+    <p id="lockmsg" style="color:var(--drop)"></p>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/js/jsvectormap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/maps/world.js"></script>
 <script>
 const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
-const j=async u=>(await fetch(u)).json();
-let map=null, DROPS={recent:[]}, RULES=[];
+const j=async u=>{const r=await fetch(u);if(r.status===401||r.status===403){showLock('Session expired — generate a new token on the host.');throw new Error('unauth');}return r.json();};
+let map=null, DROPS={recent:[]}, RULES=[], MODE='rw', REFRESHER=null;
+function showLock(m){$('#lock').style.display='flex';$('#lockmsg').textContent=m||'';if(REFRESHER){clearInterval(REFRESHER);REFRESHER=null;}}
+function hideLock(){$('#lock').style.display='none';}
 
 function nav(v){
   $$('#nav a').forEach(a=>a.classList.toggle('active',a.dataset.v===v));
@@ -289,7 +307,26 @@ document.addEventListener('click',e=>{const t=e.target.closest('.ipl');if(t&&t.d
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
 
-initMap(); refresh(); setInterval(refresh,5000);
+async function boot(){
+  const u=new URL(location.href), auth=u.searchParams.get('auth');
+  if(auth){
+    try{
+      const r=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({auth})});
+      history.replaceState({},'',location.pathname);
+      if(!r.ok){showLock('Invalid or expired token — generate a new one on the host.');return;}
+      MODE=(await r.json()).mode||'rw';
+    }catch(e){showLock('Auth failed.');return;}
+  }
+  try{
+    const me=await fetch('/api/me');
+    if(me.status===401||me.status===403){showLock('');return;}
+    if(me.ok){const d=await me.json();MODE=d.mode||MODE;if(d.auth===false)$('#modebadge').textContent='no-auth';}
+  }catch(e){showLock('');return;}
+  hideLock();
+  if(MODE==='ro')$('#modebadge').textContent='read-only';
+  initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
+}
+boot();
 </script>
 </body>
 </html>

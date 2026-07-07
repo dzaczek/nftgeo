@@ -6,7 +6,12 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"embed"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -753,9 +758,209 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// ---- auth: root-minted HMAC token -> HttpOnly session cookie ----------------
+
+var (
+	secretFile = env("UI_SECRET_FILE", "/var/lib/nftgeo/ui-secret")
+	authSecret []byte
+	authOn     bool
+	sessionTTL = parseDur(env("UI_SESSION_TTL", "15m"), 15*time.Minute)
+
+	sessMu    sync.Mutex
+	sessions  = map[string]*uiSession{}
+	usedNonce = map[string]bool{}
+)
+
+type uiSession struct {
+	mode string
+	last time.Time
+}
+
+func parseDur(s string, def time.Duration) time.Duration {
+	if v, err := time.ParseDuration(s); err == nil {
+		return v
+	}
+	return def
+}
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// loadOrCreateSecret reads (or, as root, creates) the 0600 signing secret. Only a
+// process that can read it (root) can mint tokens.
+func loadOrCreateSecret() ([]byte, error) {
+	if b, err := os.ReadFile(secretFile); err == nil && len(b) >= 16 {
+		return b, nil
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	os.MkdirAll(filepath.Dir(secretFile), 0700)
+	if err := os.WriteFile(secretFile, b, 0600); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func mintToken(secret []byte, mode string, exp time.Time) string {
+	payload := fmt.Sprintf("%s:%d:%s", mode, exp.Unix(), randHex(8))
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(payload))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString([]byte(payload + "." + sig))
+}
+
+func verifyToken(tok string) (mode, nonce string, ok bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(tok)
+	if err != nil {
+		return "", "", false
+	}
+	i := strings.LastIndex(string(raw), ".")
+	if i < 0 {
+		return "", "", false
+	}
+	payload, sig := string(raw)[:i], string(raw)[i+1:]
+	mac := hmac.New(sha256.New, authSecret)
+	mac.Write([]byte(payload))
+	if !hmac.Equal([]byte(hex.EncodeToString(mac.Sum(nil))), []byte(sig)) {
+		return "", "", false
+	}
+	p := strings.Split(payload, ":")
+	if len(p) != 3 {
+		return "", "", false
+	}
+	expUnix, _ := strconv.ParseInt(p[1], 10, 64)
+	if time.Now().Unix() > expUnix {
+		return "", "", false
+	}
+	return p[0], p[2], true
+}
+
+func handleSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Auth string `json:"auth"`
+	}
+	json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+	mode, nonce, ok := verifyToken(body.Auth)
+	if !ok {
+		http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+		return
+	}
+	sessMu.Lock()
+	if mode == "rw" { // full-access bootstrap tokens are single-use
+		if usedNonce[nonce] {
+			sessMu.Unlock()
+			http.Error(w, `{"error":"token already used"}`, http.StatusUnauthorized)
+			return
+		}
+		usedNonce[nonce] = true
+	}
+	sid := randHex(24)
+	sessions[sid] = &uiSession{mode: mode, last: time.Now()}
+	sessMu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "nftgeo_sess", Value: sid, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	writeJSON(w, map[string]interface{}{"mode": mode})
+}
+
+// requireAuth gates an API handler: a valid, non-idle session cookie is required;
+// a read-only session may only issue GETs (writes -> 403), ready for phase B.
+func requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authOn {
+			next(w, r)
+			return
+		}
+		c, err := r.Cookie("nftgeo_sess")
+		if err != nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		sessMu.Lock()
+		s := sessions[c.Value]
+		if s == nil || time.Since(s.last) > sessionTTL {
+			delete(sessions, c.Value)
+			sessMu.Unlock()
+			http.Error(w, `{"error":"session expired"}`, http.StatusUnauthorized)
+			return
+		}
+		if s.mode == "ro" && r.Method != http.MethodGet {
+			sessMu.Unlock()
+			http.Error(w, `{"error":"read-only session"}`, http.StatusForbidden)
+			return
+		}
+		s.last = time.Now()
+		mode := s.mode
+		sessMu.Unlock()
+		w.Header().Set("X-Nftgeo-Mode", mode)
+		next(w, r)
+	}
+}
+
+func sweepSessions() {
+	for range time.Tick(time.Minute) {
+		sessMu.Lock()
+		for id, s := range sessions {
+			if time.Since(s.last) > sessionTTL {
+				delete(sessions, id)
+			}
+		}
+		sessMu.Unlock()
+	}
+}
+
+func tokenCmd(args []string) {
+	fs := flag.NewFlagSet("token", flag.ExitOnError)
+	ro := fs.Bool("ro", false, "long-term read-only token (panel only, no firewall changes)")
+	addr := fs.String("addr", "127.0.0.1:8787", "server address for the link")
+	ttl := fs.Duration("ttl", 0, "override token validity window")
+	fs.Parse(args)
+	secret, err := loadOrCreateSecret()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot access the signing secret (run as root):", err)
+		os.Exit(1)
+	}
+	mode, exp := "rw", time.Now().Add(10*time.Minute)
+	if *ro {
+		mode, exp = "ro", time.Now().Add(90*24*time.Hour)
+	}
+	if *ttl != 0 {
+		exp = time.Now().Add(*ttl)
+	}
+	tok := mintToken(secret, mode, exp)
+	fmt.Printf("Open (valid until %s):\n  http://%s/?auth=%s\n", exp.Format("2006-01-02 15:04 MST"), *addr, tok)
+	if mode == "ro" {
+		fmt.Println("Mode: read-only - long-term panel access, no firewall changes.")
+	} else {
+		fmt.Printf("Mode: full - one-time link; the session then expires after %s of inactivity.\n", sessionTTL)
+	}
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "token" {
+		tokenCmd(os.Args[2:])
+		return
+	}
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address (keep it local)")
+	noauth := flag.Bool("noauth", false, "run without auth (trusted localhost only)")
 	flag.Parse()
+
+	if !*noauth {
+		s, err := loadOrCreateSecret()
+		if err != nil {
+			log.Fatalf("auth: cannot load/create %s (%v); run as root, or use -noauth for a trusted localhost", secretFile, err)
+		}
+		authSecret = s
+		authOn = true
+		go sweepSessions()
+	}
 
 	geo.load()
 	go func() {
@@ -777,7 +982,15 @@ func main() {
 	sub, _ := fs.Sub(assetsFS, "assets")
 	http.Handle("/", http.FileServer(http.FS(sub)))
 
-	http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+	// token exchange is the only API reachable without a session
+	http.HandleFunc("/api/session", handleSession)
+
+	api := func(pattern string, h http.HandlerFunc) { http.HandleFunc(pattern, requireAuth(h)) }
+
+	api("/api/me", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"mode": w.Header().Get("X-Nftgeo-Mode"), "auth": authOn})
+	})
+	api("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		ch := chains()
 		writeJSON(w, map[string]interface{}{
 			"version": version(),
@@ -787,18 +1000,18 @@ func main() {
 			"time":    time.Now().UTC().Format(time.RFC3339),
 		})
 	})
-	http.HandleFunc("/api/sets", func(w http.ResponseWriter, r *http.Request) {
+	api("/api/sets", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, sets())
 	})
-	http.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
+	api("/api/rules", func(w http.ResponseWriter, r *http.Request) {
 		p := policy()
 		annotate(p, chains())
 		writeJSON(w, p)
 	})
-	http.HandleFunc("/api/objects", func(w http.ResponseWriter, r *http.Request) {
+	api("/api/objects", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, objects())
 	})
-	http.HandleFunc("/api/geo", func(w http.ResponseWriter, r *http.Request) {
+	api("/api/geo", func(w http.ResponseWriter, r *http.Request) {
 		geo.mu.RLock()
 		cnt, ccs, when := geo.count, geo.ccs, geo.when
 		geo.mu.RUnlock()
@@ -809,14 +1022,14 @@ func main() {
 		}
 		writeJSON(w, m)
 	})
-	http.HandleFunc("/api/drops", func(w http.ResponseWriter, r *http.Request) {
+	api("/api/drops", func(w http.ResponseWriter, r *http.Request) {
 		since := r.URL.Query().Get("since")
 		if since == "" {
 			since = "-24h"
 		}
 		writeJSON(w, drops(since))
 	})
-	http.HandleFunc("/api/lookup", func(w http.ResponseWriter, r *http.Request) {
+	api("/api/lookup", func(w http.ResponseWriter, r *http.Request) {
 		ip := r.URL.Query().Get("ip")
 		if net.ParseIP(ip) == nil {
 			http.Error(w, `{"error":"invalid ip"}`, http.StatusBadRequest)
@@ -825,6 +1038,10 @@ func main() {
 		writeJSON(w, doLookup(ip))
 	})
 
-	log.Printf("nftgeo-ui: serving on http://%s (read-only)", *addr)
+	mode := "auth on"
+	if !authOn {
+		mode = "AUTH OFF"
+	}
+	log.Printf("nftgeo-ui: serving on http://%s (read-only, %s)", *addr, mode)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
