@@ -1,6 +1,27 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// backupLive must create the backup's parent dir (the per-file ui-backups/<...>
+// path); a regression here broke every panel deploy from 1.26.0.
+func TestBackupLiveCreatesDir(t *testing.T) {
+	dir := t.TempDir()
+	live := filepath.Join(dir, "live.conf")
+	if err := os.WriteFile(live, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := stage{live: live, backup: filepath.Join(dir, "ui-backups", "rules.d", "x.conf")}
+	if err := backupLive(s); err != nil {
+		t.Fatalf("backupLive failed: %v", err)
+	}
+	if b, err := os.ReadFile(s.backup); err != nil || string(b) != "hello" {
+		t.Errorf("backup not written: err=%v content=%q", err, b)
+	}
+}
 
 func TestBuildRuleBody(t *testing.T) {
 	cases := []struct {

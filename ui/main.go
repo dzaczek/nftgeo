@@ -1113,6 +1113,9 @@ func backupLive(s stage) error {
 	if err != nil {
 		b = []byte{}
 	}
+	if err := os.MkdirAll(filepath.Dir(s.backup), 0755); err != nil {
+		return err
+	}
 	return os.WriteFile(s.backup, b, 0644)
 }
 

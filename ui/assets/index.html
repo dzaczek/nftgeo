@@ -369,7 +369,14 @@ async function previewDeploy(){
 async function startDeploy(){
   if(!confirm('Deploy the draft now?\nIt applies with a 90s deadman and auto-rolls-back unless you confirm "Keep".'))return;
   const d=await post('/api/commit/apply',{seconds:90});
-  if(!d.deployed){toast('Deploy blocked: '+(d.message||'invalid draft'));if(d.valid===false)previewDeploy();return;}
+  // A conflict (a deploy already pending, etc.) comes back as {error}; surface it
+  // and refresh the bar so the pending Keep/Roll-back controls show.
+  if(d.error){toast(d.error);refreshCommitBar();return;}
+  if(!d.deployed){
+    if(d.valid===false){toast('Draft is invalid — see the preview.');previewDeploy();}
+    else toast('Deploy failed: '+(d.message||'unknown error'));
+    return;
+  }
   refreshCommitBar();}
 async function keepDeploy(){const d=await post('/api/commit/keep');stopCountdown();DRAFT.changed=0;toast('Changes kept.');refreshCommitBar();refresh();}
 async function rollbackDeploy(){const d=await post('/api/commit/rollback');stopCountdown();toast('Rolled back — live rules restored, draft kept.');refreshCommitBar();refresh();}

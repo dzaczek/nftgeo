@@ -9,6 +9,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.30.1] - 2026-07-07
+
+### Fixed
+- **Panel deploy was broken since 1.26.0.** The multi-file refactor moved commit
+  backups to `ui-backups/<file>`, but `backupLive` never created that directory,
+  so every Deploy failed at the backup step ("cannot back up live files"). It now
+  creates the backup dir. Added a regression test. *(Reported: a reorder + Deploy
+  returned an error.)*
+- **Deploy error messages are honest now.** The panel showed "Deploy blocked:
+  invalid draft" for *any* apply failure (a deploy already pending, a backup/stage
+  error, …). It now surfaces the real error and, for an invalid draft, opens the
+  preview with the engine's validation output.
+
 ## [1.30.0] - 2026-07-07
 
 ### Added
@@ -541,6 +554,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.30.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.30.1
 [1.30.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.30.0
 [1.29.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.29.0
 [1.28.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.28.0
