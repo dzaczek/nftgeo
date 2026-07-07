@@ -112,8 +112,8 @@ Milestones:
 - [x] **M5.1** Service names + `SERVICE_<NAME>` groups *(shipped 1.24.0)* — named
   ports and port groups usable in a rule's port field (`allow in tcp web any`),
   nestable, resolved to `dport { … }`. Editable in the nftgeo-ui Objects tab.
-- [ ] **M5.2** Host/IP labels (`HOST_<NAME>` / `LABEL_<NAME>`) — single-IP names,
-  usable as any target.
+- [x] **M5.2** Host/IP labels (`HOST_<NAME>`) *(shipped 1.35.0)* — named single
+  IP/CIDR usable as any rule target; editable in the nftgeo-ui Objects > Hosts tab.
 - [ ] **M5.3** Zones (`ZONE_<NAME>` = interfaces + subnets) as source/destination.
 - [ ] **M5.4** Inter-zone rule form `allow <zone> -> <zone> <service> [from <geo>]`
   emitted into the forward chain, with per zone-pair deny-by-default.

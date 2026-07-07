@@ -78,8 +78,9 @@ rule, so you choose its exact scope (see below).
 - `target` - what the source/destination address is matched against: any mix of,
   comma-separated, country codes (`pl`), region names (`europe`), literal IPv4/
   IPv6 addresses (`203.0.113.5`, `2001:db8::1`), IPv4/IPv6 with a mask
-  (`10.0.0.0/8`, `2001:db8::/32`), a named `GROUP_<NAME>` list from the config
-  (used by its lowercase name, e.g. `office`), or one of the reserved words `any`
+  (`10.0.0.0/8`, `2001:db8::/32`), a named `GROUP_<NAME>` list or a `HOST_<NAME>`
+  single-host label from the config (used by its lowercase name, e.g. `office` /
+  `db1`), or one of the reserved words `any`
   (every address) and `abuse` (the AbuseIPDB blacklist, `deny` only). The mixable
   targets can be combined in one rule
   (`allow in tcp 80 198.51.100.0/24,de,office`); `any` and `abuse` stand alone.
@@ -693,8 +694,8 @@ if you do neither, the deadman reverts the kernel ruleset *and* the panel restor
 Read-only sessions never see the editor and are refused (403) on any write.
 
 The **Objects** tab is likewise editable: create/edit/delete **address groups**
-(`GROUP_*`), **custom regions** (`REGION_*`) and **services** (`SERVICE_*`, named
-ports / port groups) in a slide-out drawer. These are
+(`GROUP_*`), **custom regions** (`REGION_*`), **services** (`SERVICE_*`, named
+ports / port groups) and **hosts** (`HOST_*`, single-IP labels) in a slide-out drawer. These are
 saved to a UI-owned drop-in (`groups.d/ui-objects.conf`) and deployed through the
 *same* Commit pipeline as rules, so one Deploy carries rules and objects together.
 The **Policy** tab is a visual editor over the draft rules — columns for

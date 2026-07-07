@@ -152,9 +152,9 @@ func TestParseDraftRulesFields(t *testing.T) {
 }
 
 func TestObjectsRoundTrip(t *testing.T) {
-	g, r, s := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n")
-	if len(g) != 1 || len(r) != 1 || len(s) != 1 {
-		t.Fatalf("counts g=%d r=%d s=%d", len(g), len(r), len(s))
+	g, r, s, h := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n" + `HOST_DB1="10.0.0.5"` + "\n")
+	if len(g) != 1 || len(r) != 1 || len(s) != 1 || len(h) != 1 {
+		t.Fatalf("counts g=%d r=%d s=%d h=%d", len(g), len(r), len(s), len(h))
 	}
 	if g[0].Name != "OFFICE" || len(g[0].Members) != 2 || g[0].Members[1] != "1.2.3.4" {
 		t.Errorf("group parsed wrong: %+v", g[0])
@@ -162,21 +162,24 @@ func TestObjectsRoundTrip(t *testing.T) {
 	if s[0].Name != "WEB" || s[0].Members[1] != "443/tcp" {
 		t.Errorf("service parsed wrong: %+v", s[0])
 	}
-	out := serializeObjects(g, r, s)
-	g2, r2, s2 := parseObjects(out)
-	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 {
+	if h[0].Name != "DB1" || h[0].Members[0] != "10.0.0.5" {
+		t.Errorf("host parsed wrong: %+v", h[0])
+	}
+	out := serializeObjects(g, r, s, h)
+	g2, r2, s2, h2 := parseObjects(out)
+	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 || len(h2) != 1 {
 		t.Errorf("re-parse of serialized objects lost entries: %q", out)
 	}
 }
 
 func TestSanitizeObjectsRejectsInjection(t *testing.T) {
-	if err := sanitizeObjects([]objEntry{{Name: "X", Members: []string{"1.2.3.4; rm"}}}, nil, nil); err == nil {
+	if err := sanitizeObjects([]objEntry{{Name: "X", Members: []string{"1.2.3.4; rm"}}}, nil, nil, nil); err == nil {
 		t.Error("expected shell-metachar member to be rejected")
 	}
-	if err := sanitizeObjects([]objEntry{{Name: "bad name", Members: nil}}, nil, nil); err == nil {
+	if err := sanitizeObjects([]objEntry{{Name: "bad name", Members: nil}}, nil, nil, nil); err == nil {
 		t.Error("expected invalid name to be rejected")
 	}
-	if err := sanitizeObjects([]objEntry{{Name: "OK", Members: []string{"80", "443/tcp"}}}, nil, nil); err != nil {
+	if err := sanitizeObjects([]objEntry{{Name: "OK", Members: []string{"80", "443/tcp"}}}, nil, nil, nil); err != nil {
 		t.Errorf("valid service members rejected: %v", err)
 	}
 }

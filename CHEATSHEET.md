@@ -10,7 +10,7 @@ Rule line: `<action> <dir> <proto> <port> <target> [on <iface>]`
 - **proto** `tcp` `udp` `sctp` `all` | `any` `icmp` `icmpv6` `esp` `ah` `gre`
 - **port** `22` | `5060-5070` | `80,443` | service name `web` | `-` (port-less protos)
 - **target** country `pl` · region `europe` · IP `203.0.113.5` · CIDR `10.0.0.0/8`
-  · group `office` · `any` · `abuse` (deny-only)
+  · group `office` · host label `db1` · `any` · `abuse` (deny-only)
 - **on `<iface>`** (optional) scope to one interface: `iifname` for the source
   side (`in`/`fwd-in`), `oifname` for the destination (`out`/`fwd-out`). Any real
   name works (`eth0`, `eth0.100`, `br-lan`, `wg0`, `home-Client-10`).

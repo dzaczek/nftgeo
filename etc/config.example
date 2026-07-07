@@ -107,6 +107,11 @@ HARDEN=""
 # GROUP_ADMINS="203.0.113.10 10.0.0.0/8"
 # GROUP_PARTNERS="de fr 192.0.2.0/24"
 #
+# Host labels: name a single IP/CIDR and use the name as a rule target (like a
+# one-address group). Use the lowercased part after HOST_ (HOST_DB1 -> db1).
+# HOST_DB1="10.0.20.5"
+# HOST_LB="10.0.10.7 10.0.10.8"
+#
 # Named service objects, referenced by name in a rule's PORT field. A service is
 # a reusable list of ports, ranges, and/or other service names (nested). Use the
 # lowercased part after SERVICE_ in a rule (SERVICE_WEB -> web). Examples:

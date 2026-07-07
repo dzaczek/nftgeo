@@ -9,6 +9,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.35.0] - 2026-07-08
+
+### Added
+- **Host labels (`HOST_<NAME>`).** Name a single IP/CIDR (or a few) and use the
+  name as a rule target, like a one-address group: `HOST_DB1="10.0.20.5"` then
+  `deny out any - db1`. Editable in the nftgeo-ui Objects > **Hosts** tab; usable
+  in the rule target autocomplete. (Roadmap P5 M5.2; completes the object types
+  alongside groups/regions/services.)
+
+### Fixed
+- The objects draft (Objects tab) failed to save when no rules draft existed yet
+  (`ui-drafts/` was never created) - it now creates the dir, like the rules draft.
+
 ## [1.34.0] - 2026-07-08
 
 ### Changed
@@ -607,6 +620,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.35.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.35.0
 [1.34.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.34.0
 [1.33.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.33.0
 [1.32.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.32.0

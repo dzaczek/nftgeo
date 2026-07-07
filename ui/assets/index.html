@@ -246,6 +246,7 @@
         <button class="tab active" data-ot="groups">Address groups</button>
         <button class="tab" data-ot="regions">Custom regions</button>
         <button class="tab" data-ot="services">Services</button>
+        <button class="tab" data-ot="hosts">Hosts</button>
         <button class="tab" data-ot="ref">Reference</button>
       </div>
       <div class="ot" id="ot-groups">
@@ -268,6 +269,13 @@
           <button class="btn-go" id="newservice">+ New service</button>
         </div>
         <div class="card"><div id="o-services-edit"></div></div>
+      </div>
+      <div class="ot" id="ot-hosts" style="display:none">
+        <div class="filters" style="justify-content:space-between">
+          <span class="muted" style="align-self:center">Named single hosts (an IP / CIDR) — reference them as a rule target, e.g. <code>allow web -&gt; db1 postgres</code> or <code>deny out any - db1</code>.</span>
+          <button class="btn-go" id="newhost">+ New host</button>
+        </div>
+        <div class="card"><div id="o-hosts-edit"></div></div>
       </div>
       <div class="ot" id="ot-ref" style="display:none">
       <div class="grid g3">
@@ -455,7 +463,7 @@ async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
   try{const od=await j('/api/objects/draft');SVCS=(od.services||[]).map(s=>s.name);
-    (od.groups||[]).concat(od.regions||[]).forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=g.members||[]);}catch(e){}
+    (od.groups||[]).concat(od.regions||[]).concat(od.hosts||[]).forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=g.members||[]);}catch(e){}
   fillTargets(); fillServices();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
 }
@@ -727,12 +735,12 @@ async function loadObjects(){
   $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
   $('#o-feeds').innerHTML=(o.abuseSources||[]).length?o.abuseSources.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
   $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
-  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[]}; renderManaged();
+  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[]}; renderManaged();
 }
 
 // ---- editable objects (M6B.2 groups/regions, M6B.7/services) ----
-let OBJ={groups:[],regions:[],services:[]};
-function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:OBJ.services;}
+let OBJ={groups:[],regions:[],services:[],hosts:[]};
+function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:kind==='host'?OBJ.hosts:OBJ.services;}
 function plainchip(m){return `<span class="chip">${esc(m)}</span>`;}
 function objEditList(arr,kind){
   if(!arr.length)return `<span class="muted">none yet — use “New ${kind}” to add one.</span>`;
@@ -744,6 +752,7 @@ function renderManaged(){
   $('#o-groups-edit').innerHTML=objEditList(OBJ.groups,'group');
   $('#o-regions-edit').innerHTML=objEditList(OBJ.regions,'region');
   $('#o-services-edit').innerHTML=objEditList(OBJ.services,'service');
+  $('#o-hosts-edit').innerHTML=objEditList(OBJ.hosts,'host');
 }
 function switchObjTab(ot){$$('#obj-tabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.ot===ot));
   $$('.ot').forEach(s=>s.style.display='none');$('#ot-'+ot).style.display='';}
@@ -754,7 +763,8 @@ function editObj(kind,i){
   const list=listFor(kind), isNew=i<0, e=isNew?{name:'',members:[]}:list[i];
   const meta={group:['address group','IPs, CIDRs, country codes, region or group names — space/comma separated.','10.0.0.0/24 1.2.3.4 ru','deny in any - ',''],
     region:['custom region','Country codes (e.g. ru cn kp) and/or other region names.','ru cn kp','deny in any - ',''],
-    service:['service','Ports (443), ranges (8000-8100), proto-tagged (53/udp), and/or other service names — space/comma separated. A bare port takes the rule’s protocol; a tagged port is fixed. Use proto <code>any</code>/<code>all</code> in a rule to emit every protocol the service defines.','80 443 53/udp','allow in tcp ',' any']}[kind];
+    service:['service','Ports (443), ranges (8000-8100), proto-tagged (53/udp), and/or other service names — space/comma separated. A bare port takes the rule’s protocol; a tagged port is fixed. Use proto <code>any</code>/<code>all</code> in a rule to emit every protocol the service defines.','80 443 53/udp','allow in tcp ',' any'],
+    host:['host','A single IP or CIDR (or a few) — a named host usable as a rule target.','10.0.20.5','deny out any - ','']}[kind];
   $('#drawertitle').textContent=(isNew?'New ':'Edit ')+meta[0];
   $('#drawerbody').innerHTML=`
     <label class="fld"><span>Name</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="${kind==='service'?'WEB':'OFFICE'}" autocomplete="off"></label>
@@ -778,11 +788,11 @@ async function saveObj(kind,i){
 }
 async function deleteObj(kind,i){listFor(kind).splice(i,1);await putObjects();closeDrawer();}
 async function putObjects(){
-  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions,services:OBJ.services})});
+  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions,services:OBJ.services,hosts:OBJ.hosts})});
   if(r.status===401||r.status===403){showLock('Read-only session — cannot edit objects.');return;}
   const d=await r.json();
   if(d.error){toast('Rejected: '+d.error);return;}
-  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[],services:dd.services||[]};renderManaged();
+  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[],services:dd.services||[],hosts:dd.hosts||[]};renderManaged();
   refreshCommitBar();toast('Saved to draft.');
 }
 $('#v-objects').addEventListener('click',e=>{
@@ -790,6 +800,7 @@ $('#v-objects').addEventListener('click',e=>{
   if(e.target.id==='newgroup'){editObj('group',-1);return;}
   if(e.target.id==='newregion'){editObj('region',-1);return;}
   if(e.target.id==='newservice'){editObj('service',-1);return;}
+  if(e.target.id==='newhost'){editObj('host',-1);return;}
   const item=e.target.closest('.objitem.editable');if(item){editObj(item.dataset.kind,+item.dataset.i);return;}
 });
 $('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer')closeDrawer();});
@@ -826,7 +837,7 @@ async function boot(){
   }catch(e){showLock('');return;}
   hideLock();
   if(MODE==='ro'){$('#modebadge').textContent='read-only';
-    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#newhost').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();

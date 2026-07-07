@@ -452,6 +452,7 @@ type DropsResp struct {
 }
 
 var reKV = regexp.MustCompile(`(\w+)=(\S+)`)
+
 // The drop-log prefix is "nftgeo-drop:<label>" where <label> is the rule's name
 // or a policy category; capture it up to the nft "KEY=" fields (labels may
 // contain spaces).
@@ -1286,11 +1287,11 @@ type objEntry struct {
 	Members []string `json:"members"`
 }
 
-var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE)_([A-Za-z0-9_]+)=(.*)$`)
+var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE|HOST)_([A-Za-z0-9_]+)=(.*)$`)
 var objNameRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 var objMemberRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 
-func parseObjects(text string) (groups, regions, services []objEntry) {
+func parseObjects(text string) (groups, regions, services, hosts []objEntry) {
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -1307,6 +1308,8 @@ func parseObjects(text string) (groups, regions, services []objEntry) {
 			groups = append(groups, e)
 		case "REGION":
 			regions = append(regions, e)
+		case "HOST":
+			hosts = append(hosts, e)
 		default:
 			services = append(services, e)
 		}
@@ -1314,7 +1317,7 @@ func parseObjects(text string) (groups, regions, services []objEntry) {
 	return
 }
 
-func serializeObjects(groups, regions, services []objEntry) string {
+func serializeObjects(groups, regions, services, hosts []objEntry) string {
 	var b strings.Builder
 	b.WriteString("# Managed by nftgeo-ui (Objects tab). Do not hand-edit; the panel overwrites this file.\n")
 	for _, g := range groups {
@@ -1322,6 +1325,9 @@ func serializeObjects(groups, regions, services []objEntry) string {
 	}
 	for _, rg := range regions {
 		fmt.Fprintf(&b, "REGION_%s=\"%s\"\n", strings.ToUpper(rg.Name), strings.Join(rg.Members, " "))
+	}
+	for _, hs := range hosts {
+		fmt.Fprintf(&b, "HOST_%s=\"%s\"\n", strings.ToUpper(hs.Name), strings.Join(hs.Members, " "))
 	}
 	for _, sv := range services {
 		fmt.Fprintf(&b, "SERVICE_%s=\"%s\"\n", strings.ToUpper(sv.Name), strings.Join(sv.Members, " "))
@@ -1353,10 +1359,10 @@ func checkNames(lists ...[]objEntry) error {
 	return nil
 }
 
-// sanitizeObjects validates the two namespaces separately: address names
-// (groups + regions, which share the rule-target namespace) and service names.
-func sanitizeObjects(groups, regions, services []objEntry) error {
-	if err := checkNames(groups, regions); err != nil {
+// sanitizeObjects validates two namespaces separately: address/target names
+// (groups + regions + hosts, which all resolve as a rule target) and services.
+func sanitizeObjects(groups, regions, services, hosts []objEntry) error {
+	if err := checkNames(groups, regions, hosts); err != nil {
 		return err
 	}
 	return checkNames(services)
@@ -1370,7 +1376,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if exists == nil {
 			text = readFileStr(objDraftFile)
 		}
-		g, rg, sv := parseObjects(text)
+		g, rg, sv, hs := parseObjects(text)
 		if g == nil {
 			g = []objEntry{}
 		}
@@ -1380,22 +1386,27 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if sv == nil {
 			sv = []objEntry{}
 		}
-		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv})
+		if hs == nil {
+			hs = []objEntry{}
+		}
+		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs})
 	case http.MethodPut:
 		var req struct {
 			Groups   []objEntry `json:"groups"`
 			Regions  []objEntry `json:"regions"`
 			Services []objEntry `json:"services"`
+			Hosts    []objEntry `json:"hosts"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
-		if err := sanitizeObjects(req.Groups, req.Regions, req.Services); err != nil {
+		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts); err != nil {
 			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
 			return
 		}
-		out := serializeObjects(req.Groups, req.Regions, req.Services)
+		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts)
+		os.MkdirAll(filepath.Dir(objDraftFile), 0755)
 		if err := os.WriteFile(objDraftFile, []byte(out), 0644); err != nil {
 			http.Error(w, `{"error":"cannot write objects draft"}`, http.StatusInternalServerError)
 			return

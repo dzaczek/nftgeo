@@ -1,0 +1,4 @@
+# HOST_ label resolves to its IP in a geo set
++ set g_db14
++ 10.0.0.5
++ @g_db14
