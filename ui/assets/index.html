@@ -121,7 +121,9 @@
   .editlink{float:right;color:var(--drop);font-size:12px}
   .fld{display:flex;flex-direction:column;gap:5px;font-size:13px}
   .fld span{color:var(--mut)}
-  .fld input,.fld textarea{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:9px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+  .fld input,.fld textarea,.fld select{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:9px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+  .fld input:disabled{opacity:.5}
+  .inlineinp{background:var(--bg);color:var(--fg);border:1px solid var(--acc2);border-radius:6px;padding:3px 6px;font-size:12px;font-family:ui-monospace,monospace;width:140px}
   .fld input[readonly]{opacity:.6}
   .drawer{position:fixed;inset:0;background:#0007;display:none;z-index:25}
   .drawer.open{display:block}
@@ -201,8 +203,12 @@
     <section class="view" id="v-policy">
       <div class="filters" style="justify-content:space-between">
         <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
-        <span class="muted" id="polhint" style="align-self:center;font-size:12px">Drag ⠿ to reorder (top-down precedence) · toggle to enable/disable · changes go to the draft. Add/edit rule fields: M6B.4.</span>
+        <span style="display:flex;gap:10px;align-items:center">
+          <span class="muted" id="polhint" style="font-size:12px">Drag ⠿ to reorder · toggle to enable/disable · click a row to edit · click a target to change it.</span>
+          <button class="btn-go" id="addrule">+ Add rule</button>
+        </span>
       </div>
+      <datalist id="tgtlist"></datalist>
       <div class="card"><div class="tablewrap"><table class="poltable">
         <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
@@ -418,15 +424,17 @@ let OBJMAP={}; // name(upper) -> members, for chip tooltips
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
+  fillTargets();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; renderPolicy();
 }
+const REGIONS=['europe','asia','africa','north_america','south_america','middle_east','oceania','caribbean'];
+function fillTargets(){$('#tgtlist').innerHTML=[...Object.keys(OBJMAP),'any','abuse',...REGIONS].map(o=>`<option value="${esc(o)}">`).join('');}
 function tchip(t){
   if(!t||t==='any')return '<span class="chip any">any</span>';
   if(t==='abuse')return '<span class="chip abuse" title="AbuseIPDB + feeds blocklist">abuse</span>';
   const mem=OBJMAP[t.toUpperCase()];
   const tip=mem&&mem.length?`${t} → ${mem.join(', ')}`:t;
-  const ipish=/[.:]/.test(t)&&!mem;
-  return `<span class="chip obj${ipish?' ipl':''}"${ipish?` data-ip="${esc(t.split('/')[0])}"`:''} title="${esc(tip)}">${esc(t)}</span>`;
+  return `<span class="chip obj" title="${esc(tip)}">${esc(t)}</span>`;
 }
 const HOST='<span class="chip host" title="this firewall host">this host</span>';
 const FWD='<span class="chip host" title="forwarded traffic">forwarded</span>';
@@ -457,14 +465,74 @@ function renderPolicy(){
       <td>${act}</td><td style="text-align:right">${hits}</td></tr>`;
   }).join('')||'<tr><td colspan="8" class="muted">no rules in rules.conf</td></tr>';
 }
-// toggle enable/disable
+// row interactions: toggle · inline target edit · open editor
 $('#policy').addEventListener('click',async e=>{
-  const t=e.target.closest('[data-toggle]'); if(!t)return;
-  e.stopPropagation();
-  const r=await post('/api/rules/draft/toggle',{id:+t.dataset.toggle});
-  if(r&&r.error){toast(r.error);return;}
-  await loadPolicy(); refreshCommitBar();
+  const t=e.target.closest('[data-toggle]');
+  if(t){const r=await post('/api/rules/draft/toggle',{id:+t.dataset.toggle});if(r&&r.error){toast(r.error);return;}await loadPolicy();refreshCommitBar();return;}
+  if(MODE==='ro')return;
+  const row=e.target.closest('.prow'); if(!row)return;
+  const chip=e.target.closest('.chip.obj,.chip.any,.chip.abuse');
+  if(chip){inlineTarget(row,chip);return;}
+  ruleDrawer(+row.dataset.id);
 });
+$('#addrule').addEventListener('click',()=>ruleDrawer(null));
+
+function ruleDrawer(id){
+  if(MODE==='ro')return;
+  const r=id!=null?(RULES||[]).find(x=>x.id===id):null;
+  const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name}
+           :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:''};
+  const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
+  $('#drawertitle').textContent=id!=null?'Edit rule':'New rule';
+  $('#drawerbody').innerHTML=`
+    <label class="fld"><span>Name (comment)</span><input id="r-name" value="${esc(v.name)}" placeholder="describe this rule" autocomplete="off"></label>
+    <div style="display:flex;gap:10px">
+      <label class="fld" style="flex:1"><span>Action</span><select id="r-action">${opt(['allow','deny'],v.action)}</select></label>
+      <label class="fld" style="flex:1"><span>Direction</span><select id="r-dir">${opt(['in','out','fwd-in','fwd-out'],v.dir)}</select></label>
+    </div>
+    <div style="display:flex;gap:10px">
+      <label class="fld" style="flex:1"><span>Protocol</span><select id="r-proto" onchange="rProtoChange()">${opt(['tcp','udp','any','icmp','icmpv6'],v.proto)}</select></label>
+      <label class="fld" style="flex:1"><span>Port</span><input id="r-port" value="${esc(v.port)}" placeholder="443 or 80,443"></label>
+    </div>
+    <label class="fld"><span>Target</span><input id="r-target" list="tgtlist" value="${esc(v.target)}" placeholder="any / abuse / country / region / group / IP" autocomplete="off"></label>
+    <label class="fld"><span>Interface (optional)</span><input id="r-iface" value="${esc(v.iface)}" placeholder="e.g. eth0 — blank = any" autocomplete="off"></label>
+    <p class="muted" style="font-size:12px"><b>Direction</b> sets what the target means: <b>in</b> = source, <b>out</b> = destination, <b>fwd-*</b> = forwarded. Saved to the draft — deploy via Commit.</p>
+    <div style="display:flex;gap:8px;margin-top:auto">
+      <button class="btn-go" onclick="saveRule(${id!=null?id:'null'})">Save to draft</button>
+      ${id!=null?`<button class="btn-rb" onclick="deleteRule(${id})">Delete</button>`:''}
+      <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
+    </div>`;
+  rProtoChange(); openDrawer(); $('#r-name').focus();
+}
+function rProtoChange(){const p=$('#r-proto').value,pt=$('#r-port');
+  if(p==='any'||p==='icmp'||p==='icmpv6'){pt.value='';pt.disabled=true;pt.placeholder='(no port)';}
+  else{pt.disabled=false;pt.placeholder='443 or 80,443';}}
+async function saveRule(id){
+  const b={action:$('#r-action').value,dir:$('#r-dir').value,proto:$('#r-proto').value,port:$('#r-port').value,
+    target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value};
+  if(id!=null)b.id=id;
+  const res=await post('/api/rules/draft/save',b);
+  if(res&&res.error){toast('Rejected: '+res.error);return;}
+  closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Saved to draft.');
+}
+async function deleteRule(id){
+  if(!confirm('Delete this rule from the draft?'))return;
+  const res=await post('/api/rules/draft/delete',{id});
+  if(res&&res.error){toast(res.error);return;}
+  closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Rule deleted.');
+}
+function inlineTarget(row,chip){
+  const id=+row.dataset.id, r=(RULES||[]).find(x=>x.id===id); if(!r)return;
+  const cell=chip.parentElement;
+  cell.innerHTML=`<input class="inlineinp" list="tgtlist" value="${esc(r.target)}">`;
+  const inp=cell.querySelector('input'); inp.focus(); inp.select(); let done=false;
+  const commit=async()=>{if(done)return;done=true;const nt=inp.value.trim();
+    if(!nt||nt===r.target){loadPolicy();return;}
+    const res=await post('/api/rules/draft/save',{id,action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:nt,iface:r.iface,name:r.name});
+    if(res&&res.error){toast('Rejected: '+res.error);} await loadPolicy(); refreshCommitBar();};
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}else if(e.key==='Escape'){done=true;loadPolicy();}});
+  inp.addEventListener('blur',commit,{once:true});
+}
 // drag-and-drop reorder
 const polBody=$('#policy');
 polBody.addEventListener('dragstart',e=>{const row=e.target.closest('.prow');if(row){row.classList.add('dragging');}});
@@ -591,7 +659,7 @@ async function boot(){
   }catch(e){showLock('');return;}
   hideLock();
   if(MODE==='ro'){$('#modebadge').textContent='read-only';$('#nav-rules').style.display='none';
-    $('#newgroup').style.display='none';$('#newregion').style.display='none';}
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#addrule').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();

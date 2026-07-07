@@ -187,10 +187,11 @@ count.
   reorder** (top-down precedence), an **enable/disable toggle** (disabled = stored
   commented-out), and a live filter — all writing to the draft. Lossless parse
   keeps each rule's trivia + verbatim body.
-- [ ] **M6B.4 Rule editor drawer + inline edit.** Full rule editing in the right
-  drawer (object pickers with search, direction, geo, `on <iface>`); plus
-  **inline editing** — click a Source/Service cell for a searchable dropdown
-  without opening the full drawer.
+- [x] **M6B.4 Rule editor drawer + inline edit.** *(Shipped 1.21.0.)* Add / edit /
+  delete rules in the right drawer (action, direction, protocol, port, target with
+  group/region autocomplete, `on <iface>`, name); click a target chip for an
+  **inline quick-edit**. Fields validated server-side; the engine's `validate` is
+  the final gate. Writes to the draft, deploys via Commit.
 - [ ] **M6B.5 Sections / rule groups.** Insert titled section headers between
   rules ("DMZ rules", "Geo-drops") to keep large policies readable; sections are
   comment-anchored in `rules.conf` so they round-trip.

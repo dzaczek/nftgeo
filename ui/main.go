@@ -1459,6 +1459,136 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"saved": true, "disabled": found.Disabled})
 }
 
+// ---- rule add / edit / delete (M6B.4) ----
+
+var (
+	rulePortRe   = regexp.MustCompile(`^[0-9]+([-,][0-9]+)*$`)
+	ruleTargetRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
+	ruleIfaceRe  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	ruleProtos   = map[string]bool{"tcp": true, "udp": true, "any": true, "icmp": true, "icmpv6": true}
+)
+
+func sanitizeComment(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "#", "")
+	return strings.TrimSpace(s)
+}
+
+// buildRuleBody assembles and field-validates a rule line; the engine's own
+// validate is still the final gate at preview/deploy.
+func buildRuleBody(action, dir, proto, port, target, iface string) (string, error) {
+	action, dir = strings.ToLower(strings.TrimSpace(action)), strings.TrimSpace(dir)
+	proto, port = strings.ToLower(strings.TrimSpace(proto)), strings.TrimSpace(port)
+	target, iface = strings.TrimSpace(target), strings.TrimSpace(iface)
+	if action != "allow" && action != "deny" {
+		return "", fmt.Errorf("action must be allow or deny")
+	}
+	switch dir {
+	case "in", "out", "fwd-in", "fwd-out":
+	default:
+		return "", fmt.Errorf("direction must be in / out / fwd-in / fwd-out")
+	}
+	if !ruleProtos[proto] {
+		return "", fmt.Errorf("protocol must be tcp / udp / any / icmp / icmpv6")
+	}
+	if proto == "any" {
+		port = "-"
+	}
+	if port == "" {
+		port = "-"
+	}
+	if port != "-" && !rulePortRe.MatchString(port) {
+		return "", fmt.Errorf("port must be a number, range (n-m) or list (n,m)")
+	}
+	if !ruleTargetRe.MatchString(target) {
+		return "", fmt.Errorf("target: country / region / group / IP / CIDR / any / abuse")
+	}
+	parts := []string{action, dir, proto, port, target}
+	if iface != "" {
+		if !ruleIfaceRe.MatchString(iface) {
+			return "", fmt.Errorf("invalid interface name")
+		}
+		parts = append(parts, "on", iface)
+	}
+	return strings.Join(parts, " "), nil
+}
+
+func handleRulesSave(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID                                      *int
+		Action, Dir, Proto, Port, Target, Iface string
+		Name                                    string
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	body, err := buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface)
+	if err != nil {
+		http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
+		return
+	}
+	name := sanitizeComment(req.Name)
+	text, _ := draftRulesText()
+	rules, tail := parseDraftRules(text)
+	if req.ID != nil {
+		var found *draftRule
+		for _, rr := range rules {
+			if rr.ID == *req.ID {
+				found = rr
+			}
+		}
+		if found == nil {
+			http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
+			return
+		}
+		found.Body, found.Name = body, name
+	} else {
+		rules = append(rules, &draftRule{ID: -1, Body: body, Name: name})
+	}
+	if err := writeDraftRules(rules, tail); err != nil {
+		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"saved": true})
+}
+
+func handleRulesDelete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID int `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	text, _ := draftRulesText()
+	rules, tail := parseDraftRules(text)
+	idx := -1
+	for i, rr := range rules {
+		if rr.ID == req.ID {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
+		return
+	}
+	// Keep the deleted rule's leading comments/blanks with the following rule
+	// (or the file tail if it was last), so section headers survive.
+	trivia := rules[idx].Trivia
+	if idx+1 < len(rules) {
+		rules[idx+1].Trivia = append(append([]string{}, trivia...), rules[idx+1].Trivia...)
+	} else {
+		tail = append(append([]string{}, trivia...), tail...)
+	}
+	rules = append(rules[:idx], rules[idx+1:]...)
+	if err := writeDraftRules(rules, tail); err != nil {
+		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"deleted": true})
+}
+
 // ---- commit pipeline (all stages) ----
 
 func handleCommitPreview(w http.ResponseWriter, r *http.Request) {
@@ -1726,6 +1856,8 @@ func main() {
 	api("/api/rules/draft", handleRulesDraft)
 	api("/api/rules/draft/reorder", handleRulesReorder)
 	api("/api/rules/draft/toggle", handleRulesToggle)
+	api("/api/rules/draft/save", handleRulesSave)
+	api("/api/rules/draft/delete", handleRulesDelete)
 	api("/api/draft/discard", handleDraftDiscard)
 	api("/api/commit/preview", handleCommitPreview)
 	api("/api/commit/status", handleCommitStatus)
