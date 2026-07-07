@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.36.0"
+NFTGEO_VERSION="1.37.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -477,6 +477,36 @@ parse_rules_file() {
 					echo "${rf}:${lineno}: snat target '${_nip}' must be an IP address" >&2; exit 1; }
 				printf 'snat %s %s\n' "$_niface" "$_nip" >> "$NAT_NORM"
 			fi
+			continue
+		fi
+
+		# Ingress NAT / port-forward (P4). Form:
+		#   dnat <proto> <port> to <ip>[:<port>] [on <iface>]
+		# -> prerouting: [iifname <if>] <proto> dport <port> dnat to <ip>[:<port>]
+		# The forward chain policy is accept, so the redirected packet passes.
+		if [ "$action" = dnat ]; then
+			# shellcheck disable=SC2086
+			set -- $action $dir $proto $port $geo ${_rest%%#*}
+			_dproto="$2"; _dport="$3"
+			case "$_dproto" in tcp|udp) ;; *) echo "${rf}:${lineno}: dnat proto must be tcp or udp" >&2; exit 1 ;; esac
+			case "$_dport" in ''|*[!0-9]*) echo "${rf}:${lineno}: dnat port '${_dport}' must be a single numeric port" >&2; exit 1 ;; esac
+			[ "$4" = to ] && [ -n "${5:-}" ] || { echo "${rf}:${lineno}: usage: dnat <proto> <port> to <ip>[:<port>] [on <iface>]" >&2; exit 1; }
+			_tgt="$5"; _diface=""
+			if [ -n "${6:-}" ]; then
+				[ "$6" = on ] && [ -n "${7:-}" ] || { echo "${rf}:${lineno}: usage: dnat <proto> <port> to <ip>[:<port>] [on <iface>]" >&2; exit 1; }
+				_diface="$7"
+				case "$_diface" in ''|*[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: bad interface '${_diface}'" >&2; exit 1 ;; esac
+			fi
+			# Split target into address and optional port: v4[:port] or [v6]:port or bare.
+			case "$_tgt" in
+				\[*\]:*) _dip="${_tgt#\[}"; _dip="${_dip%%\]:*}"; _dtport="${_tgt##*\]:}" ;;
+				*.*.*.*:*) _dip="${_tgt%:*}"; _dtport="${_tgt##*:}" ;;
+				*) _dip="$_tgt"; _dtport="-" ;;
+			esac
+			printf '%s' "$_dip" | grep -Eq "$IPV4_RE" || printf '%s' "$_dip" | grep -Eiq "$IPV6_RE" || {
+				echo "${rf}:${lineno}: dnat target '${_dip}' must be an IP address" >&2; exit 1; }
+			case "$_dtport" in -) ;; *[!0-9]*) echo "${rf}:${lineno}: dnat target port '${_dtport}' must be numeric" >&2; exit 1 ;; esac
+			printf 'dnat %s %s %s %s %s\n' "$_dproto" "$_dport" "$_dip" "$_dtport" "${_diface:--}" >> "$NAT_NORM"
 			continue
 		fi
 
@@ -1187,9 +1217,27 @@ generate() {
 		emit_chain "output" "daddr"
 		emit_chain "forward" "saddr daddr"
 
+		# Ingress NAT (P4): a dest-NAT prerouting chain for port-forwarding,
+		# emitted only when a dnat rule exists.
+		if grep -q '^dnat ' "$NAT_NORM" 2>/dev/null; then
+			printf '\tchain prerouting {\n'
+			printf '\t\ttype nat hook prerouting priority dstnat; policy accept;\n'
+			grep '^dnat ' "$NAT_NORM" | while read -r _k _dproto _dport _dip _dtport _diface; do
+				_pre=""
+				[ "$_diface" = "-" ] || _pre="iifname \"${_diface}\" "
+				# inet table: dnat needs the family (ip/ip6) spelled out.
+				case "$_dip" in
+					*:*) _fam="ip6"; [ "$_dtport" = "-" ] && _to="$_dip" || _to="[${_dip}]:${_dtport}" ;;
+					*)   _fam="ip";  [ "$_dtport" = "-" ] && _to="$_dip" || _to="${_dip}:${_dtport}" ;;
+				esac
+				printf '\t\t%s%s dport %s counter dnat %s to %s\n' "$_pre" "$_dproto" "$_dport" "$_fam" "$_to"
+			done
+			printf '\t}\n'
+		fi
+
 		# Egress NAT (P3): a source-NAT postrouting chain, emitted only when a
 		# masquerade/snat rule exists (so the filter-only case is unchanged).
-		if [ -s "$NAT_NORM" ]; then
+		if grep -Eq '^(masquerade|snat) ' "$NAT_NORM" 2>/dev/null; then
 			printf '\tchain postrouting {\n'
 			printf '\t\ttype nat hook postrouting priority srcnat; policy accept;\n'
 			while read -r _kind _if _ip; do

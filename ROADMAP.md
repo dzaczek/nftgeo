@@ -47,7 +47,7 @@ Milestones:
 
 ---
 
-## 🔜 P4 — Ingress NAT (port forwarding / DNAT)
+## ✅ P4 — Ingress NAT / port-forward *(shipped 1.37.0)*
 
 **Goal:** expose an internal service on the box's public interface — the headline
 "I don't need another firewall" feature. Geo and interface qualifiers reused.
@@ -58,14 +58,14 @@ dnat in tcp 2222 europe to 10.0.0.5:22 on eth0    # geo-restricted, on the WAN
 ```
 
 Milestones:
-- [ ] **M4.1** `prerouting` NAT chain scaffolding.
-- [ ] **M4.2** `dnat <dir> <proto> <port> to <ip[:port]>` parse + emit.
-- [ ] **M4.3** reuse the geo target and `on <iface>` qualifier.
-- [ ] **M4.4** auto-emit the matching `fwd-in` accept so the forwarded packet
+- [x] **M4.1** `prerouting` NAT chain scaffolding.
+- [x] **M4.2** `dnat <dir> <proto> <port> to <ip[:port]>` parse + emit.
+- [x] **M4.3** reuse the geo target and `on <iface>` qualifier.
+- [x] **M4.4** auto-emit the matching `fwd-in` accept so the forwarded packet
   passes the filter (make it "just work").
-- [ ] **M4.5** optional hairpin/reflexive NAT (reach the service via the public IP
+- [x] **M4.5** optional hairpin/reflexive NAT (reach the service via the public IP
   from inside the LAN).
-- [ ] **M4.6** warn on disabled forwarding; IPv4-first.
+- [x] **M4.6** warn on disabled forwarding; IPv4-first.
 - [ ] **M4.7** docs, examples, tests.
 
 ---

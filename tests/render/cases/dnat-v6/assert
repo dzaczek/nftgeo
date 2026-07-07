@@ -1,0 +1,2 @@
+# IPv6 target uses ip6 family and [addr]:port form
++ iifname "eth0" tcp dport 443 counter dnat ip6 to [2001:db8::1]:8443

@@ -163,6 +163,20 @@ filter-only setup is unchanged). Enable IP forwarding yourself
 (`sysctl net.ipv4.ip_forward=1`) — nftgeo warns if a NAT/forward rule is present
 while forwarding is off, but does not manage the sysctl.
 
+### Ingress NAT / port-forward (gateway)
+
+Redirect a port arriving on the WAN to an internal host:
+
+```text
+dnat tcp 8080 to 10.0.0.5:80 on eth0   # WAN :8080 -> 10.0.0.5:80
+dnat udp 51820 to 10.0.0.9             # forward with no port remap
+dnat tcp 443 to [2001:db8::1]:8443     # IPv6 target
+```
+
+`dnat <proto> <port> to <ip>[:<port>] [on <iface>]` emits a `nat` prerouting
+(dstnat) chain. The `:port` remap and `on <iface>` scope are optional. The
+forward chain policy is accept, so the redirected packet passes through.
+
 ### Replies and "inbound only as a response"
 
 Each chain accepts `established,related` connections first, so a reply to a

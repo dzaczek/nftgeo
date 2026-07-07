@@ -1,0 +1,5 @@
+# egress masquerade and ingress dnat in one config -> both nat chains
++ chain prerouting
++ chain postrouting
++ iifname "eth0" tcp dport 8080 counter dnat ip to 10.0.0.5:80
++ oifname "eth0" counter masquerade

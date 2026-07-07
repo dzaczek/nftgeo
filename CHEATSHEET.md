@@ -28,6 +28,11 @@ Egress NAT (gateway; needs `net.ipv4.ip_forward=1`):
 masquerade on eth0                 # NAT the LAN out via the WAN
 snat out on eth0 to 203.0.113.7    # or a static source IP
 ```
+Ingress NAT / port-forward (gateway):
+```
+dnat tcp 8080 to 10.0.0.5:80 on eth0   # forward WAN :8080 to an internal host
+dnat udp 51820 to 10.0.0.9             # forward with no port remap
+```
 
 ---
 

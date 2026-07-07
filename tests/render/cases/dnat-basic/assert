@@ -1,0 +1,6 @@
+# port-forward with remap, scoped to WAN iface
++ chain prerouting
++ type nat hook prerouting priority dstnat
++ iifname "eth0" tcp dport 8080 counter dnat ip to 10.0.0.5:80
+# dnat-only config must not emit an empty postrouting chain
+- chain postrouting

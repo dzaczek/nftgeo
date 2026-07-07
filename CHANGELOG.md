@@ -9,6 +9,22 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.37.0] - 2026-07-07
+
+### Added
+- **Ingress NAT / port-forward (roadmap P4).** Redirect a WAN port to an
+  internal host:
+  ```
+  dnat tcp 8080 to 10.0.0.5:80 on eth0   # forward WAN :8080 to 10.0.0.5:80
+  dnat udp 51820 to 10.0.0.9             # forward, no port remap
+  dnat tcp 443 to [2001:db8::1]:8443     # IPv6 target
+  ```
+  Emits a `nat` prerouting (dstnat) chain, only when a `dnat` rule exists.
+  Supports optional `:port` remap and `on <iface>` scoping; `dnat` spells out
+  the family (`dnat ip`/`dnat ip6`) for the inet table and uses `[addr]:port`
+  for IPv6 targets. The forward chain policy is accept, so the redirected packet
+  passes without an extra rule. Verified via real `nft -c` in CI/on hermes.
+
 ## [1.36.0] - 2026-07-08
 
 ### Added
@@ -634,6 +650,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.37.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.37.0
 [1.36.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.36.0
 [1.35.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.35.0
 [1.34.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.34.0
