@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.30.1"
+NFTGEO_VERSION="1.31.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -38,6 +38,12 @@ THROTTLE_BAN="${THROTTLE_BAN:-1h}"
 # invalid conntrack state, and always permit the ICMPv6 types IPv6 needs to work.
 HARDEN="${HARDEN:-}"
 ICMPV6_ESSENTIAL="${ICMPV6_ESSENTIAL:-nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert, echo-request, echo-reply, packet-too-big, destination-unreachable, time-exceeded, parameter-problem}"
+
+# Input chain default policy: "accept" (selective blocklist, the default) or
+# "drop" (default-deny - only established/related, loopback, whitelist and your
+# explicit "allow in" rules get in; everything else is dropped). Loopback is
+# auto-accepted under drop even without HARDEN. Deploy behind the deadman.
+DEFAULT_INPUT="${DEFAULT_INPUT:-accept}"
 
 ABUSEIPDB_API_KEY="${ABUSEIPDB_API_KEY:-}"
 ABUSEIPDB_CONFIDENCE_MINIMUM="${ABUSEIPDB_CONFIDENCE_MINIMUM:-90}"
@@ -82,6 +88,11 @@ fi
 if [ -r "$CONFIG_FILE" ]; then
 	. "$CONFIG_FILE"
 fi
+
+case "$DEFAULT_INPUT" in
+	accept|drop) ;;
+	*) echo "DEFAULT_INPUT must be 'accept' or 'drop' (got '${DEFAULT_INPUT}')" >&2; exit 1 ;;
+esac
 
 # Group/region definitions can also live in drop-in files. Sourced after the
 # main config, in sorted filename order (last definition of a variable wins).
@@ -951,8 +962,10 @@ emit_chain() {
 		return 0
 	fi
 
+	pol=accept
+	[ "$hook" = input ] && pol="$DEFAULT_INPUT"
 	printf '\tchain %s {\n' "$hook"
-	printf '\t\ttype filter hook %s priority -100; policy accept;\n' "$hook"
+	printf '\t\ttype filter hook %s priority -100; policy %s;\n' "$hook" "$pol"
 	# Baseline hardening (HARDEN): never filter loopback, drop invalid packets.
 	if [ -n "$HARDEN" ]; then
 		case "$hook" in
@@ -960,6 +973,10 @@ emit_chain() {
 			output) printf '\t\toifname "lo" counter accept\n' ;;
 		esac
 		printf '\t\tct state invalid counter drop\n'
+	elif [ "$hook" = input ] && [ "$DEFAULT_INPUT" = drop ]; then
+		# A default-deny input policy must still let loopback through, even
+		# without HARDEN, or local services break.
+		printf '\t\tiifname "lo" counter accept\n'
 	fi
 	# Stateful: replies to connections you initiated are always allowed.
 	printf '\t\tct state established,related counter accept\n'
@@ -1090,6 +1107,16 @@ generate() {
 }
 
 parse_rules
+
+# Anti-lockout: under default-deny, warn when nothing obviously admits inbound
+# connections (no whitelist and no "allow in" rule) - established/related and
+# loopback still pass, but a new SSH session would be dropped.
+if [ "$DEFAULT_INPUT" = drop ] &&
+	[ -z "${WHITELIST:-}${WHITELIST_HOSTS:-}" ] &&
+	! awk '$1=="allow" && $2=="input"{f=1} END{exit !f}' "$RULES_NORM"; then
+	echo "warning: DEFAULT_INPUT=drop but no WHITELIST and no inbound 'allow in' rule; new connections (incl. SSH) will be dropped. Add an allow/whitelist and deploy behind the deadman." >&2
+fi
+
 ensure_zones
 build_geo_sets
 # Only hit the AbuseIPDB API when a rule actually targets "abuse"; otherwise the

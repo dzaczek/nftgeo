@@ -9,6 +9,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.31.0] - 2026-07-07
+
+### Added
+- **Default-deny input policy (`DEFAULT_INPUT="drop"`).** Flip the input chain
+  from the default selective-blocklist (`policy accept`) to **default-deny**: only
+  established/related, loopback, `WHITELIST` and explicit `allow in` rules pass;
+  everything else is dropped. Loopback is auto-accepted even without `HARDEN`, and
+  `validate` warns when nothing admits inbound traffic (anti-lockout). Invalid
+  values are rejected. Pairs with the deadman; the render is verified but not
+  enabled anywhere by default. (Edge-chain counterpart to the planned per-zone
+  `SEGMENT_DEFAULT`.)
+
 ## [1.30.1] - 2026-07-07
 
 ### Fixed
@@ -554,6 +566,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.31.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.31.0
 [1.30.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.30.1
 [1.30.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.30.0
 [1.29.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.29.0

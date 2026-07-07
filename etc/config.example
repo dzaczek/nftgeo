@@ -71,6 +71,15 @@ LOG_DROPS=""
 # types IPv6 needs (so fencing v6 cannot break Neighbor Discovery). Off by default.
 HARDEN=""
 
+# Input chain default policy. "accept" (default) = selective blocklist: only geo/
+# abuse/throttle and per-port deny-by-default drop, everything else passes.
+# "drop" = default-deny: only established/related, loopback, WHITELIST and your
+# explicit "allow in" rules get in; all other new inbound connections are dropped.
+# Loopback is auto-accepted under "drop". MAKE SURE an "allow in tcp 22 <src>" or
+# WHITELIST admits your SSH before enabling, and deploy behind the deadman
+# (nftgeo apply --confirm). validate warns if nothing admits inbound traffic.
+# DEFAULT_INPUT="drop"
+
 # Default ban duration for "throttle" rules (reactive brute-force auto-block): a
 # source that exceeds the rate is dropped for this long. Per-rule override with
 # "ban <dur>". Format: N[smhd], e.g. 30m, 1h, 2d.

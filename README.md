@@ -554,6 +554,19 @@ Before geo-fencing the port you use for SSH, make sure your current IP is inside
 an allowed geo, or add it to `WHITELIST`. If you have access through your VPS
 provider's emergency console, keep it as a recovery plan.
 
+### Default-deny (`DEFAULT_INPUT="drop"`)
+
+By default nftgeo is a *selective blocklist* (`policy accept`): it drops geo /
+abuse / throttle matches and lets everything else through. Set
+`DEFAULT_INPUT="drop"` in `config` to flip the input chain to **default-deny** —
+only established/related traffic, loopback, `WHITELIST`, and your explicit
+`allow in` rules get in; every other new inbound connection is dropped. This is
+the stronger posture for a host whose open ports you can enumerate. **Before
+enabling it:** ensure an `allow in tcp 22 <source>` (or `WHITELIST`) admits your
+SSH, keep any services you rely on covered by `allow in` rules, and always deploy
+behind the deadman (`nftgeo apply --confirm`, or Commit in the panel). `validate`
+warns when nothing admits inbound traffic. Loopback is auto-accepted.
+
 Recommended SSH configuration:
 
 ```text

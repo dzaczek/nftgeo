@@ -1,0 +1,5 @@
+# default-deny: policy drop on input, loopback auto-accepted, SSH allowed
++ policy drop
++ iifname "lo" counter accept
++ ct state established,related counter accept
++ tcp dport 22 counter accept
