@@ -40,6 +40,7 @@ THROTTLE_BAN="${THROTTLE_BAN:-1h}"
 # Optional baseline hardening on every managed chain: accept loopback, drop
 # invalid conntrack state, and always permit the ICMPv6 types IPv6 needs to work.
 HARDEN="${HARDEN:-}"
+ANTISPOOF="${ANTISPOOF:-}"
 ICMPV6_ESSENTIAL="${ICMPV6_ESSENTIAL:-nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert, echo-request, echo-reply, packet-too-big, destination-unreachable, time-exceeded, parameter-problem}"
 
 # Input chain default policy: "accept" (selective blocklist, the default) or
@@ -1246,10 +1247,21 @@ emit_chain() {
 	# Keep IPv6 working: NDP and essential ICMPv6 must pass even when v6 is fenced.
 	[ -n "$HARDEN" ] && printf '\t\ticmpv6 type { %s } counter accept\n' "$ICMPV6_ESSENTIAL"
 
+	# Anti-spoofing (ANTISPOOF): drop packets whose source is not routable
+	# back through the arrival interface (reverse-path filter in the firewall).
+	# Applied to input and forward chains for the listed interfaces.
+	if [ -n "$ANTISPOOF" ] && { [ "$hook" = input ] || [ "$hook" = forward ]; }; then
+		for _asi in $ANTISPOOF; do
+			case "$_asi" in *[!A-Za-z0-9._@:-]*) echo "bad interface in ANTISPOOF: '$_asi'" >&2; exit 1 ;; esac
+			[ -n "$LOG_DROPS" ] && printf '\t\tiifname "%s" ip fib saddr . iif oif != 0 %s log prefix "%s:antispoof "\n' "$_asi" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+			printf '\t\tiifname "%s" ip fib saddr . iif oif != 0 counter drop\n' "$_asi"
+		done
+	fi
+
 	# Whitelist always wins on every managed port.
 	for s in $sides; do
-		[ -s "${TMP_DIR}/whitelist4.set" ] && printf '		ip %s @whitelist4 counter accept\n' "$s"
-		[ -s "${TMP_DIR}/whitelist6.set" ] && printf '		ip6 %s @whitelist6 counter accept\n' "$s"
+		[ -s "${TMP_DIR}/whitelist4.set" ] && printf '\t\tip %s @whitelist4 counter accept\n' "$s"
+		[ -s "${TMP_DIR}/whitelist6.set" ] && printf '\t\tip6 %s @whitelist6 counter accept\n' "$s"
 	done
 
 	# SYN-flood protection (synproxy): emit before throttle and allow rules
@@ -1260,8 +1272,8 @@ emit_chain() {
 			ifc=""
 			[ "$_siface" != "-" ] && ifc="iifname \"${_siface}\" "
 			case "$_port" in
-				*,*) printf '		%stcp dport { %s } ct state new synproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" ;;
-				*)   printf '		%stcp dport %s ct state new synproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" ;;
+				*,*) printf '\t\t%stcp dport { %s } ct state new synproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" ;;
+				*)   printf '\t\t%stcp dport %s ct state new synproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" ;;
 			esac
 		done
 	fi
