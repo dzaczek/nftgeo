@@ -285,6 +285,31 @@ CLI to `/usr/local/sbin`, creates `/etc/nftgeo/{config,rules.conf}` plus empty
 the service at boot and the twice-daily timer. Build the dashboard binary with
 `make build` (or `go build -o /usr/local/sbin/nftgeo-ui ./ui`).
 
+### Web dashboard (optional)
+
+nftgeo includes a local web UI — a world map of drops, live stats, and a
+visual policy editor with a safe Draft → Commit pipeline (validate → plan →
+apply with deadman). It binds to `127.0.0.1:8787`; use a reverse proxy for
+remote access.
+
+```sh
+# If installed via package: the binary is already at /usr/sbin/nftgeo-ui
+sudo systemctl enable --now nftgeo-ui.service
+
+# If installed from source: build and install
+make build
+sudo install -m 0755 dist/nftgeo-ui-linux-amd64 /usr/local/sbin/nftgeo-ui
+sudo install -m 0644 systemd/nftgeo-ui.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now nftgeo-ui
+
+# Get a login link (one-time read-write, or long-lived read-only):
+sudo nftgeo-ui token
+sudo nftgeo-ui token --ro
+```
+
+See `CHEATSHEET.md` → Dashboard section for details.
+
 ## Configuration
 
 Everything lives in `/etc/nftgeo`:
