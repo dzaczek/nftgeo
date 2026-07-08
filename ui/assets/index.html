@@ -998,7 +998,10 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeD
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
 
 async function boot(){
-  const u=new URL(location.href), auth=u.searchParams.get('auth');
+  // Auth token in URL fragment (#auth=...) — not sent to the server or logged
+  // in access logs, unlike a query parameter (?auth=...).
+  const hashMatch = location.hash.match(/auth=([^&]+)/);
+  const auth = hashMatch ? hashMatch[1] : null;
   if(auth){
     try{
       const r=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({auth})});
