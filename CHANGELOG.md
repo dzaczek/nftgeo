@@ -8,6 +8,25 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.52.0] - 2026-07-08
+
+### Added
+- **CIDR aggregation for abuse feeds.** Before loading, abuse IPs are collapsed
+  into CIDR ranges (`ABUSE_FEEDS_AGGREGATE`, default on) so adjacent addresses
+  become a single prefix — a smaller nftables set that loads and matches faster.
+  Uses `iprange` (IPv4) / `aggregate6` (IPv6) when installed and falls back to
+  the kernel's set auto-merge otherwise. `install.sh` now pulls in `iprange`
+  best-effort. The run log reports `Aggregated abuse IPv4: X -> Y CIDRs`.
+- **Paced (batched) loading for very large blocklists.** When the abuse set has
+  more than `ABUSE_FEEDS_BATCH` entries (default 0 = off), the ruleset loads
+  with an empty abuse set and the engine fills it in chunks of that size,
+  pausing `ABUSE_FEEDS_BATCH_SLEEP` seconds between chunks, so a multi-million-IP
+  feed can't spike load average on a small box. Protection ramps up over the
+  load window; a warning is logged when batching starts.
+- **Abuse-load progress in the dashboard.** A new `/api/abuse-load` endpoint and
+  a warning banner with a progress bar show a batched load filling in real time
+  ("Loading a large abuse blocklist … loaded / total"), then clear when done.
+
 ## [1.51.0] - 2026-07-08
 
 ### Fixed

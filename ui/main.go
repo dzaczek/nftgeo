@@ -817,6 +817,31 @@ func buildAlerts(loaded bool, feeds []map[string]interface{}, timeline []int) []
 	return out
 }
 
+// abuseLoadStatus reports progress of a paced (batched) abuse-set load, written
+// by the engine to STATE_DIR/abuse-load.progress ("<loaded> <total> <ts>" while
+// running, "done <total> <ts>" when finished).
+func abuseLoadStatus() map[string]interface{} {
+	b, err := os.ReadFile(filepath.Join(stateDir, "abuse-load.progress"))
+	if err != nil {
+		return map[string]interface{}{"active": false}
+	}
+	f := strings.Fields(strings.TrimSpace(string(b)))
+	if len(f) < 3 || f[0] == "done" {
+		return map[string]interface{}{"active": false}
+	}
+	ts, _ := strconv.ParseInt(f[2], 10, 64)
+	if time.Now().Unix()-ts > 300 { // stale: the loader died
+		return map[string]interface{}{"active": false}
+	}
+	loaded, _ := strconv.ParseInt(f[0], 10, 64)
+	total, _ := strconv.ParseInt(f[1], 10, 64)
+	pct := 0
+	if total > 0 {
+		pct = int(loaded * 100 / total)
+	}
+	return map[string]interface{}{"active": true, "loaded": loaded, "total": total, "pct": pct}
+}
+
 // ---- in-memory stats store (M6C.4) -----------------------------------------
 // Keeps drop events in RAM for fast top-IP queries with time-range filtering.
 // Dumps to disk (JSON) only when new drops arrive, so stats survive restarts.
@@ -3085,6 +3110,9 @@ func main() {
 	api("/api/alerts", func(w http.ResponseWriter, r *http.Request) {
 		d := drops("")
 		writeJSON(w, buildAlerts(tableLoaded(), abuseSources(), d.Timeline))
+	})
+	api("/api/abuse-load", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, abuseLoadStatus())
 	})
 	api("/api/top-ips", func(w http.ResponseWriter, r *http.Request) {
 		fromStr := r.URL.Query().Get("from")

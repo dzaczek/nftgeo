@@ -95,6 +95,8 @@
   .alert{padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;display:flex;align-items:center;gap:8px}
   .alert.crit{background:#3a1418;border:1px solid var(--drop);color:#ff8090}
   .alert.warn{background:#3a2a12;border:1px solid var(--warnc);color:var(--warnc)}
+  .pbar{display:block;height:6px;margin-top:6px;background:#0004;border-radius:4px;overflow:hidden}
+  .pbar-fill{display:block;height:100%;background:var(--warnc);transition:width .5s}
   .alert .icon{font-size:16px}
   .mono{font-family:ui-monospace,monospace;font-size:12px}
   .ipl{cursor:pointer;border-bottom:1px dotted var(--mut)}.ipl:hover{color:var(--acc2)}
@@ -232,6 +234,7 @@
     <!-- DASHBOARD -->
     <section class="view active" id="v-dashboard">
       <div id="alerts"></div>
+      <div id="abuseload"></div>
       <div id="logwarn" class="warn" style="display:none">Drop logging is off — map &amp; drop stats stay empty. Set <code>LOG_DROPS="1"</code> in <code>/etc/nftgeo/config</code> and apply.</div>
       <div class="kpis">
         <div class="kpi"><b id="k-total">0</b><span>drops / 24h</span></div>
@@ -531,6 +534,16 @@ function renderAlerts(list){
     return `<div class="alert ${a.level}"><span class="icon">${icon}</span><span>${esc(a.msg)}</span></div>`;
   }).join('');
 }
+// Warning + progress bar while the engine loads a large abuse set in paced batches.
+function renderAbuseLoad(st){
+  const el=$('#abuseload');if(!el)return;
+  if(!st||!st.active){el.innerHTML='';el.style.display='none';return;}
+  el.style.display='block';
+  const pct=Math.max(0,Math.min(100,st.pct||0));
+  el.innerHTML=`<div class="alert warn"><span class="icon">⏳</span><span style="flex:1">
+    Loading a large abuse blocklist in batches to keep the box responsive — <b>${(st.loaded||0).toLocaleString()}</b> / ${(st.total||0).toLocaleString()} (${pct}%). Protection ramps up as it fills.
+    <span class="pbar"><span class="pbar-fill" style="width:${pct}%"></span></span></span></div>`;
+}
 async function refresh(){
   try{
     const s=await j('/api/status');
@@ -546,6 +559,7 @@ async function refresh(){
     bars($('#cc-in'),d.ingressByCC,'drop'); bars($('#cc-out'),d.egressByCC,''); bars($('#ports'),d.topPorts,'');
     sparkline($('#spark'),d.timeline);
     try{renderAlerts(await j('/api/alerts'));}catch(e){}
+    try{renderAbuseLoad(await j('/api/abuse-load'));}catch(e){}
     loadTopIPs();
     try{const g=await j('/api/geo');$('#geonote').textContent=`· ${g.countries} countries indexed${g.full?'':' (rule-set only — set GEO_FULL=1 for global)'}`;}catch(e){}
     if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;try{map.series.regions[0].setValues(vals);}catch(e){}}

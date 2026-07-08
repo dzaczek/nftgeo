@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.51.0"
+NFTGEO_VERSION="1.52.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -70,6 +70,14 @@ ABUSE_FEEDS_CACHE_DIR="${ABUSE_FEEDS_CACHE_DIR:-${STATE_DIR}/feeds}"
 # builds a huge nftables set that is slow to load and to query; cap it to what
 # the box can comfortably handle. 0 disables the cap.
 ABUSE_FEEDS_MAX="${ABUSE_FEEDS_MAX:-200000}"
+# Aggregate the abuse addresses into CIDR ranges before loading (needs 'iprange';
+# falls back to nft's own auto-merge if it is not installed). Shrinks big lists.
+ABUSE_FEEDS_AGGREGATE="${ABUSE_FEEDS_AGGREGATE:-1}"
+# Load the abuse set in batches of this many elements, pausing between each, so a
+# very large set doesn't spike the box on load. 0 = load atomically (default).
+ABUSE_FEEDS_BATCH="${ABUSE_FEEDS_BATCH:-0}"
+ABUSE_FEEDS_BATCH_SLEEP="${ABUSE_FEEDS_BATCH_SLEEP:-1}"
+ABUSE_LOAD_PROGRESS="${ABUSE_LOAD_PROGRESS:-${STATE_DIR}/abuse-load.progress}"
 
 IPDENY_V4_URL="${IPDENY_V4_URL:-https://www.ipdeny.com/ipblocks/data/aggregated}"
 IPDENY_V6_URL="${IPDENY_V6_URL:-https://www.ipdeny.com/ipv6/ipaddresses/aggregated}"
@@ -1088,6 +1096,29 @@ scrub_abuse() {
 		grep -Evi "$v6b" "${TMP_DIR}/abuse6.set" > "${TMP_DIR}/abuse6.scrub" || true
 		mv "${TMP_DIR}/abuse6.scrub" "${TMP_DIR}/abuse6.set"
 	fi
+	aggregate_abuse
+}
+
+aggregate_abuse() {
+	# Collapse the abuse addresses into the fewest CIDR ranges. iprange (IPv4) and
+	# aggregate6 (IPv6) do this optimally; without them nft's auto-merge still
+	# merges at load time, just from a larger file. Big scattered lists shrink a lot.
+	[ "$ABUSE_FEEDS_AGGREGATE" = 1 ] || return 0
+	if command -v iprange >/dev/null 2>&1 && [ -s "${TMP_DIR}/abuse4.set" ]; then
+		_b="$(wc -l < "${TMP_DIR}/abuse4.set")"
+		if iprange "${TMP_DIR}/abuse4.set" > "${TMP_DIR}/abuse4.agg" 2>/dev/null && [ -s "${TMP_DIR}/abuse4.agg" ]; then
+			mv "${TMP_DIR}/abuse4.agg" "${TMP_DIR}/abuse4.set"
+			_a="$(wc -l < "${TMP_DIR}/abuse4.set")"
+			[ "$_b" != "$_a" ] && echo "Aggregated abuse IPv4: ${_b} -> ${_a} CIDRs." >&2
+		fi
+	elif [ -s "${TMP_DIR}/abuse4.set" ] && [ "$(wc -l < "${TMP_DIR}/abuse4.set")" -gt "$ABUSE_FEEDS_MAX" ]; then
+		echo "note: 'iprange' not installed; large abuse list loaded un-aggregated (nft auto-merge still applies). Install iprange to shrink it." >&2
+	fi
+	if command -v aggregate6 >/dev/null 2>&1 && [ -s "${TMP_DIR}/abuse6.set" ]; then
+		if aggregate6 < "${TMP_DIR}/abuse6.set" > "${TMP_DIR}/abuse6.agg" 2>/dev/null && [ -s "${TMP_DIR}/abuse6.agg" ]; then
+			mv "${TMP_DIR}/abuse6.agg" "${TMP_DIR}/abuse6.set"
+		fi
+	fi
 }
 
 getent_t() {
@@ -1244,12 +1275,51 @@ write_addr_set() {
 	# single IP inside a feed's CIDR, or a whitelisted host inside a whitelisted
 	# subnet); without it nft rejects them as "conflicting intervals".
 	printf '\tset %s {\n\t\ttype %s\n\t\tflags interval\n\t\tauto-merge\n' "$name" "$type"
-	if [ -s "$file" ]; then
+	# When batching a large abuse set, declare it empty here (loaded atomically)
+	# and fill it in paced batches after the load - see batch_load_abuse.
+	if [ -s "$file" ] && ! { [ "${BATCH_ABUSE:-0}" = 1 ] && [ "$name" != "${name#abuse}" ]; }; then
 		printf '\t\telements = {\n'
 		write_set_elements "$file"
 		printf '\t\t}\n'
 	fi
 	printf '\t}\n\n'
+}
+
+batch_load_abuse() {
+	# Fill the abuse sets in paced batches so a huge list doesn't spike the box.
+	# Writes progress to ABUSE_LOAD_PROGRESS ("<loaded> <total> <ts>", then "done").
+	_bt=0
+	for _v in 4 6; do
+		_f="${TMP_DIR}/abuse${_v}.set"
+		[ -s "$_f" ] && _bt=$((_bt + $(wc -l < "$_f")))
+	done
+	if [ "$_bt" = 0 ]; then
+		nft flush set "$TABLE_FAMILY" "$TABLE_NAME" abuse4 2>/dev/null || true
+		nft flush set "$TABLE_FAMILY" "$TABLE_NAME" abuse6 2>/dev/null || true
+		rm -f "$ABUSE_LOAD_PROGRESS" 2>/dev/null || true
+		return 0
+	fi
+	echo "warning: loading ${_bt} abuse entries in batches of ${ABUSE_FEEDS_BATCH} (${ABUSE_FEEDS_BATCH_SLEEP}s apart) to keep load low; the blocklist ramps up over ~$((_bt / ABUSE_FEEDS_BATCH * ABUSE_FEEDS_BATCH_SLEEP))s." >&2
+	# Flush first so entries dropped from the feed are removed (batch-add can't).
+	nft flush set "$TABLE_FAMILY" "$TABLE_NAME" abuse4 2>/dev/null || true
+	nft flush set "$TABLE_FAMILY" "$TABLE_NAME" abuse6 2>/dev/null || true
+	_done=0
+	printf '%s %s %s\n' "$_done" "$_bt" "$(date +%s)" > "$ABUSE_LOAD_PROGRESS" 2>/dev/null || true
+	for _v in 4 6; do
+		_f="${TMP_DIR}/abuse${_v}.set"
+		[ -s "$_f" ] || continue
+		rm -f "${TMP_DIR}"/abchunk_* 2>/dev/null || true
+		split -l "$ABUSE_FEEDS_BATCH" "$_f" "${TMP_DIR}/abchunk_"
+		for _c in "${TMP_DIR}"/abchunk_*; do
+			[ -s "$_c" ] || continue
+			_el="$(paste -sd, "$_c")"
+			[ -n "$_el" ] && nft add element "$TABLE_FAMILY" "$TABLE_NAME" "abuse${_v}" "{ ${_el} }" 2>/dev/null || true
+			_done=$((_done + $(wc -l < "$_c")))
+			printf '%s %s %s\n' "$_done" "$_bt" "$(date +%s)" > "$ABUSE_LOAD_PROGRESS" 2>/dev/null || true
+			sleep "$ABUSE_FEEDS_BATCH_SLEEP"
+		done
+	done
+	printf 'done %s %s\n' "$_bt" "$(date +%s)" > "$ABUSE_LOAD_PROGRESS" 2>/dev/null || true
 }
 
 emit_chain() {
@@ -1556,6 +1626,16 @@ fi
 # Always scrub: covers fresh, cached, and retained abuse data alike.
 scrub_abuse
 build_whitelist
+
+# Decide whether to batch-load the abuse set: declared empty in the atomic load,
+# then filled in paced batches after (keeps a huge list from spiking the box).
+BATCH_ABUSE=0
+if [ -z "$RENDER_ONLY" ] && [ "$ABUSE_FEEDS_BATCH" -gt 0 ] 2>/dev/null; then
+	_abtot=0
+	[ -s "${TMP_DIR}/abuse4.set" ] && _abtot=$((_abtot + $(wc -l < "${TMP_DIR}/abuse4.set")))
+	[ -s "${TMP_DIR}/abuse6.set" ] && _abtot=$((_abtot + $(wc -l < "${TMP_DIR}/abuse6.set")))
+	[ "$_abtot" -gt "$ABUSE_FEEDS_BATCH" ] && BATCH_ABUSE=1
+fi
 generate
 
 # Validate the generated ruleset against the kernel. Skippable for offline
@@ -1582,6 +1662,9 @@ fi
 # still loads.
 if [ -f "$NFT_FILE" ] && cmp -s "${TMP_DIR}/nftgeo.nft" "$NFT_FILE" \
 		&& nft list table "$TABLE_FAMILY" "$TABLE_NAME" >/dev/null 2>&1; then
+	# The rendered ruleset is unchanged, but when batching the abuse set lives
+	# outside the file (declared empty), so refresh it in paced batches anyway.
+	[ "${BATCH_ABUSE:-0}" = 1 ] && batch_load_abuse
 	printf 'nftgeo %s unchanged %s/%s; ruleset not reloaded (counters preserved).\n' \
 		"$NFTGEO_VERSION" "$TABLE_FAMILY" "$TABLE_NAME"
 	exit 0
@@ -1589,6 +1672,8 @@ fi
 
 install -m 0644 "${TMP_DIR}/nftgeo.nft" "$NFT_FILE"
 nft -f "$NFT_FILE"
+# Fill the (empty-loaded) abuse set in paced batches after the atomic load.
+[ "${BATCH_ABUSE:-0}" = 1 ] && batch_load_abuse
 
 install -m 0644 "${TMP_DIR}/whitelist4.set" "${STATE_DIR}/whitelist4.set"
 install -m 0644 "${TMP_DIR}/whitelist6.set" "${STATE_DIR}/whitelist6.set"

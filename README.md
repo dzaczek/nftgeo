@@ -432,6 +432,19 @@ Each feed's last good copy is cached under `/var/lib/nftgeo/feeds` and reused if
 later download fails, so a feed outage never shrinks the blocklist. Feeds work
 with or without an AbuseIPDB key.
 
+Two knobs keep large blocklists from overwhelming a small box:
+
+- `ABUSE_FEEDS_AGGREGATE` (default on) collapses the abuse IPs into CIDR ranges
+  before loading, so adjacent addresses become one prefix and the nftables set
+  is smaller and faster. It uses the `iprange` / `aggregate6` tools when present
+  and otherwise falls back to the kernel's set auto-merge.
+- `ABUSE_FEEDS_BATCH` (default 0, off) loads a very large set in paced chunks
+  rather than all at once: the ruleset comes up with an empty abuse set and the
+  engine fills it in batches of that many entries, pausing
+  `ABUSE_FEEDS_BATCH_SLEEP` seconds between them, so a multi-million-IP feed
+  can't spike load average. Protection ramps up over the load window, and the
+  dashboard shows a progress bar while it fills.
+
 Mind feed quality: conservative lists (FireHOL level1, Spamhaus DROP) have few
 false positives, while broader ones (blocklist.de, GreenSnow) block more but can
 catch legitimate traffic. The `WHITELIST` always wins over `abuse`, so keep your

@@ -32,6 +32,21 @@ ABUSE_FEEDS=""
 # box can handle. 0 disables the cap. Default 200000.
 ABUSE_FEEDS_MAX="200000"
 
+# Collapse abuse IPs into CIDR ranges before loading. Shrinks the nftables set
+# (adjacent /32s become one prefix) so it loads and matches faster. Uses the
+# `iprange` tool (IPv4) / `aggregate6` (IPv6) when present; falls back to the
+# kernel's set auto-merge otherwise. 1 = on (default), 0 = off.
+ABUSE_FEEDS_AGGREGATE="1"
+
+# Load a large abuse set in paced batches instead of all at once, so a huge
+# blocklist can't spike load average on a small box. When the set has more than
+# this many entries, the ruleset loads with an empty abuse set and the engine
+# fills it in chunks of this size, pausing ABUSE_FEEDS_BATCH_SLEEP seconds
+# between chunks. Protection ramps up over the load window. 0 = off (default,
+# load everything atomically). The dashboard shows a progress bar while filling.
+ABUSE_FEEDS_BATCH="0"
+ABUSE_FEEDS_BATCH_SLEEP="1"
+
 # Always-allow list. These addresses can reach any port even when they are
 # outside an allowed geo or appear on the AbuseIPDB blacklist. Space-separated,
 # IPv4 and IPv6, single addresses or CIDR ranges. Example:
