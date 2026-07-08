@@ -147,6 +147,7 @@ TAB="$(printf '\t')"
 
 RULES_NORM="${TMP_DIR}/rules.norm"
 THROTTLE_NORM="${TMP_DIR}/throttle.norm"
+SYNPROXY_NORM="${TMP_DIR}/synproxy.norm"
 NAT_NORM="${TMP_DIR}/nat.norm"
 ZONE_NORM="${TMP_DIR}/zone.norm"
 ZONE_SEG_IF="${TMP_DIR}/zone.segif"
@@ -607,9 +608,37 @@ parse_rules_file() {
 			done
 			printf '%s saddr %s %s %s %s %s\n' "$_thook" "$proto" "$port" "$geo" "$_tban" "$_tiface" >> "$THROTTLE_NORM"
 			continue
-		fi
+			fi
 
-		# Inter-zone rule (P5): "<allow|deny> <zone> -> <zone> <proto> <port> [from <geo>]".
+			# SYN-flood protection via synproxy. Form:
+			#   synproxy tcp <port> [on <iface>]
+			# Emits a synproxy rule in the input (or forward) chain before the
+			# allow rules.  synproxy handles the SYN/SYN-ACK/ACK handshake in
+			# the kernel, dropping spoofed SYNs that never complete it.
+			if [ "$action" = synproxy ]; then
+				case "$dir" in
+					in)     _shook=input ;;
+					fwd-in) _shook=forward ;;
+					*) echo "${rf}:${lineno}: synproxy supports only 'in' or 'fwd-in'" >&2; exit 1 ;;
+				esac
+				case "$proto" in tcp) ;; *) echo "${rf}:${lineno}: synproxy needs proto 'tcp'" >&2; exit 1 ;; esac
+				printf '%s' "$port" | grep -Eq '^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$' || {
+					echo "${rf}:${lineno}: synproxy port '${port}' must be a number, range (N-M) or list" >&2; exit 1; }
+				_siface="-"
+				set -- ${_rest%%#*}
+				while [ $# -gt 0 ]; do
+					case "$1" in
+						on) _siface="${2:-}"
+							case "$_siface" in ''|*[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: 'on' needs a valid interface name" >&2; exit 1 ;; esac
+							shift 2 ;;
+						*) echo "${rf}:${lineno}: unexpected '${1}' in synproxy rule (only 'on <iface>')" >&2; exit 1 ;;
+					esac
+				done
+				printf '%s %s %s %s\n' "$_shook" "$port" "$geo" "$_siface" >> "$SYNPROXY_NORM"
+				continue
+			fi
+
+			# Inter-zone rule (P5): "<allow|deny> <zone> -> <zone> <proto> <port> [from <geo>]".
 		# Detected by the "->" separator; builds forward-chain rules matching the
 		# source zone's interfaces (iifname) against the destination zone's (oifname).
 		if { [ "$action" = allow ] || [ "$action" = deny ]; }; then
@@ -787,6 +816,7 @@ parse_rules_file() {
 parse_rules() {
 	: > "$RULES_NORM"
 	: > "$THROTTLE_NORM"
+	: > "$SYNPROXY_NORM"
 	: > "$NAT_NORM"
 	: > "$ZONE_NORM"
 	: > "$ZONE_SEG_IF"
@@ -804,7 +834,7 @@ parse_rules() {
 		done
 	fi
 
-	if [ ! -s "$RULES_NORM" ] && [ ! -s "$THROTTLE_NORM" ] && [ ! -s "$NAT_NORM" ] && [ ! -s "$ZONE_NORM" ]; then
+	if [ ! -s "$RULES_NORM" ] && [ ! -s "$THROTTLE_NORM" ] && [ ! -s "$SYNPROXY_NORM" ] && [ ! -s "$NAT_NORM" ] && [ ! -s "$ZONE_NORM" ]; then
 		echo "No rules found in ${RULES_FILE} or ${RULES_DIR}/*.conf" >&2
 		exit 1
 	fi
@@ -1190,6 +1220,7 @@ emit_chain() {
 	sides="$2"
 	if ! awk -v h="$hook" 'BEGIN{f=1} $2==h{f=0} END{exit f}' "$RULES_NORM" &&
 	   ! awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$THROTTLE_NORM" &&
+	   ! awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$SYNPROXY_NORM" &&
 	   ! { [ "$hook" = forward ] && [ -s "$ZONE_NORM" ]; }; then
 		return 0
 	fi
@@ -1217,9 +1248,23 @@ emit_chain() {
 
 	# Whitelist always wins on every managed port.
 	for s in $sides; do
-		[ -s "${TMP_DIR}/whitelist4.set" ] && printf '\t\tip %s @whitelist4 counter accept\n' "$s"
-		[ -s "${TMP_DIR}/whitelist6.set" ] && printf '\t\tip6 %s @whitelist6 counter accept\n' "$s"
+		[ -s "${TMP_DIR}/whitelist4.set" ] && printf '		ip %s @whitelist4 counter accept\n' "$s"
+		[ -s "${TMP_DIR}/whitelist6.set" ] && printf '		ip6 %s @whitelist6 counter accept\n' "$s"
 	done
+
+	# SYN-flood protection (synproxy): emit before throttle and allow rules
+	# so SYN packets hit synproxy first.  synproxy completes the handshake
+	# in-kernel; spoofed SYNs that never reply are dropped automatically.
+	if [ -s "$SYNPROXY_NORM" ] && awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$SYNPROXY_NORM"; then
+		awk -v h="$hook" '$1==h' "$SYNPROXY_NORM" | while read -r _sh _port _geo _siface; do
+			ifc=""
+			[ "$_siface" != "-" ] && ifc="iifname \"${_siface}\" "
+			case "$_port" in
+				*,*) printf '		%stcp dport { %s } ct state new synproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" ;;
+				*)   printf '		%stcp dport %s ct state new synproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" ;;
+			esac
+		done
+	fi
 
 	# Reactive throttle (after the whitelist, so whitelisted sources are immune):
 	# drop already-banned sources, then rate-limit new connections per source and
