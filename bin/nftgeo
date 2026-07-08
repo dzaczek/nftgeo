@@ -331,7 +331,14 @@ kill_deadman() {
 	# then best-effort kill the waiter for immediacy.
 	pid="$(cat "$SENTINEL" 2>/dev/null || true)"
 	rm -f "$SENTINEL"
-	[ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+	[ -n "$pid" ] || return 0
+	# Verify the PID is still our deadman (not a recycled PID after reboot):
+	# check /proc for the sentinel path in the process cmdline.
+	if [ -r "/proc/${pid}/cmdline" ] 2>/dev/null; then
+		tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null | grep -q "${SENTINEL}" && kill "$pid" 2>/dev/null || true
+	else
+		kill "$pid" 2>/dev/null || true
+	fi
 }
 
 cmd_confirm() {
