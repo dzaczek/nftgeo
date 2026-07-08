@@ -32,6 +32,7 @@ Ingress NAT / port-forward (gateway):
 ```
 dnat tcp 8080 to 10.0.0.5:80 on eth0   # forward WAN :8080 to an internal host
 dnat udp 51820 to 10.0.0.9             # forward with no port remap
+dnat tcp 2222 to 10.0.0.5:22 from europe   # ...only reachable from Europe
 ```
 Inter-zone rules (internal firewall; `ZONE_*` in config, forward chain):
 ```

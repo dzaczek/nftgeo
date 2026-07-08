@@ -168,14 +168,23 @@ while forwarding is off, but does not manage the sysctl.
 Redirect a port arriving on the WAN to an internal host:
 
 ```text
-dnat tcp 8080 to 10.0.0.5:80 on eth0   # WAN :8080 -> 10.0.0.5:80
-dnat udp 51820 to 10.0.0.9             # forward with no port remap
-dnat tcp 443 to [2001:db8::1]:8443     # IPv6 target
+dnat tcp 8080 to 10.0.0.5:80 on eth0        # WAN :8080 -> 10.0.0.5:80
+dnat udp 51820 to 10.0.0.9                   # forward with no port remap
+dnat tcp 443 to [2001:db8::1]:8443           # IPv6 target
+dnat tcp 2222 to 10.0.0.5:22 from europe     # only reachable from Europe
 ```
 
-`dnat <proto> <port> to <ip>[:<port>] [on <iface>]` emits a `nat` prerouting
-(dstnat) chain. The `:port` remap and `on <iface>` scope are optional. The
-forward chain policy is accept, so the redirected packet passes through.
+`dnat <proto> <port> to <ip>[:<port>] [from <geo>] [on <iface>]` emits a `nat`
+prerouting (dstnat) chain. The `:port` remap, `from <geo>` source restriction,
+and `on <iface>` scope are all optional (and `from`/`on` may appear in either
+order). With `from <geo>` the forward is only opened for clients in that
+country/region/group (an `ip saddr @g_<geo>` match, same family as the target).
+The forward chain policy is accept, so the redirected packet passes through.
+
+> Hairpin/reflexive NAT (reaching the service via the public IP from *inside*
+> the LAN) is not auto-emitted — it needs the public IP and LAN subnet. Use
+> split-horizon DNS, or add a manual rule pair (a prerouting `ip daddr <pub-ip>`
+> DNAT plus a postrouting `ip saddr <lan-subnet> ip daddr <internal> masquerade`).
 
 ### Internal firewall: zones & segmentation
 

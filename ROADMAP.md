@@ -53,22 +53,26 @@ Milestones:
 "I don't need another firewall" feature. Geo and interface qualifiers reused.
 
 ```text
-dnat tcp 443  to 10.0.0.5:8443            # WAN:443 -> internal 10.0.0.5:8443
-dnat tcp 2222 to 10.0.0.5:22 on eth0      # scope the redirect to the WAN iface
+dnat tcp 443  to 10.0.0.5:8443              # WAN:443 -> internal 10.0.0.5:8443
+dnat tcp 2222 to 10.0.0.5:22 on eth0        # scope the redirect to the WAN iface
+dnat tcp 2222 to 10.0.0.5:22 from europe    # only reachable from Europe
 ```
 
-Shipped grammar: `dnat <proto> <port> to <ip>[:<port>] [on <iface>]` (IPv4/IPv6).
+Shipped grammar: `dnat <proto> <port> to <ip>[:<port>] [from <geo>] [on <iface>]`
+(IPv4/IPv6; `from`/`on` in either order).
 
 Milestones:
 - [x] **M4.1** `prerouting` NAT chain scaffolding.
 - [x] **M4.2** `dnat <proto> <port> to <ip[:port]>` parse + emit (v4 + v6).
-- [~] **M4.3** `on <iface>` qualifier shipped; geo-restricted DNAT (`from <geo>`)
-  is **not yet** implemented.
+- [x] **M4.3** `on <iface>` qualifier and geo-restricted DNAT (`from <geo>`,
+  same-family `ip saddr @g_<geo>` match) *(shipped 1.41.0)*.
 - [x] **M4.4** forwarded DNAT traffic passes the filter — achieved via the
   accept-policy forward chain rather than an explicit auto-emitted `fwd-in` rule
   (same "just works" outcome).
-- [ ] **M4.5** optional hairpin/reflexive NAT (reach the service via the public IP
-  from inside the LAN) — **not yet**.
+- [ ] **M4.5** hairpin/reflexive NAT (reach the service via the public IP from
+  inside the LAN) — **not auto-emitted**; needs a public-IP + LAN-subnet input.
+  Documented manual recipe (split-DNS or a prerouting-DNAT + postrouting-masq
+  pair) in the README until a first-class form is designed.
 - [x] **M4.6** warn on disabled forwarding; IPv4-first.
 - [x] **M4.7** docs, examples, tests *(render fixtures + `examples/71-nat-gateway.conf`)*.
 

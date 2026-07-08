@@ -9,6 +9,26 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.41.0] - 2026-07-08
+
+### Added
+- **Geo-restricted port-forwarding (roadmap M4.3).** `dnat` now takes an optional
+  `from <geo>`, so a forward is only opened for clients in a country/region/group:
+  ```
+  dnat tcp 2222 to 10.0.0.5:22 from europe     # SSH forward, EU sources only
+  dnat tcp 443  to [2001:db8::1]:8443 from pl   # IPv6 target, PL only
+  ```
+  Full grammar: `dnat <proto> <port> to <ip>[:<port>] [from <geo>] [on <iface>]`
+  (`from`/`on` in either order). The geo reuses the existing set machinery and
+  matches the client with a same-family `ip saddr @g_<geo>` in the prerouting
+  chain. Filter-only and geo-less DNAT configs render identically. Verified via
+  render fixtures + real `nft -c` on hermes.
+
+### Notes
+- Hairpin/reflexive NAT (M4.5) is intentionally **not** auto-emitted: a correct
+  form needs the public IP and LAN subnet. The README/example document the manual
+  recipe (split-DNS, or a prerouting-DNAT + postrouting-masquerade pair).
+
 ## [1.40.1] - 2026-07-08
 
 ### Changed
@@ -720,6 +740,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.41.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.41.0
 [1.40.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.40.1
 [1.40.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.40.0
 [1.39.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.39.1
