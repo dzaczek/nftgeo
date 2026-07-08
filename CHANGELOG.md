@@ -8,6 +8,24 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.49.1] - 2026-07-08
+
+### Fixed
+- **Top source IPs were over-counted ~12×.** The stats ingester polled the last
+  hour of drops every few minutes but never deduplicated, so each drop was
+  re-counted on every tick until it aged out of the window. Ingest now tracks a
+  high-water-mark timestamp and only records drops newer than the last one seen
+  (`filterNewDrops`), and `loadStats` resumes that mark from disk so a restart
+  doesn't re-count the overlap. Regression test added.
+
+## [1.49.0] - 2026-07-08
+
+### Added
+- **Custom IP lists (`LIST_<NAME>`).** Named IP/CIDR lists you manage from the
+  panel's **Objects > IP Lists** tab and use as a rule target — e.g. a personal
+  blocklist referenced by `deny in any - mylist`. Resolves like a `GROUP_` (v4/v6
+  split into address sets); threaded through the objects draft/commit pipeline.
+
 ## [1.48.0] - 2026-07-08
 
 ### Added

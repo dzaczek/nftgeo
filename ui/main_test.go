@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // backupLive must create the backup's parent dir (the per-file ui-backups/<...>
@@ -203,6 +204,31 @@ func TestBuildNatBody(t *testing.T) {
 		if !c.ok && err == nil {
 			t.Errorf("buildNatBody(%q..) expected error, got %q", c.nt, got)
 		}
+	}
+}
+
+func TestFilterNewDropsDedup(t *testing.T) {
+	rfc := func(sec int64) string { return time.Unix(sec, 0).UTC().Format(time.RFC3339) }
+	now := int64(3000)
+	recent := []Drop{
+		{Time: rfc(1000), Src: "1.1.1.1"},
+		{Time: rfc(1500), Src: "2.2.2.2"},
+	}
+	// first ingest (hw starts at 0): both are new; high-water-mark = 1500
+	e1, hw1 := filterNewDrops(recent, 0, now)
+	if len(e1) != 2 || hw1 != 1500 {
+		t.Fatalf("first ingest: %d entries, hw %d (want 2, 1500)", len(e1), hw1)
+	}
+	// re-poll the SAME window (the old bug ingested these ~12x): nothing new
+	e2, hw2 := filterNewDrops(recent, hw1, now)
+	if len(e2) != 0 || hw2 != 1500 {
+		t.Fatalf("re-ingest double-counted: %d entries, hw %d (want 0, 1500)", len(e2), hw2)
+	}
+	// a genuinely newer drop appears: only it is ingested
+	recent3 := append(recent, Drop{Time: rfc(1800), Src: "3.3.3.3"})
+	e3, hw3 := filterNewDrops(recent3, hw2, now)
+	if len(e3) != 1 || e3[0].Src != "3.3.3.3" || hw3 != 1800 {
+		t.Fatalf("new drop: %+v, hw %d (want 1x 3.3.3.3, 1800)", e3, hw3)
 	}
 }
 

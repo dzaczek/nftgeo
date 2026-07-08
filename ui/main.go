@@ -819,6 +819,11 @@ var (
 	statsMu   sync.Mutex
 	statsData []statsEntry
 	statsFile = filepath.Join(stateDir, "ui-stats.json")
+	// High-water-mark of the newest drop ingested so far. ingestDropsLog polls
+	// the last hour every few minutes; without this it would re-ingest (and thus
+	// multiply-count) the same events on every tick. Written only by the single
+	// ingest goroutine (and loadStats before it starts), so no lock is needed.
+	lastIngestTs int64
 )
 
 // recordStats ingests drops from the kernel log (called periodically).
@@ -916,22 +921,44 @@ func loadStats() {
 		statsMu.Lock()
 		statsData = entries
 		statsMu.Unlock()
+		// Resume the high-water-mark from the newest persisted drop, so a restart
+		// doesn't re-ingest (and double-count) the overlap window.
+		for _, e := range entries {
+			if e.Ts > lastIngestTs {
+				lastIngestTs = e.Ts
+			}
+		}
 	}
 }
 
-// ingestDropsLog reads recent kernel drops and feeds them into the stats store.
-// Called on a ticker alongside the dashboard refresh.
-func ingestDropsLog() {
-	d := drops("-1h")
-	entries := make([]statsEntry, 0, len(d.Recent))
-	now := time.Now().Unix()
-	for _, dr := range d.Recent {
+// filterNewDrops turns kernel drops into stats entries, keeping only those newer
+// than 'after' (unix ts) so re-polling the same window never double-counts.
+// Returns the new entries and the new high-water-mark (>= after).
+func filterNewDrops(recent []Drop, after, now int64) ([]statsEntry, int64) {
+	entries := make([]statsEntry, 0, len(recent))
+	hw := after
+	for _, dr := range recent {
 		ts := now
 		if t, err := time.Parse(time.RFC3339, dr.Time); err == nil {
 			ts = t.Unix()
 		}
+		if ts <= after {
+			continue // already ingested on an earlier tick
+		}
+		if ts > hw {
+			hw = ts
+		}
 		entries = append(entries, statsEntry{Ts: ts, Src: dr.Src, CC: dr.CC, Port: dr.Dport, Reason: dr.Reason})
 	}
+	return entries, hw
+}
+
+// ingestDropsLog reads recent kernel drops and feeds the new ones into the stats
+// store. Called on a ticker; dedups via lastIngestTs.
+func ingestDropsLog() {
+	d := drops("-1h")
+	entries, hw := filterNewDrops(d.Recent, lastIngestTs, time.Now().Unix())
+	lastIngestTs = hw
 	recordStats(entries)
 }
 
