@@ -197,6 +197,23 @@ sudo ./uninstall.sh
 
 ---
 
+## Dashboard (nftgeo-ui)
+
+Local read-only web panel + visual policy editor (world map of drops, live stats,
+Objects/Policy editor). Binds to `127.0.0.1:8787`; front it with a proxy for TLS.
+
+```sh
+sudo systemctl enable --now nftgeo-ui        # start the panel
+sudo nftgeo-ui token                          # mint a one-time read-write login link
+sudo nftgeo-ui token -ro                      # long-lived read-only link
+```
+Policy tab shows every rule kind: `allow`/`deny` filters, `throttle`, **NAT**
+(`masquerade`/`snat`/`dnat`, verbatim badge) and **inter-zone** (`<z> -> <z>`,
+source→dest zone chips). NAT/zone rows open the **Raw** editor (the field drawer
+only speaks the classic grammar). Edits stage to a draft and deploy via **Commit**.
+
+---
+
 ## Files
 
 ```text

@@ -9,6 +9,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.40.1] - 2026-07-08
+
+### Changed
+- Docs completion for the 1.40.0 UI change (finish-a-module doc sweep): CHEATSHEET
+  gains a **Dashboard (nftgeo-ui)** section; the README panel section documents the
+  NAT/zone row kinds + Raw-edit behaviour; the README roadmap summary now reflects
+  P3/P4/P5 as shipped (and flags the open M4.3/M4.5 and M6B.6 items).
+
 ## [1.40.0] - 2026-07-08
 
 ### Fixed
@@ -712,6 +720,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.40.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.40.1
 [1.40.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.40.0
 [1.39.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.39.1
 [1.39.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.39.0

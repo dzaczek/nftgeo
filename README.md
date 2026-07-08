@@ -767,7 +767,11 @@ together. **+ Add rule** or clicking a row opens a
 slide-out drawer to edit the rule's fields (action, direction, protocol, port,
 target with group/region autocomplete, interface, name) or delete it; clicking a
 target chip does an inline quick-edit, and **+ Section** adds a titled divider
-(`## Title`) to group rules in large policies. The **Templates** drawer imports
+(`## Title`) to group rules in large policies. **NAT** (`masquerade` / `snat` /
+`dnat`) and **inter-zone** (`<zone> -> <zone>`) rules render as their own row
+kinds — a verbatim **NAT** badge and source→destination **zone** chips — and
+open the **Raw** file editor when clicked (the field drawer only understands the
+classic `allow`/`deny` grammar, so it would mangle them). The **Templates** drawer imports
 built-in blocks (*Block abuse feeds*, *Safe Web Server*, *Basic Geo-Drop*) to the
 top of the policy and can save the current policy as a reusable template. Every
 change writes to the draft and deploys via Commit.
@@ -779,13 +783,16 @@ firewall — so you don't need a second firewall manager beside it. See
 [ROADMAP.md](ROADMAP.md) for the full plan with milestones. In short:
 
 - ✅ **Done** — geo/abuse filtering, operator CLI (`check`/`status`/`validate`/
-  `plan`/`block`/`apply --confirm`/`rollback`), `HARDEN`, per-interface `on <iface>`.
-- 🔜 **P3** — egress NAT (`masquerade` / `snat`) for gateways.
-- 🔜 **P4** — port forwarding (`dnat` inbound) with the forward-accept auto-added.
-- 📋 **P5** — internal firewall / segmentation: zones, inter-VLAN rules, service
-  names & groups, IP/host labels, 802.1Q VLAN matching.
-- 🔜 **P6** — `nftgeo-ui`: a small local web dashboard (world map of drops, live
-  stats, blocklist browser) and later a drag-and-drop visual editor.
+  `plan`/`block`/`apply --confirm`/`rollback`), `HARDEN`, per-interface `on <iface>`,
+  reactive throttle, default-deny input, `SERVICE_*`/`HOST_*` objects, `man nftgeo`.
+- ✅ **P3** — egress NAT (`masquerade` / `snat`) for gateways.
+- ✅ **P4** — port forwarding (`dnat` inbound). *(Geo-restricted DNAT and hairpin
+  NAT are still open — see ROADMAP M4.3/M4.5.)*
+- ✅ **P5** — internal firewall / segmentation: interface zones, inter-zone rules,
+  `SEGMENT_DEFAULT` default-deny, VLANs via subinterfaces.
+- 🔜 **P6** — `nftgeo-ui`: local web dashboard (world map of drops, live stats,
+  blocklist browser) + visual policy editor — shipped and evolving; the in-panel
+  **Commit/deploy** pipeline (M6B.6) and full NAT/zone editor drawers are open.
 
 ## Data sources
 
