@@ -625,6 +625,8 @@ func ruleKind(f []string) string {
 		return "nat"
 	case "throttle":
 		return "throttle"
+	case "synproxy":
+		return "synproxy"
 	case "allow", "deny":
 		for _, t := range f {
 			if t == "->" {
@@ -799,6 +801,16 @@ func policy() []PolicyRule {
 				}
 				pr = PolicyRule{Kind: "nat", Text: strings.Join(fields, " ")}
 				for i := 1; i < len(fields)-1; i++ {
+					if fields[i] == "on" {
+						pr.Iface = fields[i+1]
+					}
+				}
+			case "synproxy":
+				if len(fields) < 4 {
+					continue
+				}
+				pr = PolicyRule{Kind: "synproxy", Action: fields[0], Dir: fields[1], Proto: fields[2], Port: fields[3]}
+				for i := 4; i < len(fields)-1; i++ {
 					if fields[i] == "on" {
 						pr.Iface = fields[i+1]
 					}
@@ -1733,6 +1745,10 @@ func ruleFields(s string) (fields []string, body, comment, kind string, ok bool)
 		if len(f) >= 3 {
 			return f, body, comment, "nat", true
 		}
+	case "synproxy": // synproxy <in|fwd-in> tcp <port> [on <iface>]
+		if len(f) >= 4 {
+			return f, body, comment, "synproxy", true
+		}
 	}
 	return nil, "", "", "", false
 }
@@ -1756,6 +1772,14 @@ func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, 
 		r.Action, r.Src, r.Dst, r.Proto, r.Port = f[0], f[1], f[3], f[4], f[5]
 		if len(f) >= 8 && f[6] == "from" {
 			r.Geo = f[7]
+		}
+	case "synproxy":
+		// synproxy <dir> tcp <port> [on <iface>]
+		r.Action, r.Dir, r.Proto, r.Port = f[0], f[1], f[2], f[3]
+		for i := 4; i < len(f)-1; i++ {
+			if f[i] == "on" {
+				r.Iface = f[i+1]
+			}
 		}
 	case "nat":
 		// masquerade/snat/dnat: keep the verbatim text and also pull the fields so
@@ -1873,7 +1897,7 @@ func annotateDraft(rules []*draftRule, ctr map[string]int64) {
 	var idx []int
 	for i, r := range rules {
 		// nat/zone rules carry no "nftgeo:" counter comment, so they never match.
-		if r.Disabled || r.Kind == "section" || r.Kind == "nat" || r.Kind == "zone" {
+		if r.Disabled || r.Kind == "section" || r.Kind == "nat" || r.Kind == "zone" || r.Kind == "synproxy" {
 			continue
 		}
 		prs = append(prs, PolicyRule{Action: r.Action, Dir: r.Dir, Proto: r.Proto, Port: r.Port, Target: r.Target, Iface: r.Iface})
@@ -2246,6 +2270,28 @@ func buildThrottleBody(dir, proto, port, rate, ban, iface string) (string, error
 	return strings.Join(parts, " "), nil
 }
 
+// buildSynproxyBody assembles/validates a synproxy rule
+// (synproxy <in|fwd-in> tcp <port> [on <iface>]); the engine re-validates.
+func buildSynproxyBody(dir, port, iface string) (string, error) {
+	dir, port, iface = strings.TrimSpace(dir), strings.TrimSpace(port), strings.TrimSpace(iface)
+	switch dir {
+	case "in", "fwd-in":
+	default:
+		return "", fmt.Errorf("synproxy direction must be in or fwd-in")
+	}
+	if !throttlePortRe.MatchString(port) {
+		return "", fmt.Errorf("synproxy port must be a number, range or list")
+	}
+	parts := []string{"synproxy", dir, "tcp", port}
+	if iface != "" {
+		if !ruleIfaceRe.MatchString(iface) {
+			return "", fmt.Errorf("invalid interface name")
+		}
+		parts = append(parts, "on", iface)
+	}
+	return strings.Join(parts, " "), nil
+}
+
 func sanitizeComment(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "#", "")
@@ -2418,6 +2464,8 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		body, err = buildZoneBody(req.Action, req.Src, req.Dst, req.Proto, req.Port, req.Geo)
 	case req.Kind == "nat":
 		body, err = buildNatBody(req.NatType, req.Proto, req.Port, req.Target, req.Geo, req.Iface, req.Lan)
+	case req.Kind == "synproxy":
+		body, err = buildSynproxyBody(req.Dir, req.Port, req.Iface)
 	case req.Action == "throttle":
 		body, err = buildThrottleBody(req.Dir, req.Proto, req.Port, req.Rate, req.Ban, req.Iface)
 	default:

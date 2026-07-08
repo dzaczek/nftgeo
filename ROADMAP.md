@@ -205,8 +205,8 @@ count.
   keeps each rule's trivia + verbatim body. *(1.40.0: also renders NAT
   (masquerade/snat/dnat) and inter-zone (`<z> -> <z>`) rules as their own row
   kinds — verbatim NAT badge, zone src→dst chips — instead of mis-columning
-  them. 1.42.0: dedicated **+ Zone** and **+ NAT** drawers author/edit them with
-  validated fields and zone-name autocomplete.)*
+  them. 1.42.0: dedicated **+ Zone**, **+ NAT** and **+ Synproxy** drawers author/edit
+  them with validated fields and zone-name autocomplete.)*
 - [x] **M6B.4 Rule editor drawer + inline edit.** *(Shipped 1.21.0.)* Add / edit /
   delete rules in the right drawer (action, direction, protocol, port, target with
   group/region autocomplete, `on <iface>`, name); click a target chip for an

@@ -206,6 +206,41 @@ func TestBuildNatBody(t *testing.T) {
 	}
 }
 
+func TestBuildSynproxyBody(t *testing.T) {
+	cases := []struct {
+		dir, port, iface, want string
+		ok                     bool
+	}{
+		{"in", "22", "", "synproxy in tcp 22", true},
+		{"fwd-in", "80,443", "eth0", "synproxy fwd-in tcp 80,443 on eth0", true},
+		{"out", "22", "", "", false},     // bad dir
+		{"in", "22x", "", "", false},     // bad port
+		{"in", "22", "e th0", "", false}, // bad iface
+	}
+	for _, c := range cases {
+		got, err := buildSynproxyBody(c.dir, c.port, c.iface)
+		if c.ok && (err != nil || got != c.want) {
+			t.Errorf("buildSynproxyBody(%q,%q,%q)=%q,%v want %q", c.dir, c.port, c.iface, got, err, c.want)
+		}
+		if !c.ok && err == nil {
+			t.Errorf("buildSynproxyBody(%q,%q,%q) expected error, got %q", c.dir, c.port, c.iface, got)
+		}
+	}
+}
+
+func TestParseSynproxyRule(t *testing.T) {
+	items, _ := parseDraftRules("synproxy in tcp 22\nsynproxy fwd-in tcp 80,443 on eth0 # web\n")
+	if len(items) != 2 {
+		t.Fatalf("got %d items, want 2", len(items))
+	}
+	if items[0].Kind != "synproxy" || items[0].Dir != "in" || items[0].Proto != "tcp" || items[0].Port != "22" || items[0].Iface != "" {
+		t.Errorf("synproxy0 parsed wrong: %+v", items[0])
+	}
+	if items[1].Kind != "synproxy" || items[1].Dir != "fwd-in" || items[1].Port != "80,443" || items[1].Iface != "eth0" || items[1].Name != "web" {
+		t.Errorf("synproxy1 parsed wrong: %+v", items[1])
+	}
+}
+
 func TestParseDraftRulesNatZone(t *testing.T) {
 	in := "masquerade on eth0\n" +
 		"snat out on eth0 to 203.0.113.7\n" +

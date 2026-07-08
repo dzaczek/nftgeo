@@ -218,7 +218,7 @@ sudo nftgeo-ui token -ro                      # long-lived read-only link
 ```
 Policy tab shows every rule kind: `allow`/`deny` filters, `throttle`, **NAT**
 (`masquerade`/`snat`/`dnat`) and **inter-zone** (`<z> -> <z>`) rules — each with
-its own add/edit drawer (**+ Rule**, **+ Throttle**, **+ Zone**, **+ NAT**), plus
+its own add/edit drawer (**+ Rule**, **+ Throttle**, **+ Synproxy**, **+ Zone**, **+ NAT**), plus
 **Raw** for bulk text edits. Interface fields pick from the host's live NICs
 (with a ⟳ refresh). Objects has tabs for address groups, regions, services,
 hosts and **zones** (named interface lists, incl. VLANs, with a click-to-add

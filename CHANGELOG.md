@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.47.0] - 2026-07-08
+
+### Added
+- **nftgeo-ui: synproxy rules in the policy editor.** `synproxy` (SYN-flood
+  protection) rules now render as their own policy-table row (SYN-guard chip +
+  SYNPROXY badge) instead of being invisible trivia, and get a dedicated
+  **+ Synproxy** drawer (direction / port / interface, validated server-side via
+  `buildSynproxyBody`). Classified in the draft parser and `/api/policy`; excluded
+  from counter annotation (synproxy rules carry no `nftgeo:` comment). Round-trip
+  verified end-to-end.
+
 ## [1.46.0] - 2026-07-08
 
 ### Added

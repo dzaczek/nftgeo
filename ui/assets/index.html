@@ -120,6 +120,8 @@
   .chip.obj{background:#182238;border-color:#2b3d63;color:#cfe0ff}
   .chip.thr{background:#2a2410;border-color:#5e5018;color:#f4d98a}
   .pill.thr{background:#3a2f12;color:#f4d98a}
+  .chip.syn{background:#241a2e;border-color:#493a5e;color:#c9a8f0}
+  .pill.syn{background:#2e2140;color:#c9a8f0}
   .chip.zone{background:#0f2b2e;border-color:#1f5058;color:#7fd6e0}
   .chip.nat{background:#33230f;border-color:#5e4518;color:#f0bd84}
   .pill.nat{background:#3a2a12;color:#f0bd84}
@@ -256,6 +258,7 @@
           <button class="btn-ghost" id="templatesbtn" style="color:var(--fg)">▤ Templates</button>
           <button class="btn-ghost" id="addsection" style="color:var(--fg)">+ Section</button>
           <button class="btn-ghost" id="addthrottle" style="color:var(--fg)">+ Throttle</button>
+          <button class="btn-ghost" id="addsynproxy" style="color:var(--fg)" title="SYN-flood protection (synproxy)">+ Synproxy</button>
           <button class="btn-ghost" id="addzone" style="color:var(--fg)" title="inter-zone rule (forward chain)">+ Zone</button>
           <button class="btn-ghost" id="addnat" style="color:var(--fg)" title="NAT: masquerade / snat / dnat">+ NAT</button>
           <button class="btn-ghost" id="rawbtn" style="color:var(--mut)" title="Raw text edit of a file's draft">Raw</button>
@@ -615,6 +618,15 @@ function rowHTML(r,n,ro,multi){
       <td>${zc(r.src)}</td><td>${zc(r.dst)}</td><td>${zsvc}</td>
       <td>${zact}</td>${dash}${fcell}</tr>`;
   }
+  // SYN-flood protection: kernel synproxy on an inbound/forwarded port.
+  if(r.kind==='synproxy'){
+    const sd=r.dir==='fwd-in'?FWD:HOST;
+    const ssvc=`<span class="chip svc">${esc(r.proto||'tcp')}/${esc(r.port||'')}</span>${ifchip}`;
+    return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+      ${hnd}<td>${tog}</td>${namecell}
+      <td><span class="chip syn" title="SYN-flood guard">SYN guard</span></td><td>${sd}</td><td>${ssvc}</td>
+      <td><span class="pill syn" title="kernel synproxy: offloads the handshake, drops spoofed SYNs">SYNPROXY</span></td>${dash}${fcell}</tr>`;
+  }
   let s, d, svcc, act, hits;
   if(r.action==='throttle'){
     s=`<span class="chip thr" title="max new connections per source">≤ ${esc(r.rate||'')}</span>`;
@@ -656,6 +668,7 @@ $('#policy').addEventListener('click',async e=>{
   if(row.classList.contains('secrow')){sectionDrawer(file,id);return;}
   const r=findRule(file,id);
   if(r&&r.action==='throttle'){throttleDrawer(file,id);return;}
+  if(r&&r.kind==='synproxy'){synproxyDrawer(file,id);return;}
   if(r&&r.kind==='zone'){zoneDrawer(file,id);return;}
   if(r&&r.kind==='nat'){natDrawer(file,id);return;}
   const chip=e.target.closest('.chip.obj,.chip.any,.chip.abuse');
@@ -666,6 +679,7 @@ const firstFile=()=>FILES[0]?FILES[0].name:'rules.conf';
 $('#addrule').addEventListener('click',()=>ruleDrawer(firstFile(),null));
 $('#addsection').addEventListener('click',()=>sectionDrawer(firstFile(),null));
 $('#addthrottle').addEventListener('click',()=>throttleDrawer(firstFile(),null));
+$('#addsynproxy').addEventListener('click',()=>synproxyDrawer(firstFile(),null));
 $('#addzone').addEventListener('click',()=>zoneDrawer(firstFile(),null));
 $('#addnat').addEventListener('click',()=>natDrawer(firstFile(),null));
 $('#rawbtn').addEventListener('click',()=>rawEditor(firstFile()));
@@ -702,6 +716,39 @@ function throttleDrawer(file,id){
 async function saveThrottle(file,id){
   const b={file:($('#t-file')?$('#t-file').value:file),action:'throttle',dir:$('#t-dir').value,proto:$('#t-proto').value,
     port:$('#t-port').value.trim(),rate:$('#t-num').value+'/'+$('#t-unit').value,ban:$('#t-ban').value.trim(),iface:$('#t-iface').value.trim(),name:$('#t-name').value};
+  if(id!=null)b.id=id;
+  const res=await post('/api/rules/draft/save',b);
+  if(res&&res.error){toast('Rejected: '+res.error);return;}
+  closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Saved to draft.');
+}
+
+// SYN-flood protection drawer: synproxy <in|fwd-in> tcp <port> [on <iface>]
+function synproxyDrawer(file,id){
+  if(MODE==='ro')return;
+  const r=id!=null?findRule(file,id):null;
+  const v={dir:r?r.dir:'in',port:r?r.port:'22',iface:(r&&r.iface)||'',name:(r&&r.name)||''};
+  const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
+  $('#drawertitle').textContent=id!=null?'Edit synproxy':'New synproxy (SYN-flood protection)';
+  $('#drawerbody').innerHTML=`
+    ${id!=null?'':fileSelectHTML('sp-file',file)}
+    <label class="fld"><span>Name (comment)</span><input id="sp-name" value="${esc(v.name)}" placeholder="e.g. protect SSH" autocomplete="off"></label>
+    <div style="display:flex;gap:10px">
+      <label class="fld" style="flex:1"><span>Direction</span><select id="sp-dir">${opt(['in','fwd-in'],v.dir)}</select></label>
+      <label class="fld" style="flex:1"><span>Protocol</span><input value="tcp" readonly title="synproxy is TCP-only"></label>
+    </div>
+    <label class="fld"><span>Port</span><input id="sp-port" value="${esc(v.port)}" placeholder="22 or 80,443" autocomplete="off"></label>
+    ${ifaceFieldHTML('sp-iface',v.iface,'Interface (optional)')}
+    <p class="muted" style="font-size:12px">The kernel completes the TCP handshake (synproxy) before the connection reaches the service, so spoofed SYNs that never finish it are dropped. Runs before the allow rules. Saved to the draft — deploy via Commit.</p>
+    <div style="display:flex;gap:8px;margin-top:auto">
+      <button class="btn-go" onclick="saveSynproxy('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
+      ${id!=null?`<button class="btn-rb" onclick="deleteRule('${esc(file)}',${id})">Delete</button>`:''}
+      <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
+    </div>`;
+  openDrawer(); $('#sp-name').focus();
+}
+async function saveSynproxy(file,id){
+  const b={file:($('#sp-file')?$('#sp-file').value:file),kind:'synproxy',dir:$('#sp-dir').value,
+    port:$('#sp-port').value.trim(),iface:$('#sp-iface').value.trim(),name:$('#sp-name').value};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}
@@ -1068,7 +1115,7 @@ async function boot(){
   }catch(e){showLock('');return;}
   hideLock();
   if(MODE==='ro'){$('#modebadge').textContent='read-only';
-    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#newhost').style.display='none';$('#newzone').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#addzone').style.display='none';$('#addnat').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#newhost').style.display='none';$('#newzone').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#addsynproxy').style.display='none';$('#addzone').style.display='none';$('#addnat').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();
