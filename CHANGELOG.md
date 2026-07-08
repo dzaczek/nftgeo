@@ -8,6 +8,22 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.50.0] - 2026-07-08
+
+### Added
+- **Custom abuse feeds from the panel.** A new **Objects → Reference → Custom
+  abuse feeds** editor lets you add your own blocklist URLs. Stored as
+  `ABUSE_FEEDS_UI` in the UI-managed drop-in and appended to any `ABUSE_FEEDS`
+  from `config` (the engine fetches/parses them identically), so a `deny … abuse`
+  rule covers them. URLs are validated (http(s) only, no whitespace or shell
+  metacharacters) before being written to the sourced file; deployed via Commit.
+
+### Changed
+- **Top-IP stats store: lower memory/disk churn.** Cap by entry count
+  (`maxStatsEntries`) with a single-slice eviction instead of a per-entry byte
+  estimate, and only write `ui-stats.json` when new drops were actually ingested
+  (no periodic 50 MB rewrite when idle).
+
 ## [1.49.1] - 2026-07-08
 
 ### Fixed

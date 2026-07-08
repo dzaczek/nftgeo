@@ -366,7 +366,7 @@
         <div class="card"><h3>nftables sets (live sizes)</h3><div id="o-sets"></div></div>
         <div class="card"><h3>Abuse sources <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— what fills the abuse blocklist</span></h3><div id="o-feeds"></div></div>
       </div>
-      <p class="muted" style="margin-top:10px;font-size:12px">Service &amp; host-label objects (SERVICE_*/HOST_*) arrive with the internal firewall (roadmap P5).</p>
+      <div class="card" style="margin-top:14px"><h3>Custom abuse feeds <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— your own blocklist URLs, imported like ABUSE_FEEDS</span></h3><div id="o-feeds-edit"></div></div>
       </div>
     </section>
   </main>
@@ -1030,11 +1030,11 @@ async function loadObjects(){
   $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
   $('#o-feeds').innerHTML=(o.abuseSources||[]).length?o.abuseSources.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
   $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
-  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[],lists:d.lists||[]}; renderManaged();
+  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[],lists:d.lists||[],feeds:d.feeds||[]}; renderManaged();
 }
 
 // ---- editable objects (M6B.2 groups/regions, M6B.7/services) ----
-let OBJ={groups:[],regions:[],services:[],hosts:[],zones:[],lists:[]};
+let OBJ={groups:[],regions:[],services:[],hosts:[],zones:[],lists:[],feeds:[]};
 function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:kind==='host'?OBJ.hosts:kind==='zone'?OBJ.zones:kind==='list'?OBJ.lists:OBJ.services;}
 function plainchip(m){return `<span class="chip">${esc(m)}</span>`;}
 function objEditList(arr,kind){
@@ -1050,6 +1050,24 @@ function renderManaged(){
   $('#o-hosts-edit').innerHTML=objEditList(OBJ.hosts,'host');
   $('#o-zones-edit').innerHTML=objEditList(OBJ.zones,'zone');
   $('#o-lists-edit').innerHTML=objEditList(OBJ.lists,'list');
+  renderFeeds();
+}
+// Custom abuse feed URLs (Reference tab): editable textarea -> ABUSE_FEEDS_UI,
+// deployed via the same Commit pipeline as the other objects.
+function renderFeeds(){
+  const el=$('#o-feeds-edit');if(!el)return;
+  const feeds=OBJ.feeds||[];
+  if(MODE==='ro'){
+    el.innerHTML=feeds.length?feeds.map(u=>`<div class="row"><span class="mono">${esc(u)}</span></div>`).join(''):'<span class="muted">none</span>';
+    return;
+  }
+  el.innerHTML=`<textarea id="feeds-ta" rows="4" style="width:100%;box-sizing:border-box" placeholder="https://iplists.firehol.org/files/firehol_level1.netset&#10;one http(s) URL per line">${esc(feeds.join('\n'))}</textarea>
+    <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><button class="btn-go" onclick="saveFeeds()">Save to draft</button>
+    <span class="muted" style="font-size:12px">The parser extracts IPs/CIDRs from any text list. Merged into the <code>abuse</code> sets, so a <code>deny … abuse</code> rule covers them. Deploy via Commit.</span></div>`;
+}
+async function saveFeeds(){
+  OBJ.feeds=$('#feeds-ta').value.split(/\s+/).map(x=>x.trim()).filter(Boolean);
+  await putObjects();
 }
 function switchObjTab(ot){$$('#obj-tabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.ot===ot));
   $$('.ot').forEach(s=>s.style.display='none');$('#ot-'+ot).style.display='';}
@@ -1096,11 +1114,11 @@ async function saveObj(kind,i){
 }
 async function deleteObj(kind,i){listFor(kind).splice(i,1);await putObjects();closeDrawer();}
 async function putObjects(){
-  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions,services:OBJ.services,hosts:OBJ.hosts,zones:OBJ.zones,lists:OBJ.lists})});
+  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions,services:OBJ.services,hosts:OBJ.hosts,zones:OBJ.zones,lists:OBJ.lists,feeds:OBJ.feeds})});
   if(r.status===401||r.status===403){showLock('Read-only session — cannot edit objects.');return;}
   const d=await r.json();
   if(d.error){toast('Rejected: '+d.error);return;}
-  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[],services:dd.services||[],hosts:dd.hosts||[],zones:dd.zones||[],lists:dd.lists||[]};renderManaged();
+  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[],services:dd.services||[],hosts:dd.hosts||[],zones:dd.zones||[],lists:dd.lists||[],feeds:dd.feeds||[]};renderManaged();
   refreshCommitBar();toast('Saved to draft.');
 }
 $('#v-objects').addEventListener('click',e=>{

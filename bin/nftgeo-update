@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.49.1"
+NFTGEO_VERSION="1.50.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -109,6 +109,13 @@ if [ -d "$GROUPS_DIR" ]; then
 	for _gf in "$GROUPS_DIR"/*.conf; do
 		[ -r "$_gf" ] && . "$_gf"
 	done
+fi
+
+# UI-managed abuse feed URLs (nftgeo-ui Reference tab) are appended to any
+# ABUSE_FEEDS from config, so the panel can add custom blocklists without
+# overwriting the config's list. Fetched/parsed exactly like ABUSE_FEEDS.
+if [ -n "${ABUSE_FEEDS_UI:-}" ]; then
+	ABUSE_FEEDS="${ABUSE_FEEDS:-} ${ABUSE_FEEDS_UI}"
 fi
 
 if [ -n "${RENDER_ONLY:-}" ]; then

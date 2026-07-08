@@ -802,10 +802,10 @@ func buildAlerts(loaded bool, feeds []map[string]interface{}, timeline []int) []
 
 // ---- in-memory stats store (M6C.4) -----------------------------------------
 // Keeps drop events in RAM for fast top-IP queries with time-range filtering.
-// Periodically dumps to disk (JSON) so stats survive restarts. Capped at
-// maxStatsBytes (default 50 MB) — oldest entries evicted first.
+// Dumps to disk (JSON) only when new drops arrive, so stats survive restarts.
+// Capped at maxStatsEntries — oldest entries evicted first.
 
-const maxStatsBytes = 50 * 1024 * 1024 // 50 MB
+const maxStatsEntries = 500000 // ~40 MB of drop events; oldest evicted first
 
 type statsEntry struct {
 	Ts     int64  `json:"ts"` // unix timestamp
@@ -826,7 +826,7 @@ var (
 	lastIngestTs int64
 )
 
-// recordStats ingests drops from the kernel log (called periodically).
+// recordStats appends new drops, keeping at most maxStatsEntries (newest wins).
 func recordStats(entries []statsEntry) {
 	if len(entries) == 0 {
 		return
@@ -834,17 +834,11 @@ func recordStats(entries []statsEntry) {
 	statsMu.Lock()
 	defer statsMu.Unlock()
 	statsData = append(statsData, entries...)
-	// enforce memory cap: evict oldest entries
-	sz := statsSize()
-	for sz > maxStatsBytes && len(statsData) > 0 {
-		statsData = statsData[1:]
-		sz = statsSize()
+	if n := len(statsData); n > maxStatsEntries {
+		// keep the newest maxStatsEntries in one slice op (copy so the evicted
+		// head's backing array can be freed instead of leaking behind the slice).
+		statsData = append([]statsEntry(nil), statsData[n-maxStatsEntries:]...)
 	}
-}
-
-func statsSize() int {
-	// rough estimate: each entry ~100 bytes
-	return len(statsData) * 100
 }
 
 // topIPs returns top source IPs by drop count within [from, to] unix timestamps.
@@ -955,11 +949,14 @@ func filterNewDrops(recent []Drop, after, now int64) ([]statsEntry, int64) {
 
 // ingestDropsLog reads recent kernel drops and feeds the new ones into the stats
 // store. Called on a ticker; dedups via lastIngestTs.
-func ingestDropsLog() {
+// ingestDropsLog records the newly-seen drops and returns how many were added
+// (0 = nothing new, so the caller can skip the disk write).
+func ingestDropsLog() int {
 	d := drops("-1h")
 	entries, hw := filterNewDrops(d.Recent, lastIngestTs, time.Now().Unix())
 	lastIngestTs = hw
 	recordStats(entries)
+	return len(entries)
 }
 
 func ruleFiles() []string {
@@ -1744,10 +1741,19 @@ var objNameRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 var zoneMemberRe = regexp.MustCompile(`^[A-Za-z0-9._@:-]+$`) // interface names incl. VLAN subif (eth0.100)
 var objMemberRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 
-func parseObjects(text string) (groups, regions, services, hosts, zones, lists []objEntry) {
+// feedURLRe validates a custom abuse-feed URL. The value is written into a
+// double-quoted, shell-sourced assignment (ABUSE_FEEDS_UI="..."), so it must
+// contain no whitespace and none of the shell-dangerous chars " ' ` $ \ < > .
+var feedURLRe = regexp.MustCompile("^https?://[^\\s\"'`$\\\\<>]+$")
+
+func parseObjects(text string) (groups, regions, services, hosts, zones, lists []objEntry, feeds []string) {
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if v, ok := strings.CutPrefix(line, "ABUSE_FEEDS_UI="); ok {
+			feeds = strings.Fields(strings.Trim(strings.TrimSpace(v), `"`))
 			continue
 		}
 		m := objLineRe.FindStringSubmatch(line)
@@ -1774,7 +1780,7 @@ func parseObjects(text string) (groups, regions, services, hosts, zones, lists [
 	return
 }
 
-func serializeObjects(groups, regions, services, hosts, zones, lists []objEntry) string {
+func serializeObjects(groups, regions, services, hosts, zones, lists []objEntry, feeds []string) string {
 	var b strings.Builder
 	b.WriteString("# Managed by nftgeo-ui (Objects tab). Do not hand-edit; the panel overwrites this file.\n")
 	for _, g := range groups {
@@ -1794,6 +1800,9 @@ func serializeObjects(groups, regions, services, hosts, zones, lists []objEntry)
 	}
 	for _, l := range lists {
 		fmt.Fprintf(&b, "LIST_%s=\"%s\"\n", strings.ToUpper(l.Name), strings.Join(l.Members, " "))
+	}
+	if len(feeds) > 0 {
+		fmt.Fprintf(&b, "ABUSE_FEEDS_UI=\"%s\"\n", strings.Join(feeds, " "))
 	}
 	return b.String()
 }
@@ -1846,7 +1855,7 @@ func checkNames(lists ...[]objEntry) error {
 
 // sanitizeObjects validates two namespaces separately: address/target names
 // (groups + regions + hosts, which all resolve as a rule target) and services.
-func sanitizeObjects(groups, regions, services, hosts, zones, lists []objEntry) error {
+func sanitizeObjects(groups, regions, services, hosts, zones, lists []objEntry, feeds []string) error {
 	if err := checkNames(groups, regions, hosts); err != nil {
 		return err
 	}
@@ -1855,6 +1864,11 @@ func sanitizeObjects(groups, regions, services, hosts, zones, lists []objEntry) 
 	}
 	if err := checkNames(lists); err != nil {
 		return err
+	}
+	for _, u := range feeds {
+		if !feedURLRe.MatchString(u) {
+			return fmt.Errorf("invalid feed URL %q (must be http(s):// with no spaces or shell metacharacters)", u)
+		}
 	}
 	return checkZones(zones)
 }
@@ -1867,7 +1881,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if exists == nil {
 			text = readFileStr(objDraftFile)
 		}
-		g, rg, sv, hs, zn, ls := parseObjects(text)
+		g, rg, sv, hs, zn, ls, fd := parseObjects(text)
 		if g == nil {
 			g = []objEntry{}
 		}
@@ -1886,7 +1900,10 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if ls == nil {
 			ls = []objEntry{}
 		}
-		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls})
+		if fd == nil {
+			fd = []string{}
+		}
+		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls, "feeds": fd})
 	case http.MethodPut:
 		var req struct {
 			Groups   []objEntry `json:"groups"`
@@ -1895,16 +1912,17 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 			Hosts    []objEntry `json:"hosts"`
 			Zones    []objEntry `json:"zones"`
 			Lists    []objEntry `json:"lists"`
+			Feeds    []string   `json:"feeds"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
-		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists); err != nil {
+		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists, req.Feeds); err != nil {
 			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
 			return
 		}
-		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists)
+		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists, req.Feeds)
 		os.MkdirAll(filepath.Dir(objDraftFile), 0755)
 		if err := os.WriteFile(objDraftFile, []byte(out), 0644); err != nil {
 			http.Error(w, `{"error":"cannot write objects draft"}`, http.StatusInternalServerError)
@@ -2966,13 +2984,17 @@ func main() {
 
 	reconcileCommit()
 
-	// Load persisted stats and start the ingest+dump ticker
+	// Load persisted stats and start the ingest+dump ticker. Only write to disk
+	// when new drops were actually ingested (no churn when the box is idle).
 	loadStats()
 	go func() {
-		ingestDropsLog()
-		for range time.Tick(5 * time.Minute) {
-			ingestDropsLog()
+		if ingestDropsLog() > 0 {
 			dumpStats()
+		}
+		for range time.Tick(5 * time.Minute) {
+			if ingestDropsLog() > 0 {
+				dumpStats()
+			}
 		}
 	}()
 

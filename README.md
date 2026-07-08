@@ -423,6 +423,9 @@ https://www.spamhaus.org/drop/drop.txt"
 Space- or newline-separated URLs, fetched only when a rule targets `abuse`.
 Comment markers (`#`, `;`) and any text after the address are stripped, which
 covers the common feed formats (FireHOL, Spamhaus DROP, blocklist.de, GreenSnow).
+You can also add your own feed URLs from the dashboard — **Objects → Reference →
+Custom abuse feeds** — which are stored as `ABUSE_FEEDS_UI` in the UI-managed
+drop-in, appended to any `ABUSE_FEEDS` from `config`, and deployed via Commit.
 Each feed's last good copy is cached under `/var/lib/nftgeo/feeds` and reused if a
 later download fails, so a feed outage never shrinks the blocklist. Feeds work
 with or without an AbuseIPDB key.
