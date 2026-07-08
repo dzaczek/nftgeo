@@ -744,7 +744,41 @@ func objects() map[string]interface{} {
 	}
 	return map[string]interface{}{"groups": groups, "regions": regions,
 		"whitelist": wl, "whitelistHosts": wlh, "feeds": feeds,
-		"abuseSources": abuseSources()}
+		"zones": zoneNames(), "abuseSources": abuseSources()}
+}
+
+// zoneNames collects the lowercased ZONE_<NAME> keys from the config and every
+// groups.d/*.conf drop-in, for the inter-zone rule drawer's autocomplete (zones
+// have no Objects tab of their own).
+func zoneNames() []string {
+	files := []string{configFile}
+	if ents, err := os.ReadDir(groupsDir); err == nil {
+		for _, e := range ents {
+			if strings.HasSuffix(e.Name(), ".conf") {
+				files = append(files, filepath.Join(groupsDir, e.Name()))
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range files {
+		data, _ := os.ReadFile(f)
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "ZONE_") {
+				continue
+			}
+			if eq := strings.Index(line, "="); eq > 5 {
+				name := strings.ToLower(strings.TrimSpace(line[5:eq]))
+				if name != "" && !seen[name] {
+					seen[name] = true
+					out = append(out, name)
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func countLines(p string) int {
@@ -1493,12 +1527,13 @@ type draftRule struct {
 	Port     string   `json:"port"`
 	Target   string   `json:"target"`
 	Iface    string   `json:"iface"`
-	Rate     string   `json:"rate,omitempty"` // throttle only
-	Ban      string   `json:"ban,omitempty"`  // throttle only
-	Src      string   `json:"src,omitempty"`  // zone: source zone
-	Dst      string   `json:"dst,omitempty"`  // zone: destination zone
-	Geo      string   `json:"geo,omitempty"`  // zone: optional "from <geo>"
-	Text     string   `json:"text,omitempty"` // nat: verbatim rule text
+	Rate     string   `json:"rate,omitempty"`    // throttle only
+	Ban      string   `json:"ban,omitempty"`     // throttle only
+	Src      string   `json:"src,omitempty"`     // zone: source zone
+	Dst      string   `json:"dst,omitempty"`     // zone: destination zone
+	Geo      string   `json:"geo,omitempty"`     // zone/dnat: optional "from <geo>"
+	Text     string   `json:"text,omitempty"`    // nat: verbatim rule text
+	NatType  string   `json:"natType,omitempty"` // nat: masquerade | snat | dnat
 	Name     string   `json:"name"`
 	Body     string   `json:"body"`
 	Trivia   []string `json:"-"`
@@ -1556,12 +1591,28 @@ func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, 
 			r.Geo = f[7]
 		}
 	case "nat":
-		// masquerade/snat/dnat: surface the verbatim text and any "on <iface>".
+		// masquerade/snat/dnat: keep the verbatim text and also pull the fields so
+		// the editor drawer can prefill (natType, iface, geo, target, proto/port).
 		r.Text = body
-		for i := 1; i < len(f)-1; i++ {
-			if f[i] == "on" {
-				r.Iface = f[i+1]
+		r.NatType = f[0]
+		for i := 1; i < len(f); i++ {
+			switch f[i] {
+			case "on":
+				if i+1 < len(f) {
+					r.Iface = f[i+1]
+				}
+			case "from":
+				if i+1 < len(f) {
+					r.Geo = f[i+1]
+				}
+			case "to":
+				if i+1 < len(f) {
+					r.Target = f[i+1]
+				}
 			}
+		}
+		if f[0] == "dnat" && len(f) >= 3 {
+			r.Proto, r.Port = f[1], f[2] // dnat <proto> <port> to ...
 		}
 	default: // filter
 		r.Action, r.Dir, r.Proto, r.Port, r.Target = f[0], f[1], f[2], f[3], f[4]
@@ -1975,6 +2026,12 @@ var (
 	ruleIfaceRe  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	ruleProtos   = map[string]bool{"tcp": true, "udp": true, "sctp": true, "all": true, "any": true, "icmp": true, "icmpv6": true}
 
+	// NAT / zone drawers (permissive; the engine's validate is the final gate).
+	zoneNameRe  = regexp.MustCompile(`^[a-z0-9_]+$`)                                                                             // ZONE_<NAME> -> lowercase key
+	natAddrRe   = regexp.MustCompile(`^([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9a-fA-F:]+)$`)                                            // snat: a bare IP
+	natTargetRe = regexp.MustCompile(`^(\[[0-9a-fA-F:]+\]:[0-9]{1,5}|[0-9]{1,3}(\.[0-9]{1,3}){3}(:[0-9]{1,5})?|[0-9a-fA-F:]+)$`) // dnat: ip[:port] / [v6]:port
+	natPortRe   = regexp.MustCompile(`^[0-9]{1,5}$`)
+
 	throttlePortRe = regexp.MustCompile(`^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$`)
 	throttleRateRe = regexp.MustCompile(`^[0-9]+/(second|minute|hour)$`)
 	throttleBanRe  = regexp.MustCompile(`^[0-9]+[smhd]$`)
@@ -2069,11 +2126,101 @@ func buildRuleBody(action, dir, proto, port, target, iface string) (string, erro
 	return strings.Join(parts, " "), nil
 }
 
+// buildZoneBody assembles/validates an inter-zone rule
+// (allow|deny <src> -> <dst> <proto> <port> [from <geo>]); engine re-validates.
+func buildZoneBody(action, src, dst, proto, port, geo string) (string, error) {
+	action = strings.ToLower(strings.TrimSpace(action))
+	src, dst = strings.ToLower(strings.TrimSpace(src)), strings.ToLower(strings.TrimSpace(dst))
+	proto, port, geo = strings.ToLower(strings.TrimSpace(proto)), strings.TrimSpace(port), strings.TrimSpace(geo)
+	if action != "allow" && action != "deny" {
+		return "", fmt.Errorf("action must be allow or deny")
+	}
+	for _, z := range []string{src, dst} {
+		if z != "any" && !zoneNameRe.MatchString(z) {
+			return "", fmt.Errorf("zone names are letters/digits/underscore, or 'any'")
+		}
+	}
+	if !ruleProtos[proto] {
+		return "", fmt.Errorf("protocol must be tcp / udp / sctp / all / any / icmp / icmpv6")
+	}
+	switch proto {
+	case "icmp", "icmpv6", "any":
+		if port == "" {
+			port = "-"
+		}
+	default:
+		if port == "" {
+			return "", fmt.Errorf("proto %s needs a port or service", proto)
+		}
+	}
+	if port != "-" && !rulePortRe.MatchString(port) {
+		return "", fmt.Errorf("port must be a number, range, list, or a service")
+	}
+	parts := []string{action, src, "->", dst, proto, port}
+	if geo != "" {
+		if !ruleTargetRe.MatchString(geo) {
+			return "", fmt.Errorf("from: country / region / group / IP / CIDR")
+		}
+		parts = append(parts, "from", geo)
+	}
+	return strings.Join(parts, " "), nil
+}
+
+// buildNatBody assembles/validates a NAT rule (masquerade / snat / dnat); the
+// engine re-validates, so this is permissive but shell-metacharacter-free.
+func buildNatBody(natType, proto, port, target, geo, iface string) (string, error) {
+	natType = strings.ToLower(strings.TrimSpace(natType))
+	target, iface = strings.TrimSpace(target), strings.TrimSpace(iface)
+	if iface != "" && !ruleIfaceRe.MatchString(iface) {
+		return "", fmt.Errorf("invalid interface name")
+	}
+	switch natType {
+	case "masquerade":
+		if iface == "" {
+			return "", fmt.Errorf("masquerade needs an interface")
+		}
+		return "masquerade on " + iface, nil
+	case "snat":
+		if iface == "" {
+			return "", fmt.Errorf("snat needs an interface")
+		}
+		if !natAddrRe.MatchString(target) {
+			return "", fmt.Errorf("snat target must be an IP address")
+		}
+		return "snat out on " + iface + " to " + target, nil
+	case "dnat":
+		proto, port, geo = strings.ToLower(strings.TrimSpace(proto)), strings.TrimSpace(port), strings.TrimSpace(geo)
+		if proto != "tcp" && proto != "udp" {
+			return "", fmt.Errorf("dnat protocol must be tcp or udp")
+		}
+		if !natPortRe.MatchString(port) {
+			return "", fmt.Errorf("dnat port must be a single number")
+		}
+		if !natTargetRe.MatchString(target) {
+			return "", fmt.Errorf("dnat target must be an IP or ip:port")
+		}
+		parts := []string{"dnat", proto, port, "to", target}
+		if geo != "" {
+			if !ruleTargetRe.MatchString(geo) {
+				return "", fmt.Errorf("from: country / region / group / IP")
+			}
+			parts = append(parts, "from", geo)
+		}
+		if iface != "" {
+			parts = append(parts, "on", iface)
+		}
+		return strings.Join(parts, " "), nil
+	}
+	return "", fmt.Errorf("nat type must be masquerade / snat / dnat")
+}
+
 func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		File                                    string
 		ID                                      *int
+		Kind                                    string
 		Action, Dir, Proto, Port, Target, Iface string
+		Src, Dst, Geo, NatType                  string
 		Rate, Ban                               string
 		Name                                    string
 	}
@@ -2087,9 +2234,14 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 	}
 	var body string
 	var err error
-	if req.Action == "throttle" {
+	switch {
+	case req.Kind == "zone":
+		body, err = buildZoneBody(req.Action, req.Src, req.Dst, req.Proto, req.Port, req.Geo)
+	case req.Kind == "nat":
+		body, err = buildNatBody(req.NatType, req.Proto, req.Port, req.Target, req.Geo, req.Iface)
+	case req.Action == "throttle":
 		body, err = buildThrottleBody(req.Dir, req.Proto, req.Port, req.Rate, req.Ban, req.Iface)
-	} else {
+	default:
 		body, err = buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface)
 	}
 	if err != nil {

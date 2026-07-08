@@ -9,6 +9,27 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.42.0] - 2026-07-08
+
+### Added
+- **nftgeo-ui: dedicated NAT and inter-zone rule drawers.** The panel can now
+  author and edit NAT (`masquerade` / `snat` / `dnat`) and inter-zone
+  (`<zone> -> <zone>`) rules with proper validated fields — no more Raw-only.
+  New **+ NAT** and **+ Zone** toolbar buttons; clicking a NAT/zone row opens
+  its drawer pre-filled. The NAT drawer switches fields by type (masquerade =
+  interface; snat = interface + source IP; dnat = proto/port/target/`from <geo>`/
+  interface). The zone drawer offers **zone-name autocomplete** sourced from the
+  `ZONE_*` definitions in config + `groups.d` (via `/api/objects`). Bodies are
+  built and validated server-side (`buildZoneBody` / `buildNatBody`) and the
+  engine's `validate` remains the final gate; edits stage to the draft and deploy
+  through the existing Commit pipeline.
+
+### Notes
+- Verified the **Commit / Deploy pipeline** (roadmap M6B.6) is complete —
+  pending-change summary, `validate` + `plan` diff preview, `apply --confirm`
+  with the in-page deadman countdown, and Keep / Roll-back — and marked it
+  shipped in the roadmap (the checkbox was stale).
+
 ## [1.41.0] - 2026-07-08
 
 ### Added
@@ -740,6 +761,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.42.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.42.0
 [1.41.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.41.0
 [1.40.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.40.1
 [1.40.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.40.0

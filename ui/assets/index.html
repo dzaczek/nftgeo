@@ -218,12 +218,15 @@
           <button class="btn-ghost" id="templatesbtn" style="color:var(--fg)">▤ Templates</button>
           <button class="btn-ghost" id="addsection" style="color:var(--fg)">+ Section</button>
           <button class="btn-ghost" id="addthrottle" style="color:var(--fg)">+ Throttle</button>
+          <button class="btn-ghost" id="addzone" style="color:var(--fg)" title="inter-zone rule (forward chain)">+ Zone</button>
+          <button class="btn-ghost" id="addnat" style="color:var(--fg)" title="NAT: masquerade / snat / dnat">+ NAT</button>
           <button class="btn-ghost" id="rawbtn" style="color:var(--mut)" title="Raw text edit of a file's draft">Raw</button>
           <button class="btn-go" id="addrule">+ Add rule</button>
         </span>
       </div>
       <datalist id="tgtlist"></datalist>
       <datalist id="svclist"></datalist>
+      <datalist id="zonelist"></datalist>
       <div class="card"><div class="tablewrap"><table class="poltable">
         <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th><th id="th-file" style="width:130px">File</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
@@ -461,13 +464,13 @@ function renderLogs(){
 }
 
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
-let OBJMAP={}, SVCS=[], FILES=[]; // tooltips; service autocomplete; rule files
+let OBJMAP={}, SVCS=[], ZONES=[], FILES=[]; // tooltips; service/zone autocomplete; rule files
 async function loadPolicy(){
-  try{const o=await j('/api/objects');OBJMAP={};
+  try{const o=await j('/api/objects');OBJMAP={};ZONES=o.zones||[];
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
   try{const od=await j('/api/objects/draft');SVCS=(od.services||[]).map(s=>s.name);
     (od.groups||[]).concat(od.regions||[]).concat(od.hosts||[]).forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=g.members||[]);}catch(e){}
-  fillTargets(); fillServices();
+  fillTargets(); fillServices(); fillZones();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
 }
 function findRule(file,id){return (RULES||[]).find(r=>r.file===file&&r.id===id);}
@@ -478,6 +481,7 @@ function fileSelectHTML(selId,sel){
 const REGIONS=['europe','asia','africa','north_america','south_america','middle_east','oceania','caribbean'];
 function fillTargets(){$('#tgtlist').innerHTML=[...Object.keys(OBJMAP),'any','abuse',...REGIONS].map(o=>`<option value="${esc(o)}">`).join('');}
 function fillServices(){$('#svclist').innerHTML=SVCS.map(s=>`<option value="${esc(s)}">`).join('');}
+function fillZones(){$('#zonelist').innerHTML=[...ZONES,'any'].map(z=>`<option value="${esc(z)}">`).join('');}
 function tchip(t){
   if(!t||t==='any')return '<span class="chip any">any</span>';
   if(t==='abuse')return '<span class="chip abuse" title="AbuseIPDB + feeds blocklist">abuse</span>';
@@ -571,9 +575,8 @@ $('#policy').addEventListener('click',async e=>{
   if(row.classList.contains('secrow')){sectionDrawer(file,id);return;}
   const r=findRule(file,id);
   if(r&&r.action==='throttle'){throttleDrawer(file,id);return;}
-  // NAT / inter-zone rules have their own grammar; the classic rule drawer would
-  // mangle them, so edit them safely in the Raw file editor.
-  if(r&&(r.kind==='nat'||r.kind==='zone')){rawEditor(file);return;}
+  if(r&&r.kind==='zone'){zoneDrawer(file,id);return;}
+  if(r&&r.kind==='nat'){natDrawer(file,id);return;}
   const chip=e.target.closest('.chip.obj,.chip.any,.chip.abuse');
   if(chip){inlineTarget(row,chip);return;}
   ruleDrawer(file,id);
@@ -582,6 +585,8 @@ const firstFile=()=>FILES[0]?FILES[0].name:'rules.conf';
 $('#addrule').addEventListener('click',()=>ruleDrawer(firstFile(),null));
 $('#addsection').addEventListener('click',()=>sectionDrawer(firstFile(),null));
 $('#addthrottle').addEventListener('click',()=>throttleDrawer(firstFile(),null));
+$('#addzone').addEventListener('click',()=>zoneDrawer(firstFile(),null));
+$('#addnat').addEventListener('click',()=>natDrawer(firstFile(),null));
 $('#rawbtn').addEventListener('click',()=>rawEditor(firstFile()));
 
 function throttleDrawer(file,id){
@@ -616,6 +621,92 @@ function throttleDrawer(file,id){
 async function saveThrottle(file,id){
   const b={file:($('#t-file')?$('#t-file').value:file),action:'throttle',dir:$('#t-dir').value,proto:$('#t-proto').value,
     port:$('#t-port').value.trim(),rate:$('#t-num').value+'/'+$('#t-unit').value,ban:$('#t-ban').value.trim(),iface:$('#t-iface').value.trim(),name:$('#t-name').value};
+  if(id!=null)b.id=id;
+  const res=await post('/api/rules/draft/save',b);
+  if(res&&res.error){toast('Rejected: '+res.error);return;}
+  closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Saved to draft.');
+}
+
+// Inter-zone rule drawer: allow|deny <src> -> <dst> <proto> <port> [from <geo>]
+function zoneDrawer(file,id){
+  if(MODE==='ro')return;
+  const r=id!=null?findRule(file,id):null;
+  const v=r?{action:r.action,src:r.src,dst:r.dst,proto:r.proto,port:r.port==='-'?'':r.port,geo:r.geo||'',name:r.name}
+           :{action:'allow',src:'',dst:'',proto:'tcp',port:'',geo:'',name:''};
+  const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
+  $('#drawertitle').textContent=id!=null?'Edit zone rule':'New inter-zone rule';
+  $('#drawerbody').innerHTML=`
+    ${id!=null?'':fileSelectHTML('z-file',file)}
+    <label class="fld"><span>Name (comment)</span><input id="z-name" value="${esc(v.name)}" placeholder="describe this rule" autocomplete="off"></label>
+    <div style="display:flex;gap:10px">
+      <label class="fld" style="flex:1"><span>Action</span><select id="z-action">${opt(['allow','deny'],v.action)}</select></label>
+      <label class="fld" style="flex:1"><span>Source zone</span><input id="z-src" list="zonelist" value="${esc(v.src)}" placeholder="lan / any" autocomplete="off"></label>
+      <label class="fld" style="flex:1"><span>Dest zone</span><input id="z-dst" list="zonelist" value="${esc(v.dst)}" placeholder="dmz / any" autocomplete="off"></label>
+    </div>
+    <div style="display:flex;gap:10px">
+      <label class="fld" style="flex:1"><span>Protocol</span><select id="z-proto" onchange="zProtoChange()">${opt(['tcp','udp','all','sctp','any','icmp','icmpv6'],v.proto)}</select></label>
+      <label class="fld" style="flex:1"><span>Port / service</span><input id="z-port" list="svclist" value="${esc(v.port)}" placeholder="80, 80,443 or a service"></label>
+    </div>
+    <label class="fld"><span>From (source geo, optional)</span><input id="z-geo" list="tgtlist" value="${esc(v.geo)}" placeholder="country / region / group — blank = any source" autocomplete="off"></label>
+    <p class="muted" style="font-size:12px">Zones are <code>ZONE_*</code> interface lists in config. Built into the <b>forward</b> chain (needs <code>ip_forward=1</code>); with <code>SEGMENT_DEFAULT="deny"</code> anything not allowed is dropped. Saved to the draft — deploy via Commit.</p>
+    <div style="display:flex;gap:8px;margin-top:auto">
+      <button class="btn-go" onclick="saveZone('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
+      ${id!=null?`<button class="btn-rb" onclick="deleteRule('${esc(file)}',${id})">Delete</button>`:''}
+      <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
+    </div>`;
+  zProtoChange(); openDrawer(); $('#z-name').focus();
+}
+function zProtoChange(){const p=$('#z-proto').value,pt=$('#z-port');
+  if(p==='icmp'||p==='icmpv6'||p==='any'){pt.value='';pt.disabled=true;pt.placeholder='(no port)';}
+  else{pt.disabled=false;pt.placeholder='80, 80,443 or a service';}}
+async function saveZone(file,id){
+  const b={file:($('#z-file')?$('#z-file').value:file),kind:'zone',action:$('#z-action').value,
+    src:$('#z-src').value.trim(),dst:$('#z-dst').value.trim(),proto:$('#z-proto').value,
+    port:$('#z-port').value.trim(),geo:$('#z-geo').value.trim(),name:$('#z-name').value};
+  if(id!=null)b.id=id;
+  const res=await post('/api/rules/draft/save',b);
+  if(res&&res.error){toast('Rejected: '+res.error);return;}
+  closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Saved to draft.');
+}
+
+// NAT drawer: masquerade / snat / dnat. Fields shown depend on the type.
+function natDrawer(file,id){
+  if(MODE==='ro')return;
+  const r=id!=null?findRule(file,id):null;
+  const v=r?{nt:r.natType||'masquerade',iface:r.iface||'',target:r.target||'',proto:r.proto||'tcp',port:r.port||'',geo:r.geo||'',name:r.name}
+           :{nt:'masquerade',iface:'',target:'',proto:'tcp',port:'',geo:'',name:''};
+  const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
+  $('#drawertitle').textContent=id!=null?'Edit NAT rule':'New NAT rule';
+  $('#drawerbody').innerHTML=`
+    ${id!=null?'':fileSelectHTML('n-file',file)}
+    <label class="fld"><span>Name (comment)</span><input id="n-name" value="${esc(v.name)}" placeholder="describe this rule" autocomplete="off"></label>
+    <label class="fld"><span>Type</span><select id="n-type" onchange="nTypeChange()">${opt(['masquerade','snat','dnat'],v.nt)}</select></label>
+    <div id="n-dnat" style="display:none;gap:10px">
+      <label class="fld" style="flex:1"><span>Protocol</span><select id="n-proto">${opt(['tcp','udp'],v.proto)}</select></label>
+      <label class="fld" style="flex:1"><span>WAN port</span><input id="n-port" value="${esc(v.port)}" placeholder="8080"></label>
+    </div>
+    <label class="fld" id="n-target-w"><span id="n-target-l">To (internal ip[:port])</span><input id="n-target" value="${esc(v.target)}" placeholder="10.0.0.5:80" autocomplete="off"></label>
+    <label class="fld" id="n-geo-w"><span>From (source geo, optional)</span><input id="n-geo" list="tgtlist" value="${esc(v.geo)}" placeholder="country / region / group — blank = any" autocomplete="off"></label>
+    <label class="fld"><span id="n-iface-l">Interface (WAN)</span><input id="n-iface" value="${esc(v.iface)}" placeholder="eth0" autocomplete="off"></label>
+    <p class="muted" style="font-size:12px"><b>masquerade</b>/<b>snat</b> rewrite outbound source; <b>dnat</b> forwards a WAN port to an internal host. Needs <code>ip_forward=1</code>. Saved to the draft — deploy via Commit.</p>
+    <div style="display:flex;gap:8px;margin-top:auto">
+      <button class="btn-go" onclick="saveNat('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
+      ${id!=null?`<button class="btn-rb" onclick="deleteRule('${esc(file)}',${id})">Delete</button>`:''}
+      <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
+    </div>`;
+  nTypeChange(); openDrawer(); $('#n-name').focus();
+}
+function nTypeChange(){const t=$('#n-type').value;
+  $('#n-dnat').style.display=t==='dnat'?'flex':'none';
+  $('#n-geo-w').style.display=t==='dnat'?'':'none';
+  const tw=$('#n-target-w');tw.style.display=t==='masquerade'?'none':'';
+  $('#n-target-l').textContent=t==='dnat'?'To (internal ip[:port])':'To (source IP)';
+  $('#n-iface-l').textContent=t==='dnat'?'On interface (optional)':'Interface (WAN)';}
+async function saveNat(file,id){
+  const t=$('#n-type').value;
+  const b={file:($('#n-file')?$('#n-file').value:file),kind:'nat',natType:t,iface:$('#n-iface').value.trim(),
+    target:$('#n-target').value.trim(),proto:$('#n-proto').value,port:$('#n-port').value.trim(),
+    geo:$('#n-geo').value.trim(),name:$('#n-name').value};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}

@@ -203,7 +203,8 @@ count.
   keeps each rule's trivia + verbatim body. *(1.40.0: also renders NAT
   (masquerade/snat/dnat) and inter-zone (`<z> -> <z>`) rules as their own row
   kinds — verbatim NAT badge, zone src→dst chips — instead of mis-columning
-  them; these are edited via the Raw editor. Full inline NAT/zone drawers TBD.)*
+  them. 1.42.0: dedicated **+ Zone** and **+ NAT** drawers author/edit them with
+  validated fields and zone-name autocomplete.)*
 - [x] **M6B.4 Rule editor drawer + inline edit.** *(Shipped 1.21.0.)* Add / edit /
   delete rules in the right drawer (action, direction, protocol, port, target with
   group/region autocomplete, `on <iface>`, name); click a target chip for an
@@ -213,11 +214,12 @@ count.
   ("Perimeter", "DMZ", "Egress") group rules for readability; add / rename / delete
   / drag them. Stored as `## Title` comment lines in `rules.conf` (round-trip
   lossless, ignored by the engine).
-- [ ] **M6B.6 Commit / Deploy pipeline.** Top-bar **Commit** button → change
-  summary ("+1 rule, ~1 object") → `validate` → `plan` visual diff → on confirm
-  `apply --confirm` with the in-page deadman countdown / one-click rollback.
-  Pending edits are highlighted (yellow) until committed. Nothing touches the
-  live firewall before this step.
+- [x] **M6B.6 Commit / Deploy pipeline.** *(Shipped; verified 1.42.0.)* Top-bar
+  **Commit** bar with a live pending-change summary (per-file counts) →
+  `validate` → `plan` visual diff (`/api/commit/preview`) → on confirm
+  `apply --confirm` with an in-page deadman countdown and a one-click
+  **Keep** / **Roll back**. The bar is highlighted until committed; nothing
+  touches the live firewall before this step.
 - [x] **M6B.7 Templates / building blocks.** *(Shipped 1.23.0.)* Built-in blocks
   (*Block abuse feeds*, *Safe Web Server*, *Basic Geo-Drop*) import to the top of
   the policy as their own section; save the current policy as a reusable template

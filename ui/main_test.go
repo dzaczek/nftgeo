@@ -151,6 +151,58 @@ func TestParseDraftRulesFields(t *testing.T) {
 	}
 }
 
+func TestBuildZoneBody(t *testing.T) {
+	cases := []struct {
+		a, s, d, p, port, geo, want string
+		ok                          bool
+	}{
+		{"allow", "lan", "dmz", "tcp", "80", "", "allow lan -> dmz tcp 80", true},
+		{"deny", "dmz", "lan", "any", "", "", "deny dmz -> lan any -", true},
+		{"allow", "wan", "dmz", "tcp", "443", "europe", "allow wan -> dmz tcp 443 from europe", true},
+		{"allow", "any", "dmz", "tcp", "80", "", "allow any -> dmz tcp 80", true},
+		{"drop", "lan", "dmz", "tcp", "80", "", "", false},     // bad action
+		{"allow", "l an", "dmz", "tcp", "80", "", "", false},   // bad zone name
+		{"allow", "lan", "dmz", "tcp", "", "", "", false},      // tcp needs a port
+		{"allow", "lan", "dmz", "tcp", "80", "a b", "", false}, // bad geo
+	}
+	for _, c := range cases {
+		got, err := buildZoneBody(c.a, c.s, c.d, c.p, c.port, c.geo)
+		if c.ok && (err != nil || got != c.want) {
+			t.Errorf("buildZoneBody(%q..)=%q,%v want %q", c.a, got, err, c.want)
+		}
+		if !c.ok && err == nil {
+			t.Errorf("buildZoneBody(%q..) expected error, got %q", c.a, got)
+		}
+	}
+}
+
+func TestBuildNatBody(t *testing.T) {
+	cases := []struct {
+		nt, proto, port, target, geo, iface, want string
+		ok                                        bool
+	}{
+		{"masquerade", "", "", "", "", "eth0", "masquerade on eth0", true},
+		{"snat", "", "", "203.0.113.7", "", "eth0", "snat out on eth0 to 203.0.113.7", true},
+		{"dnat", "tcp", "8080", "10.0.0.5:80", "", "eth0", "dnat tcp 8080 to 10.0.0.5:80 on eth0", true},
+		{"dnat", "tcp", "2222", "10.0.0.5:22", "europe", "", "dnat tcp 2222 to 10.0.0.5:22 from europe", true},
+		{"dnat", "tcp", "443", "[2001:db8::1]:8443", "", "", "dnat tcp 443 to [2001:db8::1]:8443", true},
+		{"masquerade", "", "", "", "", "", "", false},           // needs iface
+		{"snat", "", "", "not-an-ip!", "", "eth0", "", false},   // bad target
+		{"dnat", "icmp", "8080", "10.0.0.5", "", "", "", false}, // bad proto
+		{"dnat", "tcp", "80x", "10.0.0.5", "", "", "", false},   // bad port
+		{"bogus", "", "", "", "", "eth0", "", false},            // bad type
+	}
+	for _, c := range cases {
+		got, err := buildNatBody(c.nt, c.proto, c.port, c.target, c.geo, c.iface)
+		if c.ok && (err != nil || got != c.want) {
+			t.Errorf("buildNatBody(%q..)=%q,%v want %q", c.nt, got, err, c.want)
+		}
+		if !c.ok && err == nil {
+			t.Errorf("buildNatBody(%q..) expected error, got %q", c.nt, got)
+		}
+	}
+}
+
 func TestParseDraftRulesNatZone(t *testing.T) {
 	in := "masquerade on eth0\n" +
 		"snat out on eth0 to 203.0.113.7\n" +
@@ -167,15 +219,20 @@ func TestParseDraftRulesNatZone(t *testing.T) {
 		if items[i].Kind != "nat" {
 			t.Errorf("item%d kind=%q, want nat: %+v", i, items[i].Kind, items[i])
 		}
-		if items[i].Action != "" || items[i].Dir != "" || items[i].Target != "" {
+		// Action/Dir must stay empty so a nat row is never treated as a filter row
+		// (Target/Proto/Port are legitimately reused for nat edit-drawer prefill).
+		if items[i].Action != "" || items[i].Dir != "" {
 			t.Errorf("item%d leaked filter fields: %+v", i, items[i])
 		}
 	}
-	if items[0].Text != "masquerade on eth0" || items[0].Iface != "eth0" {
+	if items[0].Text != "masquerade on eth0" || items[0].Iface != "eth0" || items[0].NatType != "masquerade" {
 		t.Errorf("masquerade parsed wrong: %+v", items[0])
 	}
-	if items[2].Iface != "eth0" {
-		t.Errorf("dnat iface: %+v", items[2])
+	if items[1].NatType != "snat" || items[1].Target != "203.0.113.7" || items[1].Iface != "eth0" {
+		t.Errorf("snat prefill fields wrong: %+v", items[1])
+	}
+	if items[2].NatType != "dnat" || items[2].Proto != "tcp" || items[2].Port != "8080" || items[2].Target != "10.0.0.5:80" || items[2].Iface != "eth0" {
+		t.Errorf("dnat prefill fields wrong: %+v", items[2])
 	}
 	// Zone rows: kind=zone, src/dst/proto/port, and Proto must not be "->".
 	z := items[3]

@@ -209,9 +209,10 @@ sudo nftgeo-ui token                          # mint a one-time read-write login
 sudo nftgeo-ui token -ro                      # long-lived read-only link
 ```
 Policy tab shows every rule kind: `allow`/`deny` filters, `throttle`, **NAT**
-(`masquerade`/`snat`/`dnat`, verbatim badge) and **inter-zone** (`<z> -> <z>`,
-source→dest zone chips). NAT/zone rows open the **Raw** editor (the field drawer
-only speaks the classic grammar). Edits stage to a draft and deploy via **Commit**.
+(`masquerade`/`snat`/`dnat`) and **inter-zone** (`<z> -> <z>`) rules — each with
+its own add/edit drawer (**+ Rule**, **+ Throttle**, **+ Zone**, **+ NAT**), plus
+**Raw** for bulk text edits. Edits stage to a draft and deploy via **Commit**
+(validate → plan diff → apply with a deadman countdown + one-click rollback).
 
 ---
 

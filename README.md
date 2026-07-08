@@ -779,8 +779,8 @@ target chip does an inline quick-edit, and **+ Section** adds a titled divider
 (`## Title`) to group rules in large policies. **NAT** (`masquerade` / `snat` /
 `dnat`) and **inter-zone** (`<zone> -> <zone>`) rules render as their own row
 kinds — a verbatim **NAT** badge and source→destination **zone** chips — and
-open the **Raw** file editor when clicked (the field drawer only understands the
-classic `allow`/`deny` grammar, so it would mangle them). The **Templates** drawer imports
+have dedicated **+ NAT** and **+ Zone** drawers (validated fields, zone-name
+autocomplete) to add or edit them. The **Templates** drawer imports
 built-in blocks (*Block abuse feeds*, *Safe Web Server*, *Basic Geo-Drop*) to the
 top of the policy and can save the current policy as a reusable template. Every
 change writes to the draft and deploys via Commit.
