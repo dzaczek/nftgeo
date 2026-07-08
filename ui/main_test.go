@@ -290,9 +290,9 @@ func TestParseDraftRulesNatZone(t *testing.T) {
 }
 
 func TestObjectsRoundTrip(t *testing.T) {
-	g, r, s, h, z := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n" + `HOST_DB1="10.0.0.5"` + "\n" + `ZONE_GUEST="eth1 eth0.100"` + "\n")
-	if len(g) != 1 || len(r) != 1 || len(s) != 1 || len(h) != 1 || len(z) != 1 {
-		t.Fatalf("counts g=%d r=%d s=%d h=%d z=%d", len(g), len(r), len(s), len(h), len(z))
+	g, r, s, h, z, l := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n" + `HOST_DB1="10.0.0.5"` + "\n" + `ZONE_GUEST="eth1 eth0.100"` + "\n" + `LIST_BADGUYS="1.2.3.4 5.6.7.0/24"` + "\n")
+	if len(g) != 1 || len(r) != 1 || len(s) != 1 || len(h) != 1 || len(z) != 1 || len(l) != 1 {
+		t.Fatalf("counts g=%d r=%d s=%d h=%d z=%d l=%d", len(g), len(r), len(s), len(h), len(z), len(l))
 	}
 	if g[0].Name != "OFFICE" || len(g[0].Members) != 2 || g[0].Members[1] != "1.2.3.4" {
 		t.Errorf("group parsed wrong: %+v", g[0])
@@ -306,28 +306,28 @@ func TestObjectsRoundTrip(t *testing.T) {
 	if z[0].Name != "GUEST" || len(z[0].Members) != 2 || z[0].Members[1] != "eth0.100" {
 		t.Errorf("zone parsed wrong: %+v", z[0])
 	}
-	out := serializeObjects(g, r, s, h, z)
-	g2, r2, s2, h2, z2 := parseObjects(out)
-	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 || len(h2) != 1 || len(z2) != 1 {
+	out := serializeObjects(g, r, s, h, z, l)
+	g2, r2, s2, h2, z2, l2 := parseObjects(out)
+	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 || len(h2) != 1 || len(z2) != 1 || len(l2) != 1 {
 		t.Errorf("re-parse of serialized objects lost entries: %q", out)
 	}
 }
 
 func TestSanitizeObjectsRejectsInjection(t *testing.T) {
-	if err := sanitizeObjects([]objEntry{{Name: "X", Members: []string{"1.2.3.4; rm"}}}, nil, nil, nil, nil); err == nil {
+	if err := sanitizeObjects([]objEntry{{Name: "X", Members: []string{"1.2.3.4; rm"}}}, nil, nil, nil, nil, nil); err == nil {
 		t.Error("expected shell-metachar member to be rejected")
 	}
-	if err := sanitizeObjects([]objEntry{{Name: "bad name", Members: nil}}, nil, nil, nil, nil); err == nil {
+	if err := sanitizeObjects([]objEntry{{Name: "bad name", Members: nil}}, nil, nil, nil, nil, nil); err == nil {
 		t.Error("expected invalid name to be rejected")
 	}
-	if err := sanitizeObjects([]objEntry{{Name: "OK", Members: []string{"80", "443/tcp"}}}, nil, nil, nil, nil); err != nil {
+	if err := sanitizeObjects([]objEntry{{Name: "OK", Members: []string{"80", "443/tcp"}}}, nil, nil, nil, nil, nil); err != nil {
 		t.Errorf("valid service members rejected: %v", err)
 	}
 	// zone interface members: VLAN subif OK, shell metachars rejected
-	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "GUEST", Members: []string{"eth0.100", "br-lan"}}}); err != nil {
+	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "GUEST", Members: []string{"eth0.100", "br-lan"}}}, nil); err != nil {
 		t.Errorf("valid zone interfaces rejected: %v", err)
 	}
-	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "Z", Members: []string{"eth0; rm"}}}); err == nil {
+	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "Z", Members: []string{"eth0; rm"}}}, nil); err == nil {
 		t.Error("expected bad zone interface to be rejected")
 	}
 }

@@ -1052,7 +1052,8 @@ func objects() map[string]interface{} {
 	}
 	return map[string]interface{}{"groups": groups, "regions": regions,
 		"whitelist": wl, "whitelistHosts": wlh, "feeds": feeds,
-		"zones": zoneNames(), "abuseSources": abuseSources()}
+		"zones": zoneNames(), "abuseSources": abuseSources(),
+		"lists": []map[string]string{}}
 }
 
 // hostInterfaces lists the machine's network interface names for the rule
@@ -1711,12 +1712,12 @@ type objEntry struct {
 	Members []string `json:"members"`
 }
 
-var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE|HOST|ZONE)_([A-Za-z0-9_]+)=(.*)$`)
+var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE|HOST|ZONE|LIST)_([A-Za-z0-9_]+)=(.*)$`)
 var objNameRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 var zoneMemberRe = regexp.MustCompile(`^[A-Za-z0-9._@:-]+$`) // interface names incl. VLAN subif (eth0.100)
 var objMemberRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 
-func parseObjects(text string) (groups, regions, services, hosts, zones []objEntry) {
+func parseObjects(text string) (groups, regions, services, hosts, zones, lists []objEntry) {
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -1737,6 +1738,8 @@ func parseObjects(text string) (groups, regions, services, hosts, zones []objEnt
 			hosts = append(hosts, e)
 		case "ZONE":
 			zones = append(zones, e)
+		case "LIST":
+			lists = append(lists, e)
 		default:
 			services = append(services, e)
 		}
@@ -1744,7 +1747,7 @@ func parseObjects(text string) (groups, regions, services, hosts, zones []objEnt
 	return
 }
 
-func serializeObjects(groups, regions, services, hosts, zones []objEntry) string {
+func serializeObjects(groups, regions, services, hosts, zones, lists []objEntry) string {
 	var b strings.Builder
 	b.WriteString("# Managed by nftgeo-ui (Objects tab). Do not hand-edit; the panel overwrites this file.\n")
 	for _, g := range groups {
@@ -1761,6 +1764,9 @@ func serializeObjects(groups, regions, services, hosts, zones []objEntry) string
 	}
 	for _, z := range zones {
 		fmt.Fprintf(&b, "ZONE_%s=\"%s\"\n", strings.ToUpper(z.Name), strings.Join(z.Members, " "))
+	}
+	for _, l := range lists {
+		fmt.Fprintf(&b, "LIST_%s=\"%s\"\n", strings.ToUpper(l.Name), strings.Join(l.Members, " "))
 	}
 	return b.String()
 }
@@ -1813,11 +1819,14 @@ func checkNames(lists ...[]objEntry) error {
 
 // sanitizeObjects validates two namespaces separately: address/target names
 // (groups + regions + hosts, which all resolve as a rule target) and services.
-func sanitizeObjects(groups, regions, services, hosts, zones []objEntry) error {
+func sanitizeObjects(groups, regions, services, hosts, zones, lists []objEntry) error {
 	if err := checkNames(groups, regions, hosts); err != nil {
 		return err
 	}
 	if err := checkNames(services); err != nil {
+		return err
+	}
+	if err := checkNames(lists); err != nil {
 		return err
 	}
 	return checkZones(zones)
@@ -1831,7 +1840,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if exists == nil {
 			text = readFileStr(objDraftFile)
 		}
-		g, rg, sv, hs, zn := parseObjects(text)
+		g, rg, sv, hs, zn, ls := parseObjects(text)
 		if g == nil {
 			g = []objEntry{}
 		}
@@ -1847,7 +1856,10 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if zn == nil {
 			zn = []objEntry{}
 		}
-		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn})
+		if ls == nil {
+			ls = []objEntry{}
+		}
+		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls})
 	case http.MethodPut:
 		var req struct {
 			Groups   []objEntry `json:"groups"`
@@ -1855,16 +1867,17 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 			Services []objEntry `json:"services"`
 			Hosts    []objEntry `json:"hosts"`
 			Zones    []objEntry `json:"zones"`
+			Lists    []objEntry `json:"lists"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
-		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones); err != nil {
+		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists); err != nil {
 			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
 			return
 		}
-		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones)
+		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists)
 		os.MkdirAll(filepath.Dir(objDraftFile), 0755)
 		if err := os.WriteFile(objDraftFile, []byte(out), 0644); err != nil {
 			http.Error(w, `{"error":"cannot write objects draft"}`, http.StatusInternalServerError)
