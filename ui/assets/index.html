@@ -9,6 +9,23 @@
   :root{
     --bg:#0c1020;--nav:#0a1c2b;--nav2:#0e2740;--card:#141a2e;--line:#243049;
     --fg:#e7eaf3;--mut:#8a93ad;--acc:#17b6a6;--acc2:#3d8bfd;--drop:#ff5568;--ok:#38d996;--warnc:#ffcf8a}
+  /* FortiGate theme: deep navy + red accents + gold section bars */
+  body.fortigate{
+    --bg:#1a1d2e;--nav:#111524;--nav2:#181c30;--card:#1e2236;--line:#2a2f48;
+    --fg:#e0e0e0;--mut:#888fa8;--acc:#e0241e;--acc2:#4a7fc1;--drop:#e0241e;--ok:#2dba5a;--warnc:#f0ad4e}
+  body.fortigate .side{background:linear-gradient(180deg,#0d1020,#161a2e)}
+  body.fortigate .brand{color:#f0ad4e;border-bottom:2px solid #e0241e}
+  body.fortigate .nav a.active{background:#e0241e;color:#fff}
+  body.fortigate .nav a:hover{background:#ffffff10;color:#fff}
+  body.fortigate .topbar{border-bottom:2px solid #e0241e}
+  body.fortigate th{border-bottom:2px solid #e0241e}
+  body.fortigate .pill.allow{background:#0e3a2a;color:#2dba5a}
+  body.fortigate .pill.deny{background:#3a1420;color:#e0241e}
+  body.fortigate .card h3{color:#f0ad4e}
+  body.fortigate .dot{box-shadow:0 0 4px currentColor}
+  body.fortigate .kpi b{color:#f0ad4e}
+  body.fortigate .commitbar{background:#2a1810;border-color:#e0241e;color:#f0ad4e}
+  body.fortigate .commitbar.pending{background:#0e2a18;border-color:#2dba5a;color:#2dba5a}
   *{box-sizing:border-box}
   body{margin:0;font:14px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--fg)}
   .app{display:grid;grid-template-columns:210px 1fr;min-height:100vh}
@@ -160,7 +177,7 @@
     <div class="sidefoot">
       <div><span class="dot" id="loaddot"></span><span id="loadtxt">…</span></div>
       <div>v<span id="ver">?</span> <span class="modebadge" id="modebadge"></span></div>
-      <button class="themebtn" id="themebtn" onclick="toggleTheme()" title="Toggle light / dark">◐ theme</button>
+      <button class="themebtn" id="themebtn" onclick="cycleTheme()" title="Switch theme">◐ dark</button>
     </div>
   </aside>
 
@@ -981,8 +998,21 @@ $('#v-objects').addEventListener('click',e=>{
   const item=e.target.closest('.objitem.editable');if(item){editObj(item.dataset.kind,+item.dataset.i);return;}
 });
 $('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer')closeDrawer();});
-function toggleTheme(){document.body.classList.toggle('light');localStorage.setItem('nftgeo-theme',document.body.classList.contains('light')?'light':'dark');}
-if(localStorage.getItem('nftgeo-theme')==='light')document.body.classList.add('light');
+const THEMES=['dark','light','fortigate'];
+const THEME_ICONS={dark:'◐ dark',light:'◑ light',fortigate:'🛡 fortigate'};
+function applyTheme(t){
+  document.body.classList.remove('light','fortigate');
+  if(t==='light')document.body.classList.add('light');
+  if(t==='fortigate')document.body.classList.add('fortigate');
+  const btn=$('#themebtn');if(btn){btn.textContent=THEME_ICONS[t]||'◐ dark';btn.title='Theme: '+t+' (click to switch)';}
+}
+function cycleTheme(){
+  const cur=localStorage.getItem('nftgeo-theme')||'dark';
+  const next=THEMES[(THEMES.indexOf(cur)+1)%THEMES.length];
+  localStorage.setItem('nftgeo-theme',next);
+  applyTheme(next);
+}
+applyTheme(localStorage.getItem('nftgeo-theme')||'dark');
 
 // lookup modal
 function closeModal(){$('#modal').style.display='none';}
