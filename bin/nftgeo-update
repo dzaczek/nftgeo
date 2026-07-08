@@ -449,15 +449,19 @@ emit_drop() {
 	# Emit a drop, optionally preceded by a rate-limited log twin (LOG_DROPS).
 	# $1 = match clause ("any"/"" for a bare drop, otherwise a clause). $2 = log
 	# reason (default "geo": emit_drop backs the geo-fenced deny-by-default).
+	# $3 = optional comment (for the UI's per-rule counter matching).
 	_lr="${2:-geo}"
+	_cmt="${3:-}"
+	_cmtclause=""
+	[ -n "$_cmt" ] && _cmtclause=" comment \"$_cmt\""
 	case "$1" in
 		any|'')
 			[ -n "$LOG_DROPS" ] && printf '\t\t%s log prefix "%s:%s "\n' "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$_lr"
-			printf '\t\tcounter drop\n'
+			printf '\t\tcounter drop%s\n' "$_cmtclause"
 			;;
 		*)
 			[ -n "$LOG_DROPS" ] && printf '\t\t%s %s log prefix "%s:%s "\n' "$1" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$_lr"
-			printf '\t\t%s counter drop\n' "$1"
+			printf '\t\t%s counter drop%s\n' "$1" "$_cmtclause"
 			;;
 	esac
 }
@@ -1350,12 +1354,17 @@ emit_chain() {
 		for port in $(awk -v h="$hook" -v p="$pr" '$1=="allow" && $2==h && $4==p && $6!="any"{print $5}' "$RULES_NORM" | sort -u); do
 			m4="$(l4_match "$pr" "$port" 4)"
 			m6="$(l4_match "$pr" "$port" 6)"
+			# Build a comment from the first allow rule that triggered this deny-by-default,
+			# so the UI can attribute the drops to the right rule.
+			_dsrc="$(awk -v h="$hook" -v p="$pr" -v pt="$port" '$1=="allow" && $2==h && $4==p && $5==pt && $6!="any"{print $8; exit}' "$RULES_NORM")"
+			_dcomment=""
+			[ -n "$_dsrc" ] && _dcomment="${_dsrc#*|}"
 			printed=""
 			for m in "$m4" "$m6"; do
 				[ -n "$m" ] || continue
 				case "$printed" in *"|${m}|"*) continue ;; esac
 				printed="${printed}|${m}|"
-				emit_drop "$m"
+				emit_drop "$m" "geo" "$_dcomment"
 			done
 		done
 	done

@@ -9,23 +9,44 @@
   :root{
     --bg:#0c1020;--nav:#0a1c2b;--nav2:#0e2740;--card:#141a2e;--line:#243049;
     --fg:#e7eaf3;--mut:#8a93ad;--acc:#17b6a6;--acc2:#3d8bfd;--drop:#ff5568;--ok:#38d996;--warnc:#ffcf8a}
-  /* FortiGate theme: deep navy + red accents + gold section bars */
-  body.fortigate{
-    --bg:#1a1d2e;--nav:#111524;--nav2:#181c30;--card:#1e2236;--line:#2a2f48;
-    --fg:#e0e0e0;--mut:#888fa8;--acc:#e0241e;--acc2:#4a7fc1;--drop:#e0241e;--ok:#2dba5a;--warnc:#f0ad4e}
-  body.fortigate .side{background:linear-gradient(180deg,#0d1020,#161a2e)}
-  body.fortigate .brand{color:#f0ad4e;border-bottom:2px solid #e0241e}
-  body.fortigate .nav a.active{background:#e0241e;color:#fff}
-  body.fortigate .nav a:hover{background:#ffffff10;color:#fff}
-  body.fortigate .topbar{border-bottom:2px solid #e0241e}
-  body.fortigate th{border-bottom:2px solid #e0241e}
-  body.fortigate .pill.allow{background:#0e3a2a;color:#2dba5a}
-  body.fortigate .pill.deny{background:#3a1420;color:#e0241e}
-  body.fortigate .card h3{color:#f0ad4e}
-  body.fortigate .dot{box-shadow:0 0 4px currentColor}
-  body.fortigate .kpi b{color:#f0ad4e}
-  body.fortigate .commitbar{background:#2a1810;border-color:#e0241e;color:#f0ad4e}
-  body.fortigate .commitbar.pending{background:#0e2a18;border-color:#2dba5a;color:#2dba5a}
+  /* Forti Enterprise theme: green-grey panels, Excel-like tables */
+  body.forti{
+    --bg:#e8ece8;--nav:#3a4a3a;--nav2:#2d3a2d;--card:#f4f6f4;--line:#c4ccc4;
+    --fg:#1a2a1a;--mut:#5a6a5a;--acc:#2d7a2d;--acc2:#4a8a4a;--drop:#c43838;--ok:#2d8a2d;--warnc:#daa520}
+  body.forti .side{background:linear-gradient(180deg,#3a4a3a,#2d3a2d)}
+  body.forti .brand{color:#daa520;border-bottom:2px solid #2d7a2d}
+  body.forti .brand small{color:#a8b8a8}
+  body.forti .nav a{color:#c0d0c0}
+  body.forti .nav a.active{background:#2d7a2d;color:#fff}
+  body.forti .nav a:hover{background:#ffffff15;color:#fff}
+  body.forti .sidefoot{color:#a0b0a0}
+  body.forti .topbar{background:#f0f2f0;border-bottom:2px solid #2d7a2d}
+  body.forti .card{border:1px solid #b4bcb4}
+  body.forti .card h3{color:#2d5a2d}
+  body.forti th{background:#d4ddd4;border-bottom:2px solid #2d7a2d;color:#3a4a3a}
+  body.forti tbody tr:nth-child(even){background:#eef0ee}
+  body.forti tbody tr:hover{background:#e0e8e0}
+  body.forti .pill.allow{background:#d0e8d0;color:#2d7a2d}
+  body.forti .pill.deny{background:#e8d0d0;color:#c43838}
+  body.forti .pill.dir{background:#d0d8e8;color:#4a6a8a}
+  body.forti .kpi{border:1px solid #b4bcb4}
+  body.forti .kpi b{color:#2d5a2d}
+  body.forti .kpi span{color:#5a6a5a}
+  body.forti .row{border-color:#d4ddd4}
+  body.forti .bar{background:#2d7a2d}
+  body.forti .bar.drop{background:#c43838}
+  body.forti .dot{box-shadow:0 0 4px currentColor}
+  body.forti .commitbar{background:#f0e8d0;border-color:#daa520;color:#5a4a10}
+  body.forti .commitbar.pending{background:#d0e8d0;border-color:#2d8a2d;color:#1a4a1a}
+  body.forti .chip.obj{background:#e4ece4;border-color:#b4c4b4;color:#2d5a2d}
+  body.forti .chip.svc{background:#e4e0ec;border-color:#b4b0c4;color:#4a3a6a}
+  body.forti .chip.abuse{background:#ecd0d0;border-color:#c49090;color:#a03030}
+  body.forti .chip.if{background:#d0e8d0;border-color:#90c490;color:#2d6a2d}
+  body.forti .chip.zone{background:#d0dce8;border-color:#90a8c4;color:#2d5a7a}
+  body.forti .chip.nat{background:#e8dcc0;border-color:#c4a850;color:#5a4a10}
+  body.forti .drawer .drawercard{box-shadow:-8px 0 30px #0003}
+  body.forti input,body.forti select,body.forti textarea{background:#fff;border-color:#b4bcb4}
+  body.forti .warn{background:#f0e8d0;border-color:#daa520;color:#5a4a10}
   *{box-sizing:border-box}
   body{margin:0;font:14px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--fg)}
   .app{display:grid;grid-template-columns:210px 1fr;min-height:100vh}
@@ -998,12 +1019,12 @@ $('#v-objects').addEventListener('click',e=>{
   const item=e.target.closest('.objitem.editable');if(item){editObj(item.dataset.kind,+item.dataset.i);return;}
 });
 $('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer')closeDrawer();});
-const THEMES=['dark','light','fortigate'];
-const THEME_ICONS={dark:'◐ dark',light:'◑ light',fortigate:'🛡 fortigate'};
+const THEMES=['dark','light','forti'];
+const THEME_ICONS={dark:'◐ dark',light:'◑ light',forti:'🛡 forti'};
 function applyTheme(t){
-  document.body.classList.remove('light','fortigate');
+  document.body.classList.remove('light','forti');
   if(t==='light')document.body.classList.add('light');
-  if(t==='fortigate')document.body.classList.add('fortigate');
+  if(t==='forti')document.body.classList.add('forti');
   const btn=$('#themebtn');if(btn){btn.textContent=THEME_ICONS[t]||'◐ dark';btn.title='Theme: '+t+' (click to switch)';}
 }
 function cycleTheme(){
