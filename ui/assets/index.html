@@ -92,6 +92,10 @@
   .pill{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
   .pill.allow{background:#0e3a2a;color:var(--ok)}.pill.deny{background:#3a1420;color:var(--drop)}
   .pill.dir{background:#16233d;color:var(--acc2)}
+  .alert{padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;display:flex;align-items:center;gap:8px}
+  .alert.crit{background:#3a1418;border:1px solid var(--drop);color:#ff8090}
+  .alert.warn{background:#3a2a12;border:1px solid var(--warnc);color:var(--warnc)}
+  .alert .icon{font-size:16px}
   .mono{font-family:ui-monospace,monospace;font-size:12px}
   .ipl{cursor:pointer;border-bottom:1px dotted var(--mut)}.ipl:hover{color:var(--acc2)}
   .muted{color:var(--mut)}
@@ -227,6 +231,7 @@
 
     <!-- DASHBOARD -->
     <section class="view active" id="v-dashboard">
+      <div id="alerts"></div>
       <div id="logwarn" class="warn" style="display:none">Drop logging is off — map &amp; drop stats stay empty. Set <code>LOG_DROPS="1"</code> in <code>/etc/nftgeo/config</code> and apply.</div>
       <div class="kpis">
         <div class="kpi"><b id="k-total">0</b><span>drops / 24h</span></div>
@@ -246,6 +251,15 @@
           <div class="card" style="margin-top:14px"><h3>Top destination countries (egress)</h3><div id="cc-out"></div></div>
           <div class="card" style="margin-top:14px"><h3>Top blocked ports</h3><div id="ports"></div></div>
         </div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>Top source IPs <select id="topip-range" onchange="loadTopIPs()" style="float:right;font-size:12px;background:var(--bg);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:2px 6px">
+          <option value="1h">last 1h</option>
+          <option value="6h">last 6h</option>
+          <option value="24h" selected>last 24h</option>
+          <option value="168h">last 7d</option>
+        </select></h3>
+        <div id="topip"></div>
       </div>
     </section>
 
@@ -482,6 +496,27 @@ function sparkline(el,data){data=data||[];const w=300,ht=52,max=Math.max(1,...da
   el.innerHTML=`<svg viewBox="0 0 ${w} ${ht}" width="100%" height="${ht}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="var(--drop)" stroke-width="2"/></svg>
     <div class="muted" style="font-size:11px;display:flex;justify-content:space-between"><span>-24h</span><span>peak ${max}/h</span><span>now</span></div>`;}
 
+async function loadTopIPs(){
+  const sel=$('#topip-range');const range=sel?sel.value:'24h';
+  try{
+    const now=Math.floor(Date.now()/1000);
+    const from=now-{'1h':3600,'6h':21600,'24h':86400,'168h':604800}[range];
+    const r=await j('/api/top-ips?from='+from+'&limit=20');
+    const ips=r.ips||[];
+    $('#topip').innerHTML=ips.length?'<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px">#</th><th style="text-align:left;padding:4px 8px">IP</th><th style="text-align:right;padding:4px 8px">Hits</th><th style="text-align:left;padding:4px 8px">CC</th><th style="text-align:right;padding:4px 8px">Last seen</th></tr></thead><tbody>'+
+      ips.map((ip,i)=>`<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 8px;color:var(--mut)">${i+1}</td><td style="padding:4px 8px" class="mono ipl" onclick="lookup('${ip.ip}')">${esc(ip.ip)}</td><td style="padding:4px 8px;text-align:right"><b>${ip.hits}</b></td><td style="padding:4px 8px">${esc(ip.cc||'')}</td><td style="padding:4px 8px;text-align:right;color:var(--mut)">${ip.last?new Date(ip.last*1000).toLocaleTimeString():''}</td></tr>`).join('')+
+      '</tbody></table>':'<div class="muted" style="padding:12px">No drops recorded yet.</div>';
+  }catch(e){$('#topip').innerHTML='<div class="muted">stats unavailable</div>';}
+}
+function renderAlerts(list){
+  const el=$('#alerts');if(!el)return;
+  if(!list||!list.length){el.innerHTML='';el.style.display='none';return;}
+  el.style.display='block';
+  el.innerHTML=list.map(a=>{
+    const icon=a.level==='crit'?'⛔':'⚠';
+    return `<div class="alert ${a.level}"><span class="icon">${icon}</span><span>${esc(a.msg)}</span></div>`;
+  }).join('');
+}
 async function refresh(){
   try{
     const s=await j('/api/status');
@@ -496,6 +531,8 @@ async function refresh(){
     $('#k-total').textContent=d.total; $('#k-in').textContent=ing; $('#k-out').textContent=egr;
     bars($('#cc-in'),d.ingressByCC,'drop'); bars($('#cc-out'),d.egressByCC,''); bars($('#ports'),d.topPorts,'');
     sparkline($('#spark'),d.timeline);
+    try{renderAlerts(await j('/api/alerts'));}catch(e){}
+    loadTopIPs();
     try{const g=await j('/api/geo');$('#geonote').textContent=`· ${g.countries} countries indexed${g.full?'':' (rule-set only — set GEO_FULL=1 for global)'}`;}catch(e){}
     if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;try{map.series.regions[0].setValues(vals);}catch(e){}}
     renderLogs();

@@ -225,6 +225,19 @@ hosts and **zones** (named interface lists, incl. VLANs, with a click-to-add
 interface picker). Edits stage to a draft and deploy via **Commit**
 (validate → plan diff → apply with a deadman countdown + one-click rollback).
 
+**Alerts banner:** the dashboard shows an alert bar at the top for: feeds
+not loaded, packet-forwarding disabled (when NAT rules exist), stale
+blocklist feeds, and drop-traffic spikes (detected via `/api/alerts`).
+Alerts auto-dismiss when resolved.
+
+**Top-IP stats:** a table on the dashboard lists the top source IPs by
+drop count (`/api/top-ips`, time-range filterable), backed by an
+in-memory stats store.
+
+**Templates:** the Templates drawer now ships 6 built-in presets
+(`mail-server`, `wireguard`, `ssh-lockdown`, plus the original 3) —
+import one to jump-start a common policy.
+
 ---
 
 ## Files

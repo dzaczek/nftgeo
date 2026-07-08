@@ -162,7 +162,7 @@ source of truth. Localhost-only by default.
   countries (today it only geolocates cached zones).
 - [x] **M6A.6** world map of drops by country (jsVectorMap), ingress focus.
 - [x] **M6A.7** live stats — top source countries, top blocked ports; auto-refresh.
-- [ ] **M6A.7b** drops-over-time chart (time series).
+- [x] **M6A.7b** drops-over-time chart (time series).
 - [~] **M6A.8** offline map assets (bundle jsVectorMap), prebuilt release binaries,
   hardened service (drop root/caps), tests. *(Map assets vendored & served from
   `/vendor/` in 1.17.1 — no CDN; release binaries / hardening still open.)*
@@ -230,10 +230,15 @@ count.
   1.17.0: root-minted per-session tokens, single-use read-write with inactivity
   TTL, long-lived read-only; TLS still expected via a front proxy.)*
 
-### Phase C — polish 📋
-- [ ] **M6C.1** template library / presets.
-- [ ] **M6C.2** saved dashboard layouts.
-- [ ] **M6C.3** alerts (drop spikes, stale feeds, failed runs).
+### Phase C — polish ✅
+- [x] **M6C.1** template library / presets (6 built-in presets: `mail-server`,
+  `wireguard`, `ssh-lockdown`, plus the original 3).
+- [~] **M6C.2** saved dashboard layouts — **skipped** (not worth the complexity;
+  focus on template presets instead).
+- [x] **M6C.3** alerts (drop spikes, stale feeds, failed runs) — `/api/alerts`
+  endpoint, `detectSpike`, `buildAlerts`, banner in dashboard UI.
+- [x] **M6C.4** in-memory stats store + Top-IP stats — `/api/top-ips` endpoint
+  with time-range filtering, 50 MB cap, periodic disk dump.
 
 ## Backlog (unscheduled ideas)
 
