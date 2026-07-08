@@ -941,7 +941,7 @@ var (
 
 	sessMu    sync.Mutex
 	sessions  = map[string]*uiSession{}
-	usedNonce = map[string]bool{}
+	usedNonce = map[string]time.Time{} // nonce -> time added; pruned in sweepSessions
 )
 
 type uiSession struct {
@@ -1029,12 +1029,12 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sessMu.Lock()
 	if mode == "rw" { // full-access bootstrap tokens are single-use
-		if usedNonce[nonce] {
+		if _, used := usedNonce[nonce]; used {
 			sessMu.Unlock()
 			http.Error(w, `{"error":"token already used"}`, http.StatusUnauthorized)
 			return
 		}
-		usedNonce[nonce] = true
+		usedNonce[nonce] = time.Now()
 	}
 	sid := randHex(24)
 	sessions[sid] = &uiSession{mode: mode, last: time.Now()}
@@ -1083,6 +1083,14 @@ func sweepSessions() {
 		for id, s := range sessions {
 			if time.Since(s.last) > sessionTTL {
 				delete(sessions, id)
+			}
+		}
+		// Prune nonces older than 24h — they can't be replayed after the
+		// token expires (rw tokens expire after 10 min, ro after 90 days,
+		// but ro tokens aren't tracked in usedNonce). 24h is a safe margin.
+		for n, t := range usedNonce {
+			if time.Since(t) > 24*time.Hour {
+				delete(usedNonce, n)
 			}
 		}
 		sessMu.Unlock()
