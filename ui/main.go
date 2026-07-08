@@ -216,6 +216,7 @@ func health(ch []Chain) map[string]interface{} {
 	// ABUSE_FEEDS netsets; abuseSources() covers both, so the dashboard widget
 	// matches the Reference tab instead of silently omitting AbuseIPDB.
 	h["feeds"] = abuseSources()
+	h["abuseLoaded"] = abuseLoadedCount()
 	return h
 }
 
@@ -1154,7 +1155,7 @@ func objects() map[string]interface{} {
 	}
 	return map[string]interface{}{"groups": groups, "regions": regions,
 		"whitelist": wl, "whitelistHosts": wlh, "feeds": feeds,
-		"zones": zoneNames(), "abuseSources": abuseSources(),
+		"zones": zoneNames(), "abuseSources": abuseSources(), "abuseLoaded": abuseLoadedCount(),
 		"lists": []map[string]string{}}
 }
 
@@ -1250,6 +1251,15 @@ func abuseSources() []map[string]interface{} {
 		}
 	}
 	return out
+}
+
+// abuseLoadedCount is the number of unique entries actually in the abuse sets.
+// The engine writes the deduplicated, scrubbed, CIDR-aggregated set to STATE_DIR
+// after each run, so this is the real total loaded into the firewall. Per-source
+// counts overlap (one IP can be on many feeds), so their sum is always larger.
+func abuseLoadedCount() int {
+	return countLines(filepath.Join(stateDir, "abuse4.set")) +
+		countLines(filepath.Join(stateDir, "abuse6.set"))
 }
 
 // ---- per-IP lookup: reverse DNS + RDAP (whois) -----------------------------

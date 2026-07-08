@@ -8,6 +8,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.53.0] - 2026-07-08
+
+### Added
+- **Deduplicated abuse total.** The dashboard now shows how many unique IPs/ranges
+  are actually loaded into the abuse sets — read from the engine's on-disk,
+  merged, scrubbed and CIDR-aggregated set — instead of only summing the
+  per-source feed counts. The same IP on several feeds is counted once, so the
+  headline "abuse IPs" tile and the Abuse sources card now show the real total
+  next to the (larger) sum of sources, making feed overlap obvious.
+
 ## [1.52.1] - 2026-07-08
 
 ### Fixed

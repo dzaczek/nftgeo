@@ -564,10 +564,13 @@ async function refresh(){
     try{const g=await j('/api/geo');$('#geonote').textContent=`· ${g.countries} countries indexed${g.full?'':' (rule-set only — set GEO_FULL=1 for global)'}`;}catch(e){}
     if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;try{map.series.regions[0].setValues(vals);}catch(e){}}
     renderLogs();
-    // abuse IPs tile from the (cheap) feed counts in health, not /api/sets —
-    // listing the abuse set can be huge, so it must not run on every refresh.
-    const abuseIPs=(s.health&&s.health.feeds||[]).reduce((a,f)=>a+(f.count||0),0);
+    // abuse IPs tile: the deduplicated count the engine writes to disk, not the
+    // sum of per-source feed counts (those overlap — one IP on many lists). Falls
+    // back to the source sum on an older engine. Never lists the (huge) live set.
+    const abuseSum=(s.health&&s.health.feeds||[]).reduce((a,f)=>a+(f.count||0),0);
+    const abuseIPs=(s.health&&s.health.abuseLoaded)||abuseSum;
     $('#k-abuse').textContent=abuseIPs.toLocaleString();
+    $('#k-abuse').title=`${abuseIPs.toLocaleString()} unique IPs/ranges loaded (deduplicated). Sources sum to ${abuseSum.toLocaleString()} before overlap is removed.`;
     refreshCommitBar();
   }catch(e){console.error(e);}
 }
@@ -1050,7 +1053,11 @@ async function loadObjects(){
   $('#o-regions').innerHTML=objBlock(o.regions);
   const wl=[...(o.whitelist||[]).map(x=>['ip',x]),...(o.whitelistHosts||[]).map(x=>['host',x])];
   $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
-  $('#o-feeds').innerHTML=(o.abuseSources||[]).length?o.abuseSources.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
+  const asrc=o.abuseSources||[];
+  const asum=asrc.reduce((a,s)=>a+(s.count||0),0);
+  const auniq=o.abuseLoaded||0;
+  const ahead=asrc.length?`<div class="row" style="border-bottom:1px solid var(--line);margin-bottom:6px;padding-bottom:6px" title="One IP can appear on several lists. Sources are merged and deduplicated (plus CIDR-aggregated) before loading, so the unique total is smaller than the sum of the sources."><span><b>Unique loaded</b> <span class="muted">(deduplicated)</span></span><span><b style="color:var(--ok)">${auniq.toLocaleString()}</b> IPs <span class="muted">· sources sum ${asum.toLocaleString()}</span></span></div>`:'';
+  $('#o-feeds').innerHTML=asrc.length?ahead+asrc.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
   try{window.SETS=await j('/api/sets');}catch(e){window.SETS=[];}
   $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count<0?'<span class="muted" title="not counted — see abuse sources">—</span>':x.count.toLocaleString()}</span></div>`).join('')||'<span class="muted">none</span>';
   const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[],lists:d.lists||[],feeds:d.feeds||[]}; renderManaged();
