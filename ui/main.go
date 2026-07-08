@@ -332,7 +332,7 @@ func setCount(name string) int {
 
 type geoIndex struct {
 	mu    sync.RWMutex
-	v4    map[byte][]v4net   // first octet -> nets
+	v4    map[byte][]v4net    // first octet -> nets
 	v6    map[[2]byte][]v6net // first two bytes -> nets
 	when  time.Time
 	count int
