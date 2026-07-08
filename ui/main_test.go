@@ -137,7 +137,7 @@ func TestParseDraftRulesFields(t *testing.T) {
 		t.Fatalf("got %d items, want 4", len(items))
 	}
 	r := items[0]
-	if r.Kind != "rule" || r.Action != "allow" || r.Dir != "in" || r.Port != "22" || r.Name != "ssh" {
+	if r.Kind != "filter" || r.Action != "allow" || r.Dir != "in" || r.Port != "22" || r.Name != "ssh" {
 		t.Errorf("rule0 parsed wrong: %+v", r)
 	}
 	if items[1].Kind != "section" || items[1].Title != "Web" {
@@ -148,6 +148,49 @@ func TestParseDraftRulesFields(t *testing.T) {
 	}
 	if items[3].Iface != "eth0" {
 		t.Errorf("item3 iface: %+v", items[3])
+	}
+}
+
+func TestParseDraftRulesNatZone(t *testing.T) {
+	in := "masquerade on eth0\n" +
+		"snat out on eth0 to 203.0.113.7\n" +
+		"dnat tcp 8080 to 10.0.0.5:80 on eth0\n" +
+		"allow lan -> dmz tcp 80\n" +
+		"deny dmz -> lan any - # lockdown\n" +
+		"allow wan -> dmz tcp 443 from europe\n"
+	items, tail := parseDraftRules(in)
+	if len(items) != 6 {
+		t.Fatalf("got %d items, want 6", len(items))
+	}
+	// NAT rows: kind=nat, verbatim Text, iface surfaced, never a filter row.
+	for i := 0; i < 3; i++ {
+		if items[i].Kind != "nat" {
+			t.Errorf("item%d kind=%q, want nat: %+v", i, items[i].Kind, items[i])
+		}
+		if items[i].Action != "" || items[i].Dir != "" || items[i].Target != "" {
+			t.Errorf("item%d leaked filter fields: %+v", i, items[i])
+		}
+	}
+	if items[0].Text != "masquerade on eth0" || items[0].Iface != "eth0" {
+		t.Errorf("masquerade parsed wrong: %+v", items[0])
+	}
+	if items[2].Iface != "eth0" {
+		t.Errorf("dnat iface: %+v", items[2])
+	}
+	// Zone rows: kind=zone, src/dst/proto/port, and Proto must not be "->".
+	z := items[3]
+	if z.Kind != "zone" || z.Action != "allow" || z.Src != "lan" || z.Dst != "dmz" || z.Proto != "tcp" || z.Port != "80" {
+		t.Errorf("zone rule parsed wrong: %+v", z)
+	}
+	if items[4].Kind != "zone" || !(items[4].Action == "deny") || items[4].Name != "lockdown" {
+		t.Errorf("zone deny parsed wrong: %+v", items[4])
+	}
+	if items[5].Geo != "europe" {
+		t.Errorf("zone from-geo not captured: %+v", items[5])
+	}
+	// Round-trip must be byte-identical (verbatim Body + name preserved).
+	if got := serializeDraftRules(items, tail); got != in {
+		t.Errorf("round-trip mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, in)
 	}
 }
 

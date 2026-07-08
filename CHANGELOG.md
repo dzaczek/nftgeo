@@ -9,6 +9,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.40.0] - 2026-07-08
+
+### Fixed
+- **nftgeo-ui: NAT and inter-zone rules are now first-class in the policy table.**
+  Previously the panel mis-parsed a zone rule (`allow lan -> dmz tcp 80`) into the
+  filter columns (`Dir=lan, Proto=->`) and hid NAT rules (masquerade/snat/dnat)
+  entirely. The draft/policy parser now classifies these into `nat` and `zone`
+  row kinds: NAT renders as a verbatim badge, zone as source→destination zone
+  chips with service/verdict/geo. They round-trip losslessly and — because the
+  classic rule drawer would corrupt their grammar — clicking one opens the Raw
+  editor. `/api/policy` classifies them too. (Full inline NAT/zone editor drawers
+  are still to come; author them via Raw or the config for now.)
+
 ## [1.39.1] - 2026-07-08
 
 ### Fixed
@@ -699,6 +712,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.40.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.40.0
 [1.39.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.39.1
 [1.39.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.39.0
 [1.38.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.38.0

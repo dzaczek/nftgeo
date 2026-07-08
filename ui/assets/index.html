@@ -82,6 +82,9 @@
   .chip.obj{background:#182238;border-color:#2b3d63;color:#cfe0ff}
   .chip.thr{background:#2a2410;border-color:#5e5018;color:#f4d98a}
   .pill.thr{background:#3a2f12;color:#f4d98a}
+  .chip.zone{background:#0f2b2e;border-color:#1f5058;color:#7fd6e0}
+  .chip.nat{background:#33230f;border-color:#5e4518;color:#f0bd84}
+  .pill.nat{background:#3a2a12;color:#f0bd84}
   .chip.any{opacity:.65}
   .poltable td{vertical-align:middle}
   .hnd{white-space:nowrap}
@@ -505,6 +508,28 @@ function rowHTML(r,n,ro,multi){
   }
   const tog=`<span class="tog ${r.disabled?'':'on'}" ${ro?'':'data-toggle="1"'} title="${r.disabled?'disabled':'enabled'}"></span>`;
   const ifchip=r.iface?` <span class="chip if" title="interface">${esc(r.iface)}</span>`:'';
+  const namecell=`<td>${r.name?esc(r.name):'<span class="muted">—</span>'}</td>`;
+  const dash='<td style="text-align:right"><span class="muted">—</span></td>';
+  const hnd=`<td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${n}</span></td>`;
+  // NAT rules (masquerade/snat/dnat) have no src→dst/service shape: show the
+  // verbatim rule with a NAT badge. Edited via the Raw editor (see click handler).
+  if(r.kind==='nat'){
+    return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+      ${hnd}<td>${tog}</td>${namecell}
+      <td colspan="3"><span class="chip nat" title="NAT rule — edit via Raw">${esc(r.text||r.body||'')}</span></td>
+      <td><span class="pill nat">NAT</span></td>${dash}${fcell}</tr>`;
+  }
+  // Inter-zone rules: source zone → destination zone, service, verdict.
+  if(r.kind==='zone'){
+    const zc=x=>`<span class="chip zone" title="zone">${esc(x||'?')}</span>`;
+    const g=r.geo?` <span class="chip zone" title="source geo">from ${esc(r.geo)}</span>`:'';
+    const zact=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
+    const zsvc=`<span class="chip svc">${esc(r.proto)}${r.port&&r.port!=='-'?'/'+esc(r.port):''}</span>${g}`;
+    return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+      ${hnd}<td>${tog}</td>${namecell}
+      <td>${zc(r.src)}</td><td>${zc(r.dst)}</td><td>${zsvc}</td>
+      <td>${zact}</td>${dash}${fcell}</tr>`;
+  }
   let s, d, svcc, act, hits;
   if(r.action==='throttle'){
     s=`<span class="chip thr" title="max new connections per source">≤ ${esc(r.rate||'')}</span>`;
@@ -546,6 +571,9 @@ $('#policy').addEventListener('click',async e=>{
   if(row.classList.contains('secrow')){sectionDrawer(file,id);return;}
   const r=findRule(file,id);
   if(r&&r.action==='throttle'){throttleDrawer(file,id);return;}
+  // NAT / inter-zone rules have their own grammar; the classic rule drawer would
+  // mangle them, so edit them safely in the Raw file editor.
+  if(r&&(r.kind==='nat'||r.kind==='zone')){rawEditor(file);return;}
   const chip=e.target.closest('.chip.obj,.chip.any,.chip.abuse');
   if(chip){inlineTarget(row,chip);return;}
   ruleDrawer(file,id);

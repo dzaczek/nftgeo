@@ -533,16 +533,44 @@ func logDropsOn() bool {
 
 type PolicyRule struct {
 	Num     int    `json:"num"`
+	Kind    string `json:"kind,omitempty"` // "" (filter) | "zone" | "nat"
 	Action  string `json:"action"`
 	Dir     string `json:"dir"`
 	Proto   string `json:"proto"`
 	Port    string `json:"port"`
 	Target  string `json:"target"`
 	Iface   string `json:"iface"`
+	Src     string `json:"src,omitempty"`  // zone: source zone
+	Dst     string `json:"dst,omitempty"`  // zone: destination zone
+	Geo     string `json:"geo,omitempty"`  // zone: optional "from <geo>"
+	Text    string `json:"text,omitempty"` // nat: verbatim rule text
 	Comment string `json:"comment"`
 	File    string `json:"file"`
 	Hits    int64  `json:"hits"`
 	Matched bool   `json:"matched"`
+}
+
+// ruleKind classifies a rules.conf line's fields into a policy-table row kind.
+// NAT (masquerade/snat/dnat) and inter-zone ("<z> -> <z>") rules are not classic
+// filter rules and must not be parsed into the action/dir/proto/port slots.
+func ruleKind(f []string) string {
+	if len(f) == 0 {
+		return ""
+	}
+	switch f[0] {
+	case "masquerade", "snat", "dnat":
+		return "nat"
+	case "throttle":
+		return "throttle"
+	case "allow", "deny":
+		for _, t := range f {
+			if t == "->" {
+				return "zone"
+			}
+		}
+		return "filter"
+	}
+	return ""
 }
 
 // ruleComment reproduces the "nftgeo:<line>" tag the engine stamps on every rule
@@ -642,17 +670,43 @@ func policy() []PolicyRule {
 				line = line[:i]
 			}
 			fields := strings.Fields(line)
-			if len(fields) < 5 || (fields[0] != "allow" && fields[0] != "deny") {
+			var pr PolicyRule
+			switch ruleKind(fields) {
+			case "filter":
+				if len(fields) < 5 {
+					continue
+				}
+				pr = PolicyRule{Action: fields[0], Dir: fields[1], Proto: fields[2], Port: fields[3], Target: fields[4]}
+				for i := 5; i < len(fields)-1; i++ {
+					if fields[i] == "on" {
+						pr.Iface = fields[i+1]
+					}
+				}
+			case "zone":
+				if len(fields) < 6 {
+					continue
+				}
+				pr = PolicyRule{Kind: "zone", Action: fields[0], Src: fields[1], Dst: fields[3], Proto: fields[4], Port: fields[5]}
+				if len(fields) >= 8 && fields[6] == "from" {
+					pr.Geo = fields[7]
+				}
+			case "nat":
+				if len(fields) < 3 {
+					continue
+				}
+				pr = PolicyRule{Kind: "nat", Text: strings.Join(fields, " ")}
+				for i := 1; i < len(fields)-1; i++ {
+					if fields[i] == "on" {
+						pr.Iface = fields[i+1]
+					}
+				}
+			default: // throttle & unknown: not shown in the read-only policy list
 				continue
 			}
 			n++
-			pr := PolicyRule{Num: n, Action: fields[0], Dir: fields[1], Proto: fields[2],
-				Port: fields[3], Target: fields[4], Comment: comment, File: base}
-			for i := 5; i < len(fields)-1; i++ {
-				if fields[i] == "on" {
-					pr.Iface = fields[i+1]
-				}
-			}
+			pr.Num = n
+			pr.Comment = comment
+			pr.File = base
 			out = append(out, pr)
 		}
 	}
@@ -1441,6 +1495,10 @@ type draftRule struct {
 	Iface    string   `json:"iface"`
 	Rate     string   `json:"rate,omitempty"` // throttle only
 	Ban      string   `json:"ban,omitempty"`  // throttle only
+	Src      string   `json:"src,omitempty"`  // zone: source zone
+	Dst      string   `json:"dst,omitempty"`  // zone: destination zone
+	Geo      string   `json:"geo,omitempty"`  // zone: optional "from <geo>"
+	Text     string   `json:"text,omitempty"` // nat: verbatim rule text
 	Name     string   `json:"name"`
 	Body     string   `json:"body"`
 	Trivia   []string `json:"-"`
@@ -1452,7 +1510,7 @@ var sectionRe = regexp.MustCompile(`^#{2,}\s*(.*?)\s*#*$`)
 
 // ruleFields splits a candidate rule line into fields + trailing comment, and
 // reports whether it is a valid allow/deny rule.
-func ruleFields(s string) (fields []string, body, comment string, ok bool) {
+func ruleFields(s string) (fields []string, body, comment, kind string, ok bool) {
 	body = s
 	if i := strings.Index(body, "#"); i >= 0 {
 		comment = strings.TrimSpace(body[i+1:])
@@ -1460,18 +1518,29 @@ func ruleFields(s string) (fields []string, body, comment string, ok bool) {
 	}
 	body = strings.TrimSpace(body)
 	f := strings.Fields(body)
-	if len(f) >= 5 && (f[0] == "allow" || f[0] == "deny" || f[0] == "throttle") {
-		return f, body, comment, true
+	switch ruleKind(f) {
+	case "filter", "throttle":
+		if len(f) >= 5 {
+			return f, body, comment, ruleKind(f), true
+		}
+	case "zone": // allow|deny <src> -> <dst> <proto> <port> [from <geo>]
+		if len(f) >= 6 {
+			return f, body, comment, "zone", true
+		}
+	case "nat": // masquerade on <if> | snat out on <if> to <ip> | dnat <proto> <port> to <ip>[:port] [on <if>]
+		if len(f) >= 3 {
+			return f, body, comment, "nat", true
+		}
 	}
-	return nil, "", "", false
+	return nil, "", "", "", false
 }
 
-func mkDraftRule(id int, disabled bool, f []string, body, comment string, trivia []string) *draftRule {
-	r := &draftRule{ID: id, Kind: "rule", Disabled: disabled, Body: body, Name: comment, Trivia: trivia,
-		Action: f[0], Dir: f[1], Proto: f[2], Port: f[3]}
-	if f[0] == "throttle" {
+func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, trivia []string) *draftRule {
+	r := &draftRule{ID: id, Kind: kind, Disabled: disabled, Body: body, Name: comment, Trivia: trivia}
+	switch kind {
+	case "throttle":
 		// throttle <dir> <proto> <port> <rate> [ban <dur>] [on <iface>]
-		r.Rate = f[4]
+		r.Action, r.Dir, r.Proto, r.Port, r.Rate = f[0], f[1], f[2], f[3], f[4]
 		for i := 5; i < len(f)-1; i++ {
 			switch f[i] {
 			case "on":
@@ -1480,12 +1549,26 @@ func mkDraftRule(id int, disabled bool, f []string, body, comment string, trivia
 				r.Ban = f[i+1]
 			}
 		}
-		return r
-	}
-	r.Target = f[4]
-	for i := 5; i < len(f)-1; i++ {
-		if f[i] == "on" {
-			r.Iface = f[i+1]
+	case "zone":
+		// allow|deny <src> -> <dst> <proto> <port> [from <geo>]
+		r.Action, r.Src, r.Dst, r.Proto, r.Port = f[0], f[1], f[3], f[4], f[5]
+		if len(f) >= 8 && f[6] == "from" {
+			r.Geo = f[7]
+		}
+	case "nat":
+		// masquerade/snat/dnat: surface the verbatim text and any "on <iface>".
+		r.Text = body
+		for i := 1; i < len(f)-1; i++ {
+			if f[i] == "on" {
+				r.Iface = f[i+1]
+			}
+		}
+	default: // filter
+		r.Action, r.Dir, r.Proto, r.Port, r.Target = f[0], f[1], f[2], f[3], f[4]
+		for i := 5; i < len(f)-1; i++ {
+			if f[i] == "on" {
+				r.Iface = f[i+1]
+			}
 		}
 	}
 	return r
@@ -1517,14 +1600,14 @@ func parseDraftRules(text string) ([]*draftRule, []string) {
 		}
 		if strings.HasPrefix(trimmed, "#") {
 			// A commented line that parses as a rule is a disabled rule.
-			if f, body, comment, ok := ruleFields(strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))); ok {
-				rules = append(rules, mkDraftRule(id, true, f, body, comment, trivia))
+			if f, body, comment, kind, ok := ruleFields(strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))); ok {
+				rules = append(rules, mkDraftRule(id, true, f, body, comment, kind, trivia))
 				id++
 				trivia = nil
 				continue
 			}
-		} else if f, body, comment, ok := ruleFields(trimmed); ok {
-			rules = append(rules, mkDraftRule(id, false, f, body, comment, trivia))
+		} else if f, body, comment, kind, ok := ruleFields(trimmed); ok {
+			rules = append(rules, mkDraftRule(id, false, f, body, comment, kind, trivia))
 			id++
 			trivia = nil
 			continue
@@ -1567,7 +1650,8 @@ func annotateDraft(rules []*draftRule, ctr map[string]int64) {
 	var prs []PolicyRule
 	var idx []int
 	for i, r := range rules {
-		if r.Disabled || r.Kind == "section" {
+		// nat/zone rules carry no "nftgeo:" counter comment, so they never match.
+		if r.Disabled || r.Kind == "section" || r.Kind == "nat" || r.Kind == "zone" {
 			continue
 		}
 		prs = append(prs, PolicyRule{Action: r.Action, Dir: r.Dir, Proto: r.Proto, Port: r.Port, Target: r.Target, Iface: r.Iface})

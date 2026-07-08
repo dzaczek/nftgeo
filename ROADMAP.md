@@ -196,7 +196,10 @@ count.
   (DROP red / ACCEPT green); Hits from the live counters. Row **drag-drop
   reorder** (top-down precedence), an **enable/disable toggle** (disabled = stored
   commented-out), and a live filter — all writing to the draft. Lossless parse
-  keeps each rule's trivia + verbatim body.
+  keeps each rule's trivia + verbatim body. *(1.40.0: also renders NAT
+  (masquerade/snat/dnat) and inter-zone (`<z> -> <z>`) rules as their own row
+  kinds — verbatim NAT badge, zone src→dst chips — instead of mis-columning
+  them; these are edited via the Raw editor. Full inline NAT/zone drawers TBD.)*
 - [x] **M6B.4 Rule editor drawer + inline edit.** *(Shipped 1.21.0.)* Add / edit /
   delete rules in the right drawer (action, direction, protocol, port, target with
   group/region autocomplete, `on <iface>`, name); click a target chip for an
