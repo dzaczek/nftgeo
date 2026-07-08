@@ -311,6 +311,7 @@
         <button class="tab" data-ot="services">Services</button>
         <button class="tab" data-ot="hosts">Hosts</button>
         <button class="tab" data-ot="zones">Zones</button>
+        <button class="tab" data-ot="lists">IP Lists</button>
         <button class="tab" data-ot="ref">Reference</button>
       </div>
       <div class="ot" id="ot-groups">
@@ -347,6 +348,13 @@
           <button class="btn-go" id="newzone">+ New zone</button>
         </div>
         <div class="card"><div id="o-zones-edit"></div></div>
+      </div>
+      <div class="ot" id="ot-lists" style="display:none">
+        <div class="filters" style="justify-content:space-between">
+          <span class="muted" style="align-self:center">Custom IP/CIDR lists — named blocklists you can use as rule targets (e.g. <code>deny in any - MYLIST</code>).</span>
+          <button class="btn-go" id="newlist">+ New list</button>
+        </div>
+        <div class="card"><div id="o-lists-edit"></div></div>
       </div>
       <div class="ot" id="ot-ref" style="display:none">
       <div class="grid g3">
@@ -557,7 +565,7 @@ async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};ZONES=o.zones||[];
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
   try{const od=await j('/api/objects/draft');SVCS=(od.services||[]).map(s=>s.name);
-    (od.groups||[]).concat(od.regions||[]).concat(od.hosts||[]).forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=g.members||[]);
+    (od.groups||[]).concat(od.regions||[]).concat(od.hosts||[]).concat(od.lists||[]).forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=g.members||[]);
     // include draft-defined zones (not yet deployed) in the rule-drawer autocomplete
     ZONES=[...new Set([...ZONES,...(od.zones||[]).map(z=>(z.name||'').toLowerCase())])];}catch(e){}
   await loadIfaces();
@@ -1022,12 +1030,12 @@ async function loadObjects(){
   $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
   $('#o-feeds').innerHTML=(o.abuseSources||[]).length?o.abuseSources.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
   $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
-  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[]}; renderManaged();
+  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[],lists:d.lists||[]}; renderManaged();
 }
 
 // ---- editable objects (M6B.2 groups/regions, M6B.7/services) ----
-let OBJ={groups:[],regions:[],services:[],hosts:[],zones:[]};
-function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:kind==='host'?OBJ.hosts:kind==='zone'?OBJ.zones:OBJ.services;}
+let OBJ={groups:[],regions:[],services:[],hosts:[],zones:[],lists:[]};
+function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:kind==='host'?OBJ.hosts:kind==='zone'?OBJ.zones:kind==='list'?OBJ.lists:OBJ.services;}
 function plainchip(m){return `<span class="chip">${esc(m)}</span>`;}
 function objEditList(arr,kind){
   if(!arr.length)return `<span class="muted">none yet — use “New ${kind}” to add one.</span>`;
@@ -1041,6 +1049,7 @@ function renderManaged(){
   $('#o-services-edit').innerHTML=objEditList(OBJ.services,'service');
   $('#o-hosts-edit').innerHTML=objEditList(OBJ.hosts,'host');
   $('#o-zones-edit').innerHTML=objEditList(OBJ.zones,'zone');
+  $('#o-lists-edit').innerHTML=objEditList(OBJ.lists,'list');
 }
 function switchObjTab(ot){$$('#obj-tabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.ot===ot));
   $$('.ot').forEach(s=>s.style.display='none');$('#ot-'+ot).style.display='';}
@@ -1061,7 +1070,8 @@ function editObj(kind,i){
     region:['custom region','Country codes (e.g. ru cn kp) and/or other region names.','ru cn kp','deny in any - ',''],
     service:['service','Ports (443), ranges (8000-8100), proto-tagged (53/udp), and/or other service names — space/comma separated. A bare port takes the rule’s protocol; a tagged port is fixed. Use proto <code>any</code>/<code>all</code> in a rule to emit every protocol the service defines.','80 443 53/udp','allow in tcp ',' any'],
     host:['host','A single IP or CIDR (or a few) — a named host usable as a rule target.','10.0.20.5','deny out any - ',''],
-    zone:['zone','Interfaces that make up this network segment — space/comma separated. VLAN subinterfaces (e.g. <code>eth0.100</code>) are just interfaces. Pick from the host below or type your own.','eth1 eth0.100','allow ',' -&gt; dmz tcp 80']}[kind];
+    zone:['zone','Interfaces that make up this network segment — space/comma separated. VLAN subinterfaces (e.g. <code>eth0.100</code>) are just interfaces. Pick from the host below or type your own.','eth1 eth0.100','allow ',' -&gt; dmz tcp 80'],
+    list:['IP list','IPs and CIDRs — space/comma separated. Use as a rule target to block or allow the whole list at once.','10.0.0.0/8 192.168.1.0/24 1.2.3.4','deny in any - ','']}[kind];
   $('#drawertitle').textContent=(isNew?'New ':'Edit ')+meta[0];
   $('#drawerbody').innerHTML=`
     <label class="fld"><span>Name</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="${kind==='service'?'WEB':kind==='zone'?'DMZ':'OFFICE'}" autocomplete="off"></label>
@@ -1086,11 +1096,11 @@ async function saveObj(kind,i){
 }
 async function deleteObj(kind,i){listFor(kind).splice(i,1);await putObjects();closeDrawer();}
 async function putObjects(){
-  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions,services:OBJ.services,hosts:OBJ.hosts,zones:OBJ.zones})});
+  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions,services:OBJ.services,hosts:OBJ.hosts,zones:OBJ.zones,lists:OBJ.lists})});
   if(r.status===401||r.status===403){showLock('Read-only session — cannot edit objects.');return;}
   const d=await r.json();
   if(d.error){toast('Rejected: '+d.error);return;}
-  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[],services:dd.services||[],hosts:dd.hosts||[],zones:dd.zones||[]};renderManaged();
+  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[],services:dd.services||[],hosts:dd.hosts||[],zones:dd.zones||[],lists:dd.lists||[]};renderManaged();
   refreshCommitBar();toast('Saved to draft.');
 }
 $('#v-objects').addEventListener('click',e=>{
@@ -1100,6 +1110,7 @@ $('#v-objects').addEventListener('click',e=>{
   if(e.target.id==='newservice'){editObj('service',-1);return;}
   if(e.target.id==='newhost'){editObj('host',-1);return;}
   if(e.target.id==='newzone'){editObj('zone',-1);return;}
+  if(e.target.id==='newlist'){editObj('list',-1);return;}
   const item=e.target.closest('.objitem.editable');if(item){editObj(item.dataset.kind,+item.dataset.i);return;}
 });
 $('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer')closeDrawer();});
