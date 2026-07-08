@@ -742,6 +742,199 @@ func annotate(rules []PolicyRule, ctr map[string]int64) {
 	}
 }
 
+// ---- alerts (M6C.3) --------------------------------------------------------
+
+type Alert struct {
+	Level string `json:"level"` // "crit" | "warn"
+	Kind  string `json:"kind"`  // "not-loaded" | "feed-stale" | "drop-spike"
+	Msg   string `json:"msg"`
+}
+
+const (
+	spikeFloor  = 200 // ignore anything below this many drops/hour
+	spikeFactor = 3   // ...and require >= 3x the baseline
+)
+
+// detectSpike inspects 24 hourly buckets (oldest first; index 23 = current,
+// still-filling hour). It judges index 22 (last COMPLETE hour) against the
+// median of indices 0..21. Returns spike?, that hour's count, and the baseline.
+func detectSpike(timeline []int) (bool, int, int) {
+	if len(timeline) < 23 {
+		return false, 0, 0
+	}
+	last := timeline[22]
+	if last < spikeFloor {
+		return false, 0, 0
+	}
+	// median of indices 0..21 (the 22 full hours before the last complete hour)
+	prior := make([]int, 22)
+	copy(prior, timeline[:22])
+	sort.Ints(prior)
+	baseline := prior[len(prior)/2] // median
+	if baseline == 0 {
+		// no baseline traffic at all — spike only if last hour is very high
+		return last >= spikeFloor*5, last, 0
+	}
+	return last >= baseline*spikeFactor, last, baseline
+}
+
+// buildAlerts is pure (no I/O) so it's unit-testable.
+func buildAlerts(loaded bool, feeds []map[string]interface{}, timeline []int) []Alert {
+	var out []Alert
+	if !loaded {
+		out = append(out, Alert{Level: "crit", Kind: "not-loaded",
+			Msg: "Firewall table not loaded — nftgeo ruleset is not active."})
+	}
+	for _, f := range feeds {
+		if fresh, _ := f["fresh"].(bool); !fresh {
+			name, _ := f["name"].(string)
+			ageH, _ := f["ageHours"].(int)
+			out = append(out, Alert{Level: "warn", Kind: "feed-stale",
+				Msg: fmt.Sprintf("Feed %s is stale (%dh old).", name, ageH)})
+		}
+	}
+	if sp, n, bl := detectSpike(timeline); sp {
+		out = append(out, Alert{Level: "warn", Kind: "drop-spike",
+			Msg: fmt.Sprintf("Drop spike: %d drops in the last hour (baseline ~%d/h).", n, bl)})
+	}
+	return out
+}
+
+// ---- in-memory stats store (M6C.4) -----------------------------------------
+// Keeps drop events in RAM for fast top-IP queries with time-range filtering.
+// Periodically dumps to disk (JSON) so stats survive restarts. Capped at
+// maxStatsBytes (default 50 MB) — oldest entries evicted first.
+
+const maxStatsBytes = 50 * 1024 * 1024 // 50 MB
+
+type statsEntry struct {
+	Ts     int64  `json:"ts"` // unix timestamp
+	Src    string `json:"src"`
+	CC     string `json:"cc"`
+	Port   string `json:"port"`
+	Reason string `json:"reason"`
+}
+
+var (
+	statsMu   sync.Mutex
+	statsData []statsEntry
+	statsFile = filepath.Join(stateDir, "ui-stats.json")
+)
+
+// recordStats ingests drops from the kernel log (called periodically).
+func recordStats(entries []statsEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	statsMu.Lock()
+	defer statsMu.Unlock()
+	statsData = append(statsData, entries...)
+	// enforce memory cap: evict oldest entries
+	sz := statsSize()
+	for sz > maxStatsBytes && len(statsData) > 0 {
+		statsData = statsData[1:]
+		sz = statsSize()
+	}
+}
+
+func statsSize() int {
+	// rough estimate: each entry ~100 bytes
+	return len(statsData) * 100
+}
+
+// topIPs returns top source IPs by drop count within [from, to] unix timestamps.
+func topIPs(from, to int64, limit int) []map[string]interface{} {
+	statsMu.Lock()
+	defer statsMu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	type cnt struct {
+		n    int
+		cc   string
+		last int64
+	}
+	m := map[string]*cnt{}
+	for _, e := range statsData {
+		if e.Ts < from || (to > 0 && e.Ts > to) {
+			continue
+		}
+		if c, ok := m[e.Src]; ok {
+			c.n++
+			if e.Ts > c.last {
+				c.last = e.Ts
+			}
+		} else {
+			m[e.Src] = &cnt{n: 1, cc: e.CC, last: e.Ts}
+		}
+	}
+	type kv struct {
+		ip   string
+		n    int
+		cc   string
+		last int64
+	}
+	var all []kv
+	for ip, c := range m {
+		all = append(all, kv{ip, c.n, c.cc, c.last})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].n > all[j].n })
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	out := make([]map[string]interface{}, len(all))
+	for i, a := range all {
+		out[i] = map[string]interface{}{
+			"ip":   a.ip,
+			"hits": a.n,
+			"cc":   a.cc,
+			"last": a.last,
+		}
+	}
+	return out
+}
+
+// dumpStats writes the in-memory stats to disk.
+func dumpStats() {
+	statsMu.Lock()
+	defer statsMu.Unlock()
+	b, err := json.Marshal(statsData)
+	if err != nil {
+		return
+	}
+	os.WriteFile(statsFile, b, 0600)
+}
+
+// loadStats reads persisted stats from disk on startup.
+func loadStats() {
+	b, err := os.ReadFile(statsFile)
+	if err != nil {
+		return
+	}
+	var entries []statsEntry
+	if json.Unmarshal(b, &entries) == nil {
+		statsMu.Lock()
+		statsData = entries
+		statsMu.Unlock()
+	}
+}
+
+// ingestDropsLog reads recent kernel drops and feeds them into the stats store.
+// Called on a ticker alongside the dashboard refresh.
+func ingestDropsLog() {
+	d := drops("-1h")
+	entries := make([]statsEntry, 0, len(d.Recent))
+	now := time.Now().Unix()
+	for _, dr := range d.Recent {
+		ts := now
+		if t, err := time.Parse(time.RFC3339, dr.Time); err == nil {
+			ts = t.Unix()
+		}
+		entries = append(entries, statsEntry{Ts: ts, Src: dr.Src, CC: dr.CC, Port: dr.Dport, Reason: dr.Reason})
+	}
+	recordStats(entries)
+}
+
 func ruleFiles() []string {
 	files := []string{rulesFile}
 	if ents, err := os.ReadDir(rulesDir); err == nil {
@@ -2077,6 +2270,15 @@ func builtinTemplates() []ruleTemplate {
 		{ID: "geo-drop", Name: "Basic Geo-Drop", Builtin: true,
 			Description: "Drop all ingress from a few common attack-source countries (edit to taste).",
 			Lines:       []string{"## Geo-Drop", "deny in any - cn # geo-drop", "deny in any - ru # geo-drop", "deny in any - kp # geo-drop"}},
+		{ID: "mail-server", Name: "Mail Server", Builtin: true,
+			Description: "Allow SMTP/IMAP from anywhere and block known abuse both ways.",
+			Lines:       []string{"## Mail server", "allow in tcp 25,465,587 any # smtp", "allow in tcp 993 any # imaps", "deny in any - abuse # abuse in", "deny out any - abuse # abuse out"}},
+		{ID: "wireguard", Name: "WireGuard Endpoint", Builtin: true,
+			Description: "Allow WireGuard UDP and SSH from a trusted admin subnet (edit target).",
+			Lines:       []string{"## WireGuard", "allow in udp 51820 any # wireguard", "allow in tcp 22 10.0.0.0/8 # admin ssh", "deny in any - abuse # abuse in"}},
+		{ID: "ssh-lockdown", Name: "SSH Lockdown", Builtin: true,
+			Description: "SSH only from a named admin group/object (create GROUP_ADMINS first).",
+			Lines:       []string{"## SSH lockdown", "allow in tcp 22 ADMINS # admin ssh", "deny in any - abuse # abuse in", "deny out any - abuse # abuse out"}},
 	}
 }
 
@@ -2724,6 +2926,16 @@ func main() {
 
 	reconcileCommit()
 
+	// Load persisted stats and start the ingest+dump ticker
+	loadStats()
+	go func() {
+		ingestDropsLog()
+		for range time.Tick(5 * time.Minute) {
+			ingestDropsLog()
+			dumpStats()
+		}
+	}()
+
 	geo.load()
 	go func() {
 		for range time.Tick(6 * time.Hour) {
@@ -2772,6 +2984,22 @@ func main() {
 	})
 	api("/api/baseline", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, baselineCounters())
+	})
+	api("/api/alerts", func(w http.ResponseWriter, r *http.Request) {
+		d := drops("")
+		writeJSON(w, buildAlerts(tableLoaded(), abuseSources(), d.Timeline))
+	})
+	api("/api/top-ips", func(w http.ResponseWriter, r *http.Request) {
+		fromStr := r.URL.Query().Get("from")
+		toStr := r.URL.Query().Get("to")
+		limitStr := r.URL.Query().Get("limit")
+		from, _ := strconv.ParseInt(fromStr, 10, 64)
+		to, _ := strconv.ParseInt(toStr, 10, 64)
+		limit, _ := strconv.Atoi(limitStr)
+		if from == 0 {
+			from = time.Now().Add(-24 * time.Hour).Unix()
+		}
+		writeJSON(w, map[string]interface{}{"ips": topIPs(from, to, limit)})
 	})
 	api("/api/objects", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, objects())

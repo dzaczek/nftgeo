@@ -352,3 +352,65 @@ func TestRuleComment(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectSpike(t *testing.T) {
+	cases := []struct {
+		name     string
+		timeline []int
+		want     bool
+	}{
+		{"flat-no-spike", []int{10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10}, false},
+		{"spike-3x-over-floor", []int{50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 600, 0}, true},
+		{"all-zeros", []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, false},
+		{"below-floor", []int{10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 100, 0}, false},
+		{"spike-no-baseline-5x", []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1100, 0}, true},
+		{"no-spike-no-baseline-below-5x", []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 500, 0}, false},
+		{"too-short", []int{1, 2, 3}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _, _ := detectSpike(c.timeline)
+			if got != c.want {
+				t.Errorf("detectSpike() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestBuildAlerts(t *testing.T) {
+	// not-loaded
+	alerts := buildAlerts(false, nil, nil)
+	if len(alerts) != 1 || alerts[0].Kind != "not-loaded" {
+		t.Fatalf("expected 1 not-loaded alert, got %+v", alerts)
+	}
+
+	// healthy — no alerts
+	healthyFeeds := []map[string]interface{}{
+		{"name": "AbuseIPDB", "fresh": true, "ageHours": 2},
+	}
+	flatTimeline := make([]int, 24)
+	alerts = buildAlerts(true, healthyFeeds, flatTimeline)
+	if len(alerts) != 0 {
+		t.Fatalf("expected 0 alerts for healthy state, got %+v", alerts)
+	}
+
+	// feed-stale
+	staleFeeds := []map[string]interface{}{
+		{"name": "EvilFeed", "fresh": false, "ageHours": 48},
+	}
+	alerts = buildAlerts(true, staleFeeds, flatTimeline)
+	if len(alerts) != 1 || alerts[0].Kind != "feed-stale" {
+		t.Fatalf("expected 1 feed-stale alert, got %+v", alerts)
+	}
+
+	// drop-spike
+	spikeTimeline := make([]int, 24)
+	for i := range spikeTimeline[:22] {
+		spikeTimeline[i] = 100
+	}
+	spikeTimeline[22] = 600 // 6x baseline, above floor
+	alerts = buildAlerts(true, healthyFeeds, spikeTimeline)
+	if len(alerts) != 1 || alerts[0].Kind != "drop-spike" {
+		t.Fatalf("expected 1 drop-spike alert, got %+v", alerts)
+	}
+}

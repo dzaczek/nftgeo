@@ -8,6 +8,20 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.48.0] - 2026-07-08
+
+### Added
+- **Alerts (M6C.3).** New `/api/alerts` endpoint with `detectSpike` (drop-spike
+  detection) and `buildAlerts` (not-loaded / feed-stale / drop-spike). A banner
+  in the dashboard UI surfaces current alerts.
+- **Template presets (M6C.1).** 3 new built-in template presets —
+  `mail-server`, `wireguard`, `ssh-lockdown` — bringing the total to 6.
+  Importable from the Templates drawer.
+- **Top-IP stats (M6C.4).** New `/api/top-ips` endpoint with time-range
+  filtering, backed by an in-memory stats store (50 MB cap, periodic disk dump).
+- **Drops-over-time chart (M6A.7b).** Time-series sparkline in the dashboard,
+  showing drop event volume over the last N minutes.
+
 ## [1.47.0] - 2026-07-08
 
 ### Added
