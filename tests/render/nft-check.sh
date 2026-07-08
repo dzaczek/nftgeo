@@ -17,6 +17,8 @@ for case_dir in "$here"/cases/*/; do
 	[ -f "$case_dir/config" ] && cfg="$case_dir/config"
 	tmp="$(mktemp -d)"
 	mkdir -p "$tmp/zones" "$tmp/rules.d" "$tmp/groups.d" "$tmp/state"
+	# a case may ship extra groups.d drop-ins (GROUP_/REGION_/SERVICE_/ZONE_ defs)
+	[ -d "$case_dir/groups.d" ] && cp "$case_dir"/groups.d/*.conf "$tmp/groups.d/" 2>/dev/null || true
 	if RENDER_ONLY=1 CONFIG_FILE="$cfg" RULES_FILE="$case_dir/rules.conf" RULES_DIR="$tmp/rules.d" \
 		GROUPS_DIR="$tmp/groups.d" ZONE_DIR="$tmp/zones" STATE_DIR="$tmp/state" \
 		"$engine" >/dev/null 2>"$tmp/err"; then
