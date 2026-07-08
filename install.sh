@@ -43,6 +43,16 @@ fi
 install -m 0644 "${BASE_DIR}/systemd/nftgeo.service" /etc/systemd/system/nftgeo.service
 install -m 0644 "${BASE_DIR}/systemd/nftgeo.timer" /etc/systemd/system/nftgeo.timer
 
+# Install the web UI if the binary ships alongside the engine (make build / release tarball).
+if [ -f "${BASE_DIR}/dist/nftgeo-ui-linux-amd64" ]; then
+	install -m 0755 "${BASE_DIR}/dist/nftgeo-ui-linux-amd64" /usr/local/sbin/nftgeo-ui
+elif [ -f "${BASE_DIR}/ui/nftgeo-ui" ]; then
+	install -m 0755 "${BASE_DIR}/ui/nftgeo-ui" /usr/local/sbin/nftgeo-ui
+fi
+if [ -f /usr/local/sbin/nftgeo-ui ] && [ -f "${BASE_DIR}/systemd/nftgeo-ui.service" ]; then
+	install -m 0644 "${BASE_DIR}/systemd/nftgeo-ui.service" /etc/systemd/system/nftgeo-ui.service
+fi
+
 systemctl daemon-reload
 systemctl enable nftgeo.service
 systemctl enable --now nftgeo.timer
@@ -51,3 +61,18 @@ echo "Installed nftgeo."
 echo "Edit /etc/nftgeo/config (ABUSEIPDB_API_KEY, WHITELIST, regions, groups)"
 echo "and /etc/nftgeo/rules.conf or /etc/nftgeo/rules.d/*.conf, then run:"
 echo "  systemctl start nftgeo.service"
+echo ""
+echo "Timer enabled — runs every 12h to refresh geo zones + abuse blocklists."
+echo "  systemctl list-timers nftgeo.timer   # check next run"
+if [ -f /usr/local/sbin/nftgeo-ui ]; then
+	echo ""
+	echo "Web dashboard (nftgeo-ui) installed. Enable with:"
+	echo "  systemctl enable --now nftgeo-ui"
+	echo "  nftgeo-ui token             # get a one-time read-write login link"
+	echo "  nftgeo-ui token --ro        # long-lived read-only link"
+else
+	echo ""
+	echo "Web dashboard (nftgeo-ui) not installed."
+	echo "Build it with: make build"
+	echo "Then re-run install.sh, or copy dist/nftgeo-ui-linux-amd64 to /usr/local/sbin/nftgeo-ui"
+fi
