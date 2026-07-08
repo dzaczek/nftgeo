@@ -135,16 +135,52 @@ func runV(name string, args ...string) string {
 	return strings.TrimSpace(out)
 }
 
+// shortFeed names an unlabeled feed from its cache filename (the URL with every
+// non-alphanumeric char replaced by '_'). It prefers a recognizable provider
+// token; "blocklist" is deliberately not one - it is a substring of many hosts
+// (e.g. blocklist.greensnow.co) and would shadow the real name. UI-added feeds
+// are labeled by the operator instead (see feedLabels).
 func shortFeed(f string) string {
-	for _, k := range []string{"firehol", "spamhaus", "blocklist", "greensnow"} {
+	for _, k := range []string{"abuseipdb", "greensnow", "firehol", "spamhaus", "emergingthreats", "dshield", "talos", "blocklist_de"} {
 		if strings.Contains(f, k) {
-			return k
+			return strings.ReplaceAll(k, "_", ".")
 		}
 	}
-	if len(f) > 24 {
-		return f[:24]
+	s := strings.TrimPrefix(f, "https___")
+	s = strings.TrimPrefix(s, "http___")
+	if len(s) > 24 {
+		s = s[:24]
 	}
-	return f
+	return s
+}
+
+// sanitizeFeedURL mirrors the engine's cache-file naming (tr -c 'A-Za-z0-9' '_'),
+// so a configured feed URL can be matched to its cached file on disk.
+func sanitizeFeedURL(u string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, u)
+}
+
+// feedLabels maps each UI-configured feed's cache-file name to the label the
+// operator gave it, so abuseSources shows "GREENSNOW" instead of guessing a
+// name from the URL.
+func feedLabels() map[string]string {
+	m := map[string]string{}
+	b, err := os.ReadFile(objLiveFile)
+	if err != nil {
+		return m
+	}
+	_, _, _, _, _, _, feeds := parseObjects(string(b))
+	for _, fd := range feeds {
+		for _, u := range fd.Members {
+			m[sanitizeFeedURL(u)] = fd.Name
+		}
+	}
+	return m
 }
 
 // health gathers the status widgets: next scheduled run, last load, feed
@@ -1201,10 +1237,15 @@ func abuseSources() []map[string]interface{} {
 	if fi, err := os.Stat(stateFile); err == nil {
 		add("AbuseIPDB", stateFile, fi)
 	}
+	labels := feedLabels()
 	if ents, err := os.ReadDir(feedsDir); err == nil {
 		for _, e := range ents {
 			if fi, err := e.Info(); err == nil {
-				add(shortFeed(e.Name()), filepath.Join(feedsDir, e.Name()), fi)
+				name := labels[e.Name()]
+				if name == "" {
+					name = shortFeed(e.Name())
+				}
+				add(name, filepath.Join(feedsDir, e.Name()), fi)
 			}
 		}
 	}

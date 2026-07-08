@@ -15,6 +15,11 @@ Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
   block prefix only from the cidr0 `v4prefix` field, which is absent for IPv6
   (those blocks use `v6prefix`), so every IPv6 drop rendered a nil range. It now
   uses whichever prefix the block carries and omits the row when neither exists.
+- **Abuse sources mislabeled custom feeds as "blocklist".** The dashboard guessed
+  a feed's name by substring-matching its URL, and the generic token "blocklist"
+  shadowed the real provider (e.g. a feed on `blocklist.greensnow.co` showed as
+  "blocklist" instead of "greensnow"). UI-added feeds now display the label the
+  operator gave them, and unlabeled feeds resolve to the actual provider name.
 
 ## [1.52.0] - 2026-07-08
 

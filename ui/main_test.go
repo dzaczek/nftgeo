@@ -491,3 +491,23 @@ func TestRDAPCIDRFamilies(t *testing.T) {
 		}
 	}
 }
+
+// A feed URL on a "blocklist.*" host must not be mislabeled "blocklist"; the
+// provider name (or the operator's FEED_ label) should win.
+func TestShortFeedNaming(t *testing.T) {
+	cases := map[string]string{
+		"https___blocklist_greensnow_co_greensnow_txt":                             "greensnow",
+		"https___iplists_firehol_org_files_firehol_level1_netset":                  "firehol",
+		"https___www_spamhaus_org_drop_drop_txt":                                   "spamhaus",
+		"https___raw_githubusercontent_com_borestad_blocklist_abuseipdb_main_ipv4": "abuseipdb",
+		"https___lists_blocklist_de_lists_all_txt":                                 "blocklist.de",
+	}
+	for in, want := range cases {
+		if got := shortFeed(in); got != want {
+			t.Errorf("shortFeed(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := sanitizeFeedURL("https://blocklist.greensnow.co/greensnow.txt"); got != "https___blocklist_greensnow_co_greensnow_txt" {
+		t.Errorf("sanitizeFeedURL mismatch: %q", got)
+	}
+}
