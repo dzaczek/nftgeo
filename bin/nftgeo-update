@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.43.0"
+NFTGEO_VERSION="1.44.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -491,26 +491,38 @@ parse_rules_file() {
 		lineno=$((lineno + 1))
 		case "$action" in ''|\#*) continue ;; esac
 
-		# Egress NAT (P3). Forms:
-		#   masquerade on <iface>              -> oifname <iface> masquerade
-		#   snat out on <iface> to <ip>        -> oifname <iface> snat to <ip>
+		# Egress NAT (P3). Forms (the WAN/outbound interface is required; the
+		# LAN/inbound interface is optional - masquerade on the WAN already scopes
+		# it correctly, "in <lan>" just restricts which source interface is NAT'd):
+		#   masquerade on <wan> [in <lan>]         -> [iifname <lan>] oifname <wan> masquerade
+		#   snat out on <wan> to <ip> [in <lan>]   -> [iifname <lan>] oifname <wan> snat to <ip>
 		# Re-tokenize the whole line (the fixed 6-field read doesn't fit these).
 		if [ "$action" = masquerade ] || [ "$action" = snat ]; then
 			# shellcheck disable=SC2086
 			set -- $action $dir $proto $port $geo ${_rest%%#*}
-			if [ "$1" = masquerade ]; then
-				[ "$2" = on ] && [ -n "${3:-}" ] || { echo "${rf}:${lineno}: usage: masquerade on <iface>" >&2; exit 1; }
-				_niface="$3"
-				case "$_niface" in ''|*[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: bad interface '${_niface}'" >&2; exit 1 ;; esac
-				printf 'masquerade %s\n' "$_niface" >> "$NAT_NORM"
+			_mkind="$1"; _mlan="-"; _mip=""
+			if [ "$_mkind" = masquerade ]; then
+				[ "$2" = on ] && [ -n "${3:-}" ] || { echo "${rf}:${lineno}: usage: masquerade on <wan> [in <lan>]" >&2; exit 1; }
+				_mwan="$3"; shift 3
 			else
 				[ "$2" = out ] && [ "$3" = on ] && [ -n "${4:-}" ] && [ "$5" = to ] && [ -n "${6:-}" ] || {
-					echo "${rf}:${lineno}: usage: snat out on <iface> to <ip>" >&2; exit 1; }
-				_niface="$4"; _nip="$6"
-				case "$_niface" in ''|*[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: bad interface '${_niface}'" >&2; exit 1 ;; esac
-				printf '%s' "$_nip" | grep -Eq "$IPV4_RE" || printf '%s' "$_nip" | grep -Eiq "$IPV6_RE" || {
-					echo "${rf}:${lineno}: snat target '${_nip}' must be an IP address" >&2; exit 1; }
-				printf 'snat %s %s\n' "$_niface" "$_nip" >> "$NAT_NORM"
+					echo "${rf}:${lineno}: usage: snat out on <wan> to <ip> [in <lan>]" >&2; exit 1; }
+				_mwan="$4"; _mip="$6"; shift 6
+			fi
+			if [ $# -gt 0 ]; then
+				[ "$1" = in ] && [ -n "${2:-}" ] || { echo "${rf}:${lineno}: expected 'in <lan>' after ${_mkind} rule" >&2; exit 1; }
+				_mlan="$2"
+			fi
+			for _mif in "$_mwan" "$_mlan"; do
+				[ "$_mif" = "-" ] && continue
+				case "$_mif" in *[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: bad interface '${_mif}'" >&2; exit 1 ;; esac
+			done
+			if [ "$_mkind" = masquerade ]; then
+				printf 'masquerade %s %s\n' "$_mwan" "$_mlan" >> "$NAT_NORM"
+			else
+				printf '%s' "$_mip" | grep -Eq "$IPV4_RE" || printf '%s' "$_mip" | grep -Eiq "$IPV6_RE" || {
+					echo "${rf}:${lineno}: snat target '${_mip}' must be an IP address" >&2; exit 1; }
+				printf 'snat %s %s %s\n' "$_mwan" "$_mlan" "$_mip" >> "$NAT_NORM"
 			fi
 			continue
 		fi
@@ -1389,14 +1401,16 @@ generate() {
 		if grep -Eq '^(masquerade|snat) ' "$NAT_NORM" 2>/dev/null; then
 			printf '\tchain postrouting {\n'
 			printf '\t\ttype nat hook postrouting priority srcnat; policy accept;\n'
-			while read -r _kind _if _ip; do
+			while read -r _kind _wan _lan _ip; do
+				# Optional inbound (LAN) interface scoping.
+				_pre=""; [ "${_lan:--}" = "-" ] || _pre="iifname \"${_lan}\" "
 				case "$_kind" in
-					masquerade) printf '\t\toifname "%s" counter masquerade\n' "$_if" ;;
+					masquerade) printf '\t\t%soifname "%s" counter masquerade\n' "$_pre" "$_wan" ;;
 					snat)
 						# inet table: snat needs the family (ip/ip6) spelled out.
 						case "$_ip" in
-							*:*) printf '\t\toifname "%s" counter snat ip6 to %s\n' "$_if" "$_ip" ;;
-							*)   printf '\t\toifname "%s" counter snat ip to %s\n' "$_if" "$_ip" ;;
+							*:*) printf '\t\t%soifname "%s" counter snat ip6 to %s\n' "$_pre" "$_wan" "$_ip" ;;
+							*)   printf '\t\t%soifname "%s" counter snat ip to %s\n' "$_pre" "$_wan" "$_ip" ;;
 						esac
 						;;
 				esac

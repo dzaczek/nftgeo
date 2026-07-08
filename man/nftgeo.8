@@ -153,8 +153,8 @@ Rate-limit new connections per source and auto-ban offenders (default ban
 1h). Whitelisted sources are immune.
 .SS NAT (gateway)
 .nf
-.B "masquerade on <iface>"
-.B "snat out on <iface> to <ip>"
+.B "masquerade on <wan> [in <lan>]"
+.B "snat out on <wan> to <ip> [in <lan>]"
 .B "dnat <proto> <port> to <ip>[:<port>] [from <geo>] [on <iface>]"
 .fi
 .PP

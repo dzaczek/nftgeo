@@ -160,17 +160,10 @@ func health(ch []Chain) map[string]interface{} {
 			h["lastRun"] = last
 		}
 	}
-	var feeds []map[string]interface{}
-	if ents, err := os.ReadDir(feedsDir); err == nil {
-		for _, e := range ents {
-			if fi, err := e.Info(); err == nil {
-				age := time.Since(fi.ModTime())
-				feeds = append(feeds, map[string]interface{}{
-					"name": shortFeed(e.Name()), "ageHours": int(age.Hours()), "fresh": age < 26*time.Hour})
-			}
-		}
-	}
-	h["feeds"] = feeds
+	// The abuse blocklist is fed by AbuseIPDB (when configured/retained) plus any
+	// ABUSE_FEEDS netsets; abuseSources() covers both, so the dashboard widget
+	// matches the Reference tab instead of silently omitting AbuseIPDB.
+	h["feeds"] = abuseSources()
 	return h
 }
 
@@ -1395,11 +1388,12 @@ type objEntry struct {
 	Members []string `json:"members"`
 }
 
-var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE|HOST)_([A-Za-z0-9_]+)=(.*)$`)
+var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE|HOST|ZONE)_([A-Za-z0-9_]+)=(.*)$`)
 var objNameRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+var zoneMemberRe = regexp.MustCompile(`^[A-Za-z0-9._@:-]+$`) // interface names incl. VLAN subif (eth0.100)
 var objMemberRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 
-func parseObjects(text string) (groups, regions, services, hosts []objEntry) {
+func parseObjects(text string) (groups, regions, services, hosts, zones []objEntry) {
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -1418,6 +1412,8 @@ func parseObjects(text string) (groups, regions, services, hosts []objEntry) {
 			regions = append(regions, e)
 		case "HOST":
 			hosts = append(hosts, e)
+		case "ZONE":
+			zones = append(zones, e)
 		default:
 			services = append(services, e)
 		}
@@ -1425,7 +1421,7 @@ func parseObjects(text string) (groups, regions, services, hosts []objEntry) {
 	return
 }
 
-func serializeObjects(groups, regions, services, hosts []objEntry) string {
+func serializeObjects(groups, regions, services, hosts, zones []objEntry) string {
 	var b strings.Builder
 	b.WriteString("# Managed by nftgeo-ui (Objects tab). Do not hand-edit; the panel overwrites this file.\n")
 	for _, g := range groups {
@@ -1440,7 +1436,32 @@ func serializeObjects(groups, regions, services, hosts []objEntry) string {
 	for _, sv := range services {
 		fmt.Fprintf(&b, "SERVICE_%s=\"%s\"\n", strings.ToUpper(sv.Name), strings.Join(sv.Members, " "))
 	}
+	for _, z := range zones {
+		fmt.Fprintf(&b, "ZONE_%s=\"%s\"\n", strings.ToUpper(z.Name), strings.Join(z.Members, " "))
+	}
 	return b.String()
+}
+
+// checkZones validates zone names + their interface members (which allow the
+// VLAN-subinterface dot and other iface characters the address checks reject).
+func checkZones(zones []objEntry) error {
+	seen := map[string]bool{}
+	for _, e := range zones {
+		if !objNameRe.MatchString(e.Name) {
+			return fmt.Errorf("invalid zone name %q (letters, digits, underscore)", e.Name)
+		}
+		key := strings.ToUpper(e.Name)
+		if seen[key] {
+			return fmt.Errorf("duplicate zone %q", e.Name)
+		}
+		seen[key] = true
+		for _, m := range e.Members {
+			if !zoneMemberRe.MatchString(m) {
+				return fmt.Errorf("invalid interface %q in zone %s", m, e.Name)
+			}
+		}
+	}
+	return nil
 }
 
 // checkNames validates names/members and rejects duplicates within one namespace
@@ -1469,11 +1490,14 @@ func checkNames(lists ...[]objEntry) error {
 
 // sanitizeObjects validates two namespaces separately: address/target names
 // (groups + regions + hosts, which all resolve as a rule target) and services.
-func sanitizeObjects(groups, regions, services, hosts []objEntry) error {
+func sanitizeObjects(groups, regions, services, hosts, zones []objEntry) error {
 	if err := checkNames(groups, regions, hosts); err != nil {
 		return err
 	}
-	return checkNames(services)
+	if err := checkNames(services); err != nil {
+		return err
+	}
+	return checkZones(zones)
 }
 
 func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
@@ -1484,7 +1508,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if exists == nil {
 			text = readFileStr(objDraftFile)
 		}
-		g, rg, sv, hs := parseObjects(text)
+		g, rg, sv, hs, zn := parseObjects(text)
 		if g == nil {
 			g = []objEntry{}
 		}
@@ -1497,23 +1521,27 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if hs == nil {
 			hs = []objEntry{}
 		}
-		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs})
+		if zn == nil {
+			zn = []objEntry{}
+		}
+		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn})
 	case http.MethodPut:
 		var req struct {
 			Groups   []objEntry `json:"groups"`
 			Regions  []objEntry `json:"regions"`
 			Services []objEntry `json:"services"`
 			Hosts    []objEntry `json:"hosts"`
+			Zones    []objEntry `json:"zones"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
-		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts); err != nil {
+		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones); err != nil {
 			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
 			return
 		}
-		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts)
+		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones)
 		os.MkdirAll(filepath.Dir(objDraftFile), 0755)
 		if err := os.WriteFile(objDraftFile, []byte(out), 0644); err != nil {
 			http.Error(w, `{"error":"cannot write objects draft"}`, http.StatusInternalServerError)
@@ -1554,6 +1582,7 @@ type draftRule struct {
 	Geo      string   `json:"geo,omitempty"`     // zone/dnat: optional "from <geo>"
 	Text     string   `json:"text,omitempty"`    // nat: verbatim rule text
 	NatType  string   `json:"natType,omitempty"` // nat: masquerade | snat | dnat
+	Lan      string   `json:"lan,omitempty"`     // nat masquerade/snat: optional inbound iface
 	Name     string   `json:"name"`
 	Body     string   `json:"body"`
 	Trivia   []string `json:"-"`
@@ -1620,6 +1649,10 @@ func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, 
 			case "on":
 				if i+1 < len(f) {
 					r.Iface = f[i+1]
+				}
+			case "in":
+				if i+1 < len(f) {
+					r.Lan = f[i+1]
 				}
 			case "from":
 				if i+1 < len(f) {
@@ -2187,27 +2220,35 @@ func buildZoneBody(action, src, dst, proto, port, geo string) (string, error) {
 }
 
 // buildNatBody assembles/validates a NAT rule (masquerade / snat / dnat); the
-// engine re-validates, so this is permissive but shell-metacharacter-free.
-func buildNatBody(natType, proto, port, target, geo, iface string) (string, error) {
+// engine re-validates, so this is permissive but shell-metacharacter-free. lan
+// is the optional inbound interface for masquerade/snat ("in <lan>").
+func buildNatBody(natType, proto, port, target, geo, iface, lan string) (string, error) {
 	natType = strings.ToLower(strings.TrimSpace(natType))
-	target, iface = strings.TrimSpace(target), strings.TrimSpace(iface)
+	target, iface, lan = strings.TrimSpace(target), strings.TrimSpace(iface), strings.TrimSpace(lan)
 	if iface != "" && !ruleIfaceRe.MatchString(iface) {
 		return "", fmt.Errorf("invalid interface name")
+	}
+	if lan != "" && !ruleIfaceRe.MatchString(lan) {
+		return "", fmt.Errorf("invalid LAN interface name")
+	}
+	lanSuffix := ""
+	if lan != "" {
+		lanSuffix = " in " + lan
 	}
 	switch natType {
 	case "masquerade":
 		if iface == "" {
-			return "", fmt.Errorf("masquerade needs an interface")
+			return "", fmt.Errorf("masquerade needs a WAN interface")
 		}
-		return "masquerade on " + iface, nil
+		return "masquerade on " + iface + lanSuffix, nil
 	case "snat":
 		if iface == "" {
-			return "", fmt.Errorf("snat needs an interface")
+			return "", fmt.Errorf("snat needs a WAN interface")
 		}
 		if !natAddrRe.MatchString(target) {
 			return "", fmt.Errorf("snat target must be an IP address")
 		}
-		return "snat out on " + iface + " to " + target, nil
+		return "snat out on " + iface + " to " + target + lanSuffix, nil
 	case "dnat":
 		proto, port, geo = strings.ToLower(strings.TrimSpace(proto)), strings.TrimSpace(port), strings.TrimSpace(geo)
 		if proto != "tcp" && proto != "udp" {
@@ -2240,7 +2281,7 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		ID                                      *int
 		Kind                                    string
 		Action, Dir, Proto, Port, Target, Iface string
-		Src, Dst, Geo, NatType                  string
+		Src, Dst, Geo, NatType, Lan             string
 		Rate, Ban                               string
 		Name                                    string
 	}
@@ -2258,7 +2299,7 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 	case req.Kind == "zone":
 		body, err = buildZoneBody(req.Action, req.Src, req.Dst, req.Proto, req.Port, req.Geo)
 	case req.Kind == "nat":
-		body, err = buildNatBody(req.NatType, req.Proto, req.Port, req.Target, req.Geo, req.Iface)
+		body, err = buildNatBody(req.NatType, req.Proto, req.Port, req.Target, req.Geo, req.Iface, req.Lan)
 	case req.Action == "throttle":
 		body, err = buildThrottleBody(req.Dir, req.Proto, req.Port, req.Rate, req.Ban, req.Iface)
 	default:

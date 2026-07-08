@@ -25,7 +25,8 @@ Whitelisted sources are never throttled. Bans live in `throttle_block{4,6}` and 
 
 Egress NAT (gateway; needs `net.ipv4.ip_forward=1`):
 ```
-masquerade on eth0                 # NAT the LAN out via the WAN
+masquerade on eth0                 # NAT the LAN out via the WAN (WAN iface only)
+masquerade on eth0 in eth1         # ...optionally restrict to inbound LAN eth1
 snat out on eth0 to 203.0.113.7    # or a static source IP
 ```
 Ingress NAT / port-forward (gateway):
@@ -212,7 +213,9 @@ Policy tab shows every rule kind: `allow`/`deny` filters, `throttle`, **NAT**
 (`masquerade`/`snat`/`dnat`) and **inter-zone** (`<z> -> <z>`) rules — each with
 its own add/edit drawer (**+ Rule**, **+ Throttle**, **+ Zone**, **+ NAT**), plus
 **Raw** for bulk text edits. Interface fields pick from the host's live NICs
-(with a ⟳ refresh). Edits stage to a draft and deploy via **Commit**
+(with a ⟳ refresh). Objects has tabs for address groups, regions, services,
+hosts and **zones** (named interface lists, incl. VLANs, with a click-to-add
+interface picker). Edits stage to a draft and deploy via **Commit**
 (validate → plan diff → apply with a deadman countdown + one-click rollback).
 
 ---

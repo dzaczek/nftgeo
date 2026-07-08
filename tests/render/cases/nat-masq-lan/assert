@@ -1,0 +1,3 @@
+# optional inbound (LAN) interface scopes the NAT with iifname
++ iifname "eth1" oifname "eth0" counter masquerade
++ iifname "eth1" oifname "eth0" counter snat ip to 203.0.113.7

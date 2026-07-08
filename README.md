@@ -156,12 +156,17 @@ Act as a gateway that NATs an internal network out to the world:
 ```text
 masquerade on eth0                  # masquerade everything leaving via the WAN
 snat out on eth0 to 203.0.113.7     # or a static source NAT to a fixed IP
+masquerade on eth0 in eth1          # ...only NAT what arrives on the LAN eth1
 ```
 
-These emit a `nat` postrouting chain (only when a NAT rule exists, so a
-filter-only setup is unchanged). Enable IP forwarding yourself
-(`sysctl net.ipv4.ip_forward=1`) — nftgeo warns if a NAT/forward rule is present
-while forwarding is off, but does not manage the sysctl.
+Only the **WAN (outbound) interface** is required — `masquerade on <wan>` already
+NATs everything routed out that interface, so you do not need to name the LAN.
+The optional `in <lan>` just restricts the NAT to traffic that arrived on a
+specific inbound interface (handy on a multi-LAN router). These emit a `nat`
+postrouting chain (only when a NAT rule exists, so a filter-only setup is
+unchanged). Enable IP forwarding yourself (`sysctl net.ipv4.ip_forward=1`) —
+nftgeo warns if a NAT/forward rule is present while forwarding is off, but does
+not manage the sysctl.
 
 ### Ingress NAT / port-forward (gateway)
 
@@ -761,7 +766,9 @@ Read-only sessions never see the editor and are refused (403) on any write.
 
 The **Objects** tab is likewise editable: create/edit/delete **address groups**
 (`GROUP_*`), **custom regions** (`REGION_*`), **services** (`SERVICE_*`, named
-ports / port groups) and **hosts** (`HOST_*`, single-IP labels) in a slide-out drawer. These are
+ports / port groups), **hosts** (`HOST_*`, single-IP labels) and **zones**
+(`ZONE_*`, named interface lists incl. VLAN subinterfaces, with a click-to-add
+interface picker) in a slide-out drawer. These are
 saved to a UI-owned drop-in (`groups.d/ui-objects.conf`) and deployed through the
 *same* Commit pipeline as rules, so one Deploy carries rules and objects together.
 The **Policy** tab is a visual editor over the draft rules — columns for

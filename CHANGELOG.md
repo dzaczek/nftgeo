@@ -9,6 +9,29 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.44.0] - 2026-07-08
+
+### Added
+- **nftgeo-ui: Zones editor.** A new **Objects > Zones** tab defines `ZONE_*`
+  segments as named interface lists — including VLAN subinterfaces
+  (`eth0.100`) — with a click-to-add interface picker (and a ⟳ refresh) plus
+  free-text entry. Draft-defined zones immediately feed the inter-zone rule
+  drawer's zone autocomplete. Interface members are validated (shell-metachars
+  rejected) and deployed through the Commit pipeline.
+- **NAT masquerade/snat: optional inbound (LAN) interface.** Grammar is now
+  `masquerade on <wan> [in <lan>]` and `snat out on <wan> to <ip> [in <lan>]`.
+  The WAN (outbound) interface alone is sufficient — masquerade already NATs
+  everything routed out it — so the LAN interface is optional and only restricts
+  which inbound interface is NAT'd (multi-LAN routers). The NAT drawer gains a
+  "LAN interface (inbound, optional)" field. Verified via render fixture + real
+  `nft -c` on hermes.
+
+### Fixed
+- **Dashboard omitted AbuseIPDB from "Abuse feeds".** The status/health widget
+  only listed the netset feeds; it now uses the same source list as the Reference
+  tab, so **AbuseIPDB** appears (with its IP count and age) whenever its state
+  file is present — even when the blocklist is retained without a live API key.
+
 ## [1.43.0] - 2026-07-08
 
 ### Added
@@ -770,6 +793,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.44.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.44.0
 [1.43.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.43.0
 [1.42.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.42.0
 [1.41.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.41.0

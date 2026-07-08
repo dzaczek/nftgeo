@@ -178,22 +178,25 @@ func TestBuildZoneBody(t *testing.T) {
 
 func TestBuildNatBody(t *testing.T) {
 	cases := []struct {
-		nt, proto, port, target, geo, iface, want string
-		ok                                        bool
+		nt, proto, port, target, geo, iface, lan, want string
+		ok                                             bool
 	}{
-		{"masquerade", "", "", "", "", "eth0", "masquerade on eth0", true},
-		{"snat", "", "", "203.0.113.7", "", "eth0", "snat out on eth0 to 203.0.113.7", true},
-		{"dnat", "tcp", "8080", "10.0.0.5:80", "", "eth0", "dnat tcp 8080 to 10.0.0.5:80 on eth0", true},
-		{"dnat", "tcp", "2222", "10.0.0.5:22", "europe", "", "dnat tcp 2222 to 10.0.0.5:22 from europe", true},
-		{"dnat", "tcp", "443", "[2001:db8::1]:8443", "", "", "dnat tcp 443 to [2001:db8::1]:8443", true},
-		{"masquerade", "", "", "", "", "", "", false},           // needs iface
-		{"snat", "", "", "not-an-ip!", "", "eth0", "", false},   // bad target
-		{"dnat", "icmp", "8080", "10.0.0.5", "", "", "", false}, // bad proto
-		{"dnat", "tcp", "80x", "10.0.0.5", "", "", "", false},   // bad port
-		{"bogus", "", "", "", "", "eth0", "", false},            // bad type
+		{"masquerade", "", "", "", "", "eth0", "", "masquerade on eth0", true},
+		{"masquerade", "", "", "", "", "eth0", "eth1", "masquerade on eth0 in eth1", true},
+		{"snat", "", "", "203.0.113.7", "", "eth0", "", "snat out on eth0 to 203.0.113.7", true},
+		{"snat", "", "", "203.0.113.7", "", "eth0", "eth1", "snat out on eth0 to 203.0.113.7 in eth1", true},
+		{"dnat", "tcp", "8080", "10.0.0.5:80", "", "eth0", "", "dnat tcp 8080 to 10.0.0.5:80 on eth0", true},
+		{"dnat", "tcp", "2222", "10.0.0.5:22", "europe", "", "", "dnat tcp 2222 to 10.0.0.5:22 from europe", true},
+		{"dnat", "tcp", "443", "[2001:db8::1]:8443", "", "", "", "dnat tcp 443 to [2001:db8::1]:8443", true},
+		{"masquerade", "", "", "", "", "", "", "", false},           // needs iface
+		{"snat", "", "", "not-an-ip!", "", "eth0", "", "", false},   // bad target
+		{"masquerade", "", "", "", "", "eth0", "e th1", "", false},  // bad lan iface
+		{"dnat", "icmp", "8080", "10.0.0.5", "", "", "", "", false}, // bad proto
+		{"dnat", "tcp", "80x", "10.0.0.5", "", "", "", "", false},   // bad port
+		{"bogus", "", "", "", "", "eth0", "", "", false},            // bad type
 	}
 	for _, c := range cases {
-		got, err := buildNatBody(c.nt, c.proto, c.port, c.target, c.geo, c.iface)
+		got, err := buildNatBody(c.nt, c.proto, c.port, c.target, c.geo, c.iface, c.lan)
 		if c.ok && (err != nil || got != c.want) {
 			t.Errorf("buildNatBody(%q..)=%q,%v want %q", c.nt, got, err, c.want)
 		}
@@ -252,9 +255,9 @@ func TestParseDraftRulesNatZone(t *testing.T) {
 }
 
 func TestObjectsRoundTrip(t *testing.T) {
-	g, r, s, h := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n" + `HOST_DB1="10.0.0.5"` + "\n")
-	if len(g) != 1 || len(r) != 1 || len(s) != 1 || len(h) != 1 {
-		t.Fatalf("counts g=%d r=%d s=%d h=%d", len(g), len(r), len(s), len(h))
+	g, r, s, h, z := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n" + `HOST_DB1="10.0.0.5"` + "\n" + `ZONE_GUEST="eth1 eth0.100"` + "\n")
+	if len(g) != 1 || len(r) != 1 || len(s) != 1 || len(h) != 1 || len(z) != 1 {
+		t.Fatalf("counts g=%d r=%d s=%d h=%d z=%d", len(g), len(r), len(s), len(h), len(z))
 	}
 	if g[0].Name != "OFFICE" || len(g[0].Members) != 2 || g[0].Members[1] != "1.2.3.4" {
 		t.Errorf("group parsed wrong: %+v", g[0])
@@ -265,22 +268,32 @@ func TestObjectsRoundTrip(t *testing.T) {
 	if h[0].Name != "DB1" || h[0].Members[0] != "10.0.0.5" {
 		t.Errorf("host parsed wrong: %+v", h[0])
 	}
-	out := serializeObjects(g, r, s, h)
-	g2, r2, s2, h2 := parseObjects(out)
-	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 || len(h2) != 1 {
+	if z[0].Name != "GUEST" || len(z[0].Members) != 2 || z[0].Members[1] != "eth0.100" {
+		t.Errorf("zone parsed wrong: %+v", z[0])
+	}
+	out := serializeObjects(g, r, s, h, z)
+	g2, r2, s2, h2, z2 := parseObjects(out)
+	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 || len(h2) != 1 || len(z2) != 1 {
 		t.Errorf("re-parse of serialized objects lost entries: %q", out)
 	}
 }
 
 func TestSanitizeObjectsRejectsInjection(t *testing.T) {
-	if err := sanitizeObjects([]objEntry{{Name: "X", Members: []string{"1.2.3.4; rm"}}}, nil, nil, nil); err == nil {
+	if err := sanitizeObjects([]objEntry{{Name: "X", Members: []string{"1.2.3.4; rm"}}}, nil, nil, nil, nil); err == nil {
 		t.Error("expected shell-metachar member to be rejected")
 	}
-	if err := sanitizeObjects([]objEntry{{Name: "bad name", Members: nil}}, nil, nil, nil); err == nil {
+	if err := sanitizeObjects([]objEntry{{Name: "bad name", Members: nil}}, nil, nil, nil, nil); err == nil {
 		t.Error("expected invalid name to be rejected")
 	}
-	if err := sanitizeObjects([]objEntry{{Name: "OK", Members: []string{"80", "443/tcp"}}}, nil, nil, nil); err != nil {
+	if err := sanitizeObjects([]objEntry{{Name: "OK", Members: []string{"80", "443/tcp"}}}, nil, nil, nil, nil); err != nil {
 		t.Errorf("valid service members rejected: %v", err)
+	}
+	// zone interface members: VLAN subif OK, shell metachars rejected
+	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "GUEST", Members: []string{"eth0.100", "br-lan"}}}); err != nil {
+		t.Errorf("valid zone interfaces rejected: %v", err)
+	}
+	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "Z", Members: []string{"eth0; rm"}}}); err == nil {
+		t.Error("expected bad zone interface to be rejected")
 	}
 }
 

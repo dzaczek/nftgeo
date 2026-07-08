@@ -124,7 +124,8 @@ Milestones:
 - [x] **M5.2** Host/IP labels (`HOST_<NAME>`) *(shipped 1.35.0)* — named single
   IP/CIDR usable as any rule target; editable in the nftgeo-ui Objects > Hosts tab.
 - [x] **M5.3** Zones (`ZONE_<NAME>` = interface list, incl. VLAN subinterfaces)
-  as source/destination *(shipped 1.38.0)*. Subnet members remain a future add.
+  as source/destination *(shipped 1.38.0; editable in the nftgeo-ui Objects >
+  Zones tab with an interface picker since 1.44.0)*. Subnet members remain a future add.
 - [x] **M5.4** Inter-zone rule form `allow|deny <zone> -> <zone> <proto> <port>
   [from <geo>]` emitted into the forward chain *(shipped 1.38.0)*; deny wins over
   allow, and `SEGMENT_DEFAULT="deny"` gives per zone-pair deny-by-default.
@@ -188,7 +189,8 @@ count.
   apply --confirm` with the deadman, plus UI-side `rules.conf` backup/restore so
   a timed-out or interrupted deploy can never persist. Foundation raw editor +
   top Commit bar included; the visual editor (M6B.2–M6B.5) builds on this.
-- [x] **M6B.2 Objects module.** *(Shipped 1.19.0.)* Editable tabs for **Address
+- [x] **M6B.2 Objects module.** *(Shipped 1.19.0; +services/hosts, +zones with an
+  interface picker in 1.44.0.)* Editable tabs for **Address
   groups** (`GROUP_*`) and **Custom regions** (`REGION_*`) with a right slide-out
   drawer and member chips, stored in a UI-owned `groups.d/ui-objects.conf` drop-in
   and staged through the same Commit pipeline (input sanitised against shell
