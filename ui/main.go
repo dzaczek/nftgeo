@@ -1234,6 +1234,20 @@ func rdapOrg(m map[string]interface{}) string {
 	return ""
 }
 
+// rdapCIDR renders one RDAP cidr0_cidrs entry as "prefix/length". The cidr0
+// extension carries the base in "v4prefix" for IPv4 blocks and "v6prefix" for
+// IPv6; using only one printed "<nil>/29" for the other family. Empty if absent.
+func rdapCIDR(cm map[string]interface{}) string {
+	prefix := cm["v4prefix"]
+	if prefix == nil {
+		prefix = cm["v6prefix"]
+	}
+	if prefix == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v/%v", prefix, cm["length"])
+}
+
 func doLookup(ip string) map[string]interface{} {
 	res := map[string]interface{}{"ip": ip}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1254,7 +1268,9 @@ func doLookup(ip string) map[string]interface{} {
 			}
 			if c, ok := m["cidr0_cidrs"].([]interface{}); ok && len(c) > 0 {
 				if cm, ok := c[0].(map[string]interface{}); ok {
-					w["cidr"] = fmt.Sprintf("%v/%v", cm["v4prefix"], cm["length"])
+					if s := rdapCIDR(cm); s != "" {
+						w["cidr"] = s
+					}
 				}
 			}
 			if org := rdapOrg(m); org != "" {

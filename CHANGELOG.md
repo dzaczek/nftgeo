@@ -8,6 +8,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.52.1] - 2026-07-08
+
+### Fixed
+- **IPv6 drop lookups showed `Range <nil>/29`.** The RDAP whois panel read the
+  block prefix only from the cidr0 `v4prefix` field, which is absent for IPv6
+  (those blocks use `v6prefix`), so every IPv6 drop rendered a nil range. It now
+  uses whichever prefix the block carries and omits the row when neither exists.
+
 ## [1.52.0] - 2026-07-08
 
 ### Added

@@ -472,3 +472,22 @@ func TestBuildAlerts(t *testing.T) {
 		t.Fatalf("expected 1 drop-spike alert, got %+v", alerts)
 	}
 }
+
+// rdapCIDR must handle IPv6 blocks (v6prefix), not just IPv4 (v4prefix); the
+// v4-only version rendered "<nil>/29" for every IPv6 drop lookup.
+func TestRDAPCIDRFamilies(t *testing.T) {
+	cases := []struct {
+		name string
+		in   map[string]interface{}
+		want string
+	}{
+		{"ipv4", map[string]interface{}{"v4prefix": "1.2.3.0", "length": float64(24)}, "1.2.3.0/24"},
+		{"ipv6", map[string]interface{}{"v6prefix": "2606:4700::", "length": float64(32)}, "2606:4700::/32"},
+		{"neither", map[string]interface{}{"length": float64(29)}, ""},
+	}
+	for _, c := range cases {
+		if got := rdapCIDR(c.in); got != c.want {
+			t.Errorf("%s: rdapCIDR = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
