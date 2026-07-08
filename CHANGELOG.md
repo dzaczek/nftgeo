@@ -9,6 +9,13 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.39.1] - 2026-07-08
+
+### Fixed
+- CI: the real `nft -c` fixture pass (`tests/render/nft-check.sh`) now copies
+  each case's `groups.d/*.conf`, so the zone fixtures resolve their `ZONE_*`
+  definitions instead of failing with "unknown source zone". No engine change.
+
 ## [1.39.0] - 2026-07-08
 
 ### Added
@@ -692,6 +699,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.39.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.39.1
 [1.39.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.39.0
 [1.38.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.38.0
 [1.37.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.37.0
