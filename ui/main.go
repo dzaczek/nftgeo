@@ -75,8 +75,14 @@ func geoFetchAll() {
 	var n int64
 	client := &http.Client{Timeout: 25 * time.Second}
 	fetch := func(cc string) []byte {
+		url := ipdenyV4 + "/" + cc + "-aggregated.zone"
 		for attempt := 0; attempt < 3; attempt++ {
-			resp, err := client.Get(ipdenyV4 + "/" + cc + "-aggregated.zone")
+			req, err := http.NewRequest("GET", url, nil)
+			if err != nil {
+				return nil
+			}
+			req.Header.Set("User-Agent", "nftgeo-ui/geo-cache")
+			resp, err := client.Do(req)
 			if err == nil {
 				if resp.StatusCode == 200 {
 					b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
