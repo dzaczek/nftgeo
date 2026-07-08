@@ -8,6 +8,15 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.53.1] - 2026-07-08
+
+### Added
+- **"Shadowed by whitelist" hint in Policy.** An allow rule that is loaded but has
+  0 hits now shows a small `*` when the traffic is actually being accepted ahead
+  of it by the established/related or whitelist baseline rules (e.g. your own
+  whitelisted SSH). Hovering explains why the rule's own counter stays at 0, so a
+  0 no longer looks like a broken counter.
+
 ## [1.53.0] - 2026-07-08
 
 ### Added

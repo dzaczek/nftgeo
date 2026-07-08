@@ -95,6 +95,7 @@
   .alert{padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;display:flex;align-items:center;gap:8px}
   .alert.crit{background:#3a1418;border:1px solid var(--drop);color:#ff8090}
   .alert.warn{background:#3a2a12;border:1px solid var(--warnc);color:var(--warnc)}
+  .hint{color:var(--warnc);cursor:help;font-weight:700;margin-left:1px}
   .pbar{display:block;height:6px;margin-top:6px;background:#0004;border-radius:4px;overflow:hidden}
   .pbar-fill{display:block;height:100%;background:var(--warnc);transition:width .5s}
   .alert .icon{font-size:16px}
@@ -586,6 +587,15 @@ function renderLogs(){
 
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
 let OBJMAP={}, SVCS=[], ZONES=[], IFACES=[], FILES=[]; // tooltips; service/zone/iface autocomplete; rule files
+let BASELINE={}; // per-chain baseline accept counters, so a 0-hit allow rule can flag when the whitelist/established rules shadow it
+// Total traffic accepted by the implicit rules (established/related + whitelist)
+// ahead of a rule's chain — if > 0, a matched allow rule with 0 own hits is
+// likely shadowed there (e.g. your whitelisted SSH), not simply unused.
+function baselineAcceptsFor(dir){
+  const ch=dir==='out'?'output':(dir&&dir.indexOf('fwd')===0?'forward':'input');
+  const c=BASELINE[ch]||{};
+  return (c.whitelist||0)+(c.established||0);
+}
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};ZONES=o.zones||[];
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
@@ -595,14 +605,15 @@ async function loadPolicy(){
     ZONES=[...new Set([...ZONES,...(od.zones||[]).map(z=>(z.name||'').toLowerCase())])];}catch(e){}
   await loadIfaces();
   fillTargets(); fillServices(); fillZones();
+  try{BASELINE=await j('/api/baseline')||{};}catch(e){BASELINE={};}
+  renderBaseline(BASELINE);
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
-  try{renderBaseline(await j('/api/baseline'));}catch(e){renderBaseline(null);}
 }
 // Implicit accepts that run before your policy (no editable row of their own):
 // established/related + whitelist are where allowed/existing traffic — incl. your
 // own SSH — is counted, which is why an "allow" rule's own Hits stay low.
 function renderBaseline(b){
-  b=b||{};const el=$('#polbaseline');if(!el)return;
+  b=b||{};BASELINE=b;const el=$('#polbaseline');if(!el)return;
   const parts=[];
   for(const ch of ['input','forward','output']){
     const c=b[ch];if(!c)continue;const bits=[];
@@ -708,7 +719,7 @@ function rowHTML(r,n,ro,multi){
     [s,d]=srcDst(r);
     act=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
     svcc=svc(r)+ifchip;
-    hits=r.disabled?'<span class="muted">—</span>':(r.matched?`<b>${r.hits.toLocaleString()}</b>`:'<span class="muted">—</span>');
+    hits=r.disabled?'<span class="muted">—</span>':(!r.matched?'<span class="muted">—</span>':(r.hits===0&&r.action!=='deny'&&baselineAcceptsFor(r.dir)>0?`<b>0</b><span class="hint" title="0 new, non-whitelisted hits. Matching traffic from established connections or whitelisted sources — e.g. your own SSH — is accepted by the baseline rules above this policy, so it never reaches this rule.">*</span>`:`<b>${r.hits.toLocaleString()}</b>`));
   }
   return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
     <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${n}</span></td>
