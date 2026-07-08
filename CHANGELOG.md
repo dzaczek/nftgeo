@@ -9,6 +9,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.45.0] - 2026-07-08
+
+### Added
+- **nftgeo-ui: baseline-counter readout in the Policy view.** A strip above the
+  policy table shows the implicit accepts the engine runs before your rules —
+  *established/related* and *whitelist* (and any *invalid* drop) — with their live
+  packet counters (`/api/baseline`). This explains a common surprise: an `allow`
+  rule's own **Hits** stay near zero while only drops climb, because existing and
+  whitelisted connections — including your own SSH — are accepted at the baseline,
+  not at the geo `allow` rule. Nothing about the ruleset changed; the traffic was
+  always counted there, just not surfaced.
+
 ## [1.44.0] - 2026-07-08
 
 ### Added
@@ -793,6 +805,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.45.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.45.0
 [1.44.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.44.0
 [1.43.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.43.0
 [1.42.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.42.0

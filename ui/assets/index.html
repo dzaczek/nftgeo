@@ -228,6 +228,7 @@
       <datalist id="svclist"></datalist>
       <datalist id="zonelist"></datalist>
       <datalist id="iflist"></datalist>
+      <div id="polbaseline"></div>
       <div class="card"><div class="tablewrap"><table class="poltable">
         <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th><th id="th-file" style="width:130px">File</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
@@ -484,6 +485,23 @@ async function loadPolicy(){
   await loadIfaces();
   fillTargets(); fillServices(); fillZones();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
+  try{renderBaseline(await j('/api/baseline'));}catch(e){renderBaseline(null);}
+}
+// Implicit accepts that run before your policy (no editable row of their own):
+// established/related + whitelist are where allowed/existing traffic — incl. your
+// own SSH — is counted, which is why an "allow" rule's own Hits stay low.
+function renderBaseline(b){
+  b=b||{};const el=$('#polbaseline');if(!el)return;
+  const parts=[];
+  for(const ch of ['input','forward','output']){
+    const c=b[ch];if(!c)continue;const bits=[];
+    if('established' in c)bits.push(`est/related ✓ <b>${(c.established||0).toLocaleString()}</b>`);
+    if('whitelist' in c)bits.push(`whitelist ✓ <b>${(c.whitelist||0).toLocaleString()}</b>`);
+    if(c.invalid)bits.push(`invalid ✗ <b>${(c.invalid||0).toLocaleString()}</b>`);
+    if(bits.length)parts.push(`<span class="muted">${ch}:</span> ${bits.join(' · ')}`);
+  }
+  el.innerHTML=parts.length?`<div class="card" style="padding:8px 12px;font-size:12px;margin-bottom:10px" title="These implicit rules run before your policy. Existing connections (established/related) and whitelisted sources are accepted here — including your own SSH — so an 'allow' rule's Hits count only NEW, non-whitelisted connections.">
+    <span class="muted">ℹ Accepted before your rules — </span>${parts.join(' &nbsp; ')}</div>`:'';
 }
 function findRule(file,id){return (RULES||[]).find(r=>r.file===file&&r.id===id);}
 function fileSelectHTML(selId,sel){

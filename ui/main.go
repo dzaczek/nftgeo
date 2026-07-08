@@ -618,6 +618,46 @@ func ruleCounters() map[string]int64 {
 	return m
 }
 
+// baselineCounters reads the implicit rules the engine puts at the top of every
+// chain - the ones with no "nftgeo:" comment, so ruleCounters skips them, yet
+// where most accepted traffic actually lands: established/related and whitelist
+// accepts (this is where an allowed, whitelisted, or already-open connection is
+// counted, e.g. your own SSH), plus the invalid-state drop. Surfaced so the UI
+// can explain why an "allow" rule's own hit count stays low.
+func baselineCounters() map[string]map[string]int64 {
+	out := map[string]map[string]int64{}
+	txt, err := run("nft", "list", "table", fam, table)
+	if err != nil {
+		return out
+	}
+	chain, cur := "", map[string]int64{}
+	for _, ln := range strings.Split(txt, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "chain ") {
+			if f := strings.Fields(t); len(f) >= 2 {
+				chain = f[1]
+				cur = map[string]int64{}
+				out[chain] = cur
+			}
+			continue
+		}
+		m := reCounter.FindStringSubmatch(t)
+		if m == nil || chain == "" {
+			continue
+		}
+		n, _ := strconv.ParseInt(m[1], 10, 64)
+		switch {
+		case strings.Contains(t, "established,related") && strings.HasSuffix(t, "accept"):
+			cur["established"] += n
+		case strings.Contains(t, "@whitelist") && strings.HasSuffix(t, "accept"):
+			cur["whitelist"] += n
+		case strings.Contains(t, "ct state invalid") && strings.HasSuffix(t, "drop"):
+			cur["invalid"] += n
+		}
+	}
+	return out
+}
+
 // annotate sets each rule's live hit count by matching the engine's per-rule
 // comment against the counter map (from ruleCounters) - exact, not a heuristic.
 func annotate(rules []PolicyRule, ctr map[string]int64) {
@@ -2603,6 +2643,9 @@ func main() {
 		p := policy()
 		annotate(p, ruleCounters())
 		writeJSON(w, p)
+	})
+	api("/api/baseline", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, baselineCounters())
 	})
 	api("/api/objects", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, objects())

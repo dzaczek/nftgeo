@@ -774,7 +774,11 @@ saved to a UI-owned drop-in (`groups.d/ui-objects.conf`) and deployed through th
 The **Policy** tab is a visual editor over the draft rules — columns for
 Source / Destination / Service / Action with object chips, colour-coded verdicts
 and live hit counts, **drag-and-drop reordering** (top-down precedence) and a
-per-rule **enable/disable toggle**. Rules render as one flat list (engine order);
+per-rule **enable/disable toggle**. Above the table a small **baseline** readout
+shows the implicit accepts that run before your rules — *established/related* and
+*whitelist* — with their live counters; this is where existing and whitelisted
+connections (including your own SSH) are counted, which is why an `allow` rule's
+own Hits stay low (it only counts new, non-whitelisted connections). Rules render as one flat list (engine order);
 **sections** (`## …`) group them, and a small **File** badge shows which file each
 rule lives in (`rules.conf` or a `rules.d/*.conf` drop-in) — the badge column only
 appears when you have more than one file. Each edit applies to the rule's file, and

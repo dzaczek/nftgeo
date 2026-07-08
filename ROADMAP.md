@@ -199,7 +199,7 @@ count.
 - [x] **M6B.3 Policy table (Palo-Alto style).** *(Shipped 1.20.0.)* Columns
   **№ · On · Name · Source · Destination · Service · Action · Hits**; object
   references render as chips with member tooltips; Action colour-coded
-  (DROP red / ACCEPT green); Hits from the live counters. Row **drag-drop
+  (DROP red / ACCEPT green); Hits from the live counters, with a baseline strip (1.45.0) showing the implicit established/related + whitelist accepts so low allow-rule hits make sense. Row **drag-drop
   reorder** (top-down precedence), an **enable/disable toggle** (disabled = stored
   commented-out), and a live filter — all writing to the draft. Lossless parse
   keeps each rule's trivia + verbatim body. *(1.40.0: also renders NAT
