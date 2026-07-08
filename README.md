@@ -121,6 +121,37 @@ in the dashboard's live-sets panel); they expire automatically. You can add and
 edit throttle rules in the dashboard (**+ Throttle** on the Policy tab) as well as
 in `rules.conf`.
 
+### SYN-flood protection (`synproxy`)
+
+Offload the TCP handshake to the kernel's `synproxy` for a public port, so
+spoofed SYNs that never complete the handshake never reach the service:
+
+```
+synproxy in     tcp 22          # protect inbound SSH from SYN floods
+synproxy in     tcp 80,443      # a port list works too
+synproxy fwd-in tcp 443 on eth0 # a forwarded port, scoped to an interface
+```
+
+Form: `synproxy <in|fwd-in> tcp <port> [on <iface>]`. It runs before the allow
+rules, so only completed connections proceed. (Pair it with a `throttle` rule for
+rate-limiting on top.)
+
+### Anti-spoofing (`ANTISPOOF`, reverse-path filter)
+
+Drop packets whose source address is not routable back through the interface
+they arrived on (strict uRPF, like `rp_filter` but in the firewall) — e.g. a
+packet claiming a LAN source that shows up on the WAN. Set in `config` a
+space-separated list of interfaces to protect:
+
+```sh
+ANTISPOOF="eth0"        # protect the WAN from spoofed source IPs
+```
+
+Applied to the `input` and `forward` chains for those interfaces. IPv4 only
+(`meta nfproto ipv4 fib saddr . iif oif`); needs a kernel with the nftables `fib`
+expression (≥ 4.1). Strict uRPF can drop legitimate traffic on asymmetric-routing
+setups — enable it per-interface where the routing is symmetric.
+
 Define reusable **service objects** as `SERVICE_<NAME>` variables — named ports
 and port groups you use in a rule's port field by name. A service may contain
 ports, ranges, and other service names (nested), and resolves to a

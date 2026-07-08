@@ -65,6 +65,10 @@
 #   throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]
 # throttle in tcp 22   5/minute          # ban IPs doing >5 new SSH conns/min
 # throttle in tcp 3389 3/minute ban 2h   # custom ban length (default 1h)
+#
+# SYN-flood protection (kernel synproxy): synproxy <in|fwd-in> tcp <port> [on <iface>]
+# synproxy in tcp 22                     # offload the SSH handshake, drop spoofed SYNs
+# synproxy in tcp 80,443                 # a port list works too
 # deny  in      tcp 5060      ru,cn     # block Russia and China on inbound 5060
 # allow out     tcp 443       europe,us # only allow outbound HTTPS to Europe and US
 # allow out     udp 53        any       # allow outbound DNS anywhere

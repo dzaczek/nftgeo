@@ -1,0 +1,7 @@
+# strict reverse-path filter, IPv4-scoped: drop when the reverse route is
+# missing (oif 0). The shipped code was doubly broken: `ip fib` is a syntax
+# error (never loaded) and `!= 0` was inverted (dropped legit traffic).
++ iifname "eth0" meta nfproto ipv4 fib saddr . iif oif 0 counter drop
++ iifname "eth1" meta nfproto ipv4 fib saddr . iif oif 0 counter drop
+- ip fib
+- oif != 0

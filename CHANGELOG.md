@@ -6,8 +6,36 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 ## [Unreleased]
 
-Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
-segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
+Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
+
+## [1.46.0] - 2026-07-08
+
+### Added
+- **SYN-flood protection (`synproxy`).** `synproxy <in|fwd-in> tcp <port>
+  [on <iface>]` offloads the TCP handshake to the kernel so spoofed SYNs never
+  reach the service (issue #14).
+- **Anti-spoofing (`ANTISPOOF`).** A config list of interfaces to protect with a
+  strict reverse-path filter (uRPF); drops IPv4 packets whose source is not
+  routable back through the arrival interface (issue #15).
+- **IPv6 geolocation in the dashboard** (issue #13) and a **FortiGate theme**
+  (3-way theme switcher) for nftgeo-ui.
+- Hardening/robustness fixes from the audit backlog (issues #1–#22): clear a
+  stale deadman sentinel after reboot, verify the deadman PID before killing,
+  validate the IP in `nftgeo block`, tighten the IPv6 regex, prune the auth
+  nonce map, add an HTTP `User-Agent`, URL-fragment auth tokens, and installer/
+  uninstaller UI handling.
+
+### Fixed
+- **`synproxy` was non-functional as merged.** The `on <iface>` form failed to
+  parse (the interface token was mis-read into the geo field) and the
+  no-interface form emitted an invalid `iifname ""`. Re-tokenized the rule tail
+  and now store only `<hook> <port> <iface>`. Verified with `nft -c` (fixture
+  `synproxy`).
+- **`ANTISPOOF` was non-functional and inverted as merged.** It emitted `ip fib …`
+  — a syntax error, so the ruleset never loaded — and used `oif != 0`, which is
+  backwards (drops legitimate traffic, passes spoofed). Corrected to
+  `meta nfproto ipv4 fib saddr . iif oif 0` (valid, IPv4-scoped, strict uRPF).
+  Verified with `nft -c` (fixture `antispoof`).
 
 ## [1.45.0] - 2026-07-08
 

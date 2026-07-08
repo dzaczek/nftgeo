@@ -1,5 +1,5 @@
 .\" nftgeo(8) manual page
-.TH NFTGEO 8 "2026-07-08" "nftgeo 1.39.1" "System Administration"
+.TH NFTGEO 8 "2026-07-08" "nftgeo 1.46.0" "System Administration"
 .SH NAME
 nftgeo \- declarative geo / abuse / segmentation firewall for nftables
 .SH SYNOPSIS
@@ -151,6 +151,13 @@ Replies to your own connections are always accepted.
 Rate-limit new connections per source and auto-ban offenders (default ban
 .BR THROTTLE_BAN ,
 1h). Whitelisted sources are immune.
+.SS SYN-flood protection (synproxy)
+.nf
+.B "synproxy <in|fwd-in> tcp <port> [on <iface>]"
+.fi
+.PP
+Offload the TCP handshake to the kernel's synproxy so spoofed SYNs that never
+complete it never reach the service. Runs before the allow rules.
 .SS NAT (gateway)
 .nf
 .B "masquerade on <wan> [in <lan>]"
@@ -209,6 +216,11 @@ deadman.
 .B HARDEN
 Non-empty enables baseline hardening (accept loopback, drop invalid, essential
 ICMPv6).
+.TP
+.B ANTISPOOF
+Space-separated interface list to protect with a strict reverse-path filter
+(anti-spoofing); drops IPv4 packets whose source is not routable back through
+the arrival interface. Applied to the input and forward chains.
 .TP
 .B LOG_DROPS
 Non-empty logs dropped packets with an

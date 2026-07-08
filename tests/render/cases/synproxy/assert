@@ -1,0 +1,5 @@
+# no-iface form emits no iifname (regression: used to emit iifname "")
++ tcp dport 22 ct state new synproxy mss 1460 wscale 7 counter
+- iifname "" tcp dport 22
+# on-iface form parses and scopes with iifname (regression: used to fail parsing)
++ iifname "eth0" tcp dport { 80,443 } ct state new synproxy mss 1460 wscale 7 counter

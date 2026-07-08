@@ -23,6 +23,13 @@ throttle in tcp 3389 3/minute ban 2h   # custom ban length (default THROTTLE_BAN
 ```
 Whitelisted sources are never throttled. Bans live in `throttle_block{4,6}` and expire.
 
+SYN-flood protection (kernel synproxy) and anti-spoofing (reverse-path filter):
+```
+synproxy in tcp 22            # offload the SSH handshake; drop spoofed SYNs
+synproxy fwd-in tcp 443 on eth0
+ANTISPOOF="eth0"              # (in config) strict uRPF on the WAN; IPv4 only
+```
+
 Egress NAT (gateway; needs `net.ipv4.ip_forward=1`):
 ```
 masquerade on eth0                 # NAT the LAN out via the WAN (WAN iface only)
