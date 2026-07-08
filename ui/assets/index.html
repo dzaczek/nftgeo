@@ -227,6 +227,7 @@
       <datalist id="tgtlist"></datalist>
       <datalist id="svclist"></datalist>
       <datalist id="zonelist"></datalist>
+      <datalist id="iflist"></datalist>
       <div class="card"><div class="tablewrap"><table class="poltable">
         <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th><th id="th-file" style="width:130px">File</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
@@ -464,12 +465,13 @@ function renderLogs(){
 }
 
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
-let OBJMAP={}, SVCS=[], ZONES=[], FILES=[]; // tooltips; service/zone autocomplete; rule files
+let OBJMAP={}, SVCS=[], ZONES=[], IFACES=[], FILES=[]; // tooltips; service/zone/iface autocomplete; rule files
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};ZONES=o.zones||[];
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
   try{const od=await j('/api/objects/draft');SVCS=(od.services||[]).map(s=>s.name);
     (od.groups||[]).concat(od.regions||[]).concat(od.hosts||[]).forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=g.members||[]);}catch(e){}
+  await loadIfaces();
   fillTargets(); fillServices(); fillZones();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
 }
@@ -482,6 +484,19 @@ const REGIONS=['europe','asia','africa','north_america','south_america','middle_
 function fillTargets(){$('#tgtlist').innerHTML=[...Object.keys(OBJMAP),'any','abuse',...REGIONS].map(o=>`<option value="${esc(o)}">`).join('');}
 function fillServices(){$('#svclist').innerHTML=SVCS.map(s=>`<option value="${esc(s)}">`).join('');}
 function fillZones(){$('#zonelist').innerHTML=[...ZONES,'any'].map(z=>`<option value="${esc(z)}">`).join('');}
+function fillIfaces(){$('#iflist').innerHTML=IFACES.map(i=>`<option value="${esc(i)}">`).join('');}
+async function loadIfaces(){try{const f=await j('/api/interfaces');IFACES=f.interfaces||[];}catch(e){}fillIfaces();}
+async function refreshIfaces(){await loadIfaces();toast(IFACES.length?'Interfaces: '+IFACES.join(', '):'No interfaces found');}
+// An interface field backed by the live datalist + a refresh button (interfaces
+// can appear/disappear — e.g. a VPN tunnel — after the page loaded). Free text
+// is still accepted for an interface that is not up yet.
+function ifaceFieldHTML(id,val,label,labelId){
+  return `<label class="fld"><span${labelId?` id="${labelId}"`:''}>${label}</span>
+    <span style="display:flex;gap:6px;align-items:center">
+      <input id="${id}" list="iflist" value="${esc(val||'')}" placeholder="pick or type — blank = any" autocomplete="off" style="flex:1">
+      <button type="button" class="btn-ghost" title="refresh interface list" onclick="refreshIfaces()" style="color:var(--mut);padding:4px 9px">⟳</button>
+    </span></label>`;
+}
 function tchip(t){
   if(!t||t==='any')return '<span class="chip any">any</span>';
   if(t==='abuse')return '<span class="chip abuse" title="AbuseIPDB + feeds blocklist">abuse</span>';
@@ -609,7 +624,7 @@ function throttleDrawer(file,id){
       <label class="fld" style="flex:1"><span>per</span><select id="t-unit">${opt(['second','minute','hour'],v.unit)}</select></label>
     </div>
     <label class="fld"><span>Ban duration (optional)</span><input id="t-ban" value="${esc(v.ban)}" placeholder="default 1h — or 30m / 2h / 1d" autocomplete="off"></label>
-    <label class="fld"><span>Interface (optional)</span><input id="t-iface" value="${esc(v.iface)}" placeholder="e.g. eth0 — blank = any" autocomplete="off"></label>
+    ${ifaceFieldHTML('t-iface',v.iface,'Interface (optional)')}
     <p class="muted" style="font-size:12px">Sources exceeding the rate on this port are auto-banned in the kernel. <b>Whitelisted sources are never throttled.</b> Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveThrottle('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
@@ -687,7 +702,7 @@ function natDrawer(file,id){
     </div>
     <label class="fld" id="n-target-w"><span id="n-target-l">To (internal ip[:port])</span><input id="n-target" value="${esc(v.target)}" placeholder="10.0.0.5:80" autocomplete="off"></label>
     <label class="fld" id="n-geo-w"><span>From (source geo, optional)</span><input id="n-geo" list="tgtlist" value="${esc(v.geo)}" placeholder="country / region / group — blank = any" autocomplete="off"></label>
-    <label class="fld"><span id="n-iface-l">Interface (WAN)</span><input id="n-iface" value="${esc(v.iface)}" placeholder="eth0" autocomplete="off"></label>
+    ${ifaceFieldHTML('n-iface',v.iface,'Interface (WAN)','n-iface-l')}
     <p class="muted" style="font-size:12px"><b>masquerade</b>/<b>snat</b> rewrite outbound source; <b>dnat</b> forwards a WAN port to an internal host. Needs <code>ip_forward=1</code>. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveNat('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
@@ -782,7 +797,7 @@ function ruleDrawer(file,id){
       <label class="fld" style="flex:1"><span>Port / service</span><input id="r-port" list="svclist" value="${esc(v.port)}" placeholder="443, 80,443 or a service"></label>
     </div>
     <label class="fld"><span>Target</span><input id="r-target" list="tgtlist" value="${esc(v.target)}" placeholder="any / abuse / country / region / group / IP" autocomplete="off"></label>
-    <label class="fld"><span>Interface (optional)</span><input id="r-iface" value="${esc(v.iface)}" placeholder="e.g. eth0 — blank = any" autocomplete="off"></label>
+    ${ifaceFieldHTML('r-iface',v.iface,'Interface (optional)')}
     <p class="muted" style="font-size:12px"><b>Direction</b> sets what the target means: <b>in</b> = source, <b>out</b> = destination, <b>fwd-*</b> = forwarded. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveRule('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>

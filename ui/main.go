@@ -747,6 +747,26 @@ func objects() map[string]interface{} {
 		"zones": zoneNames(), "abuseSources": abuseSources()}
 }
 
+// hostInterfaces lists the machine's network interface names for the rule
+// drawers' interface picker. It backs a datalist, so free text is still allowed
+// for tunnel/VPN interfaces that only appear later. Loopback is listed last.
+func hostInterfaces() []string {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var names, lo []string
+	for _, i := range ifs {
+		if i.Name == "lo" {
+			lo = append(lo, i.Name)
+			continue
+		}
+		names = append(names, i.Name)
+	}
+	sort.Strings(names)
+	return append(names, lo...)
+}
+
 // zoneNames collects the lowercased ZONE_<NAME> keys from the config and every
 // groups.d/*.conf drop-in, for the inter-zone rule drawer's autocomplete (zones
 // have no Objects tab of their own).
@@ -2545,6 +2565,9 @@ func main() {
 	})
 	api("/api/objects", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, objects())
+	})
+	api("/api/interfaces", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"interfaces": hostInterfaces()})
 	})
 	api("/api/geo", func(w http.ResponseWriter, r *http.Request) {
 		geo.mu.RLock()

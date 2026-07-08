@@ -774,7 +774,8 @@ appears when you have more than one file. Each edit applies to the rule's file, 
 **Add rule** lets you pick the target file; Commit deploys all changed files
 together. **+ Add rule** or clicking a row opens a
 slide-out drawer to edit the rule's fields (action, direction, protocol, port,
-target with group/region autocomplete, interface, name) or delete it; clicking a
+target with group/region autocomplete, interface — picked from the host's live
+interface list with a ⟳ refresh, name) or delete it; clicking a
 target chip does an inline quick-edit, and **+ Section** adds a titled divider
 (`## Title`) to group rules in large policies. **NAT** (`masquerade` / `snat` /
 `dnat`) and **inter-zone** (`<zone> -> <zone>`) rules render as their own row

@@ -211,7 +211,8 @@ sudo nftgeo-ui token -ro                      # long-lived read-only link
 Policy tab shows every rule kind: `allow`/`deny` filters, `throttle`, **NAT**
 (`masquerade`/`snat`/`dnat`) and **inter-zone** (`<z> -> <z>`) rules — each with
 its own add/edit drawer (**+ Rule**, **+ Throttle**, **+ Zone**, **+ NAT**), plus
-**Raw** for bulk text edits. Edits stage to a draft and deploy via **Commit**
+**Raw** for bulk text edits. Interface fields pick from the host's live NICs
+(with a ⟳ refresh). Edits stage to a draft and deploy via **Commit**
 (validate → plan diff → apply with a deadman countdown + one-click rollback).
 
 ---

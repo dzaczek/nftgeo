@@ -9,6 +9,15 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.43.0] - 2026-07-08
+
+### Added
+- **nftgeo-ui: interface picker in the rule drawers.** Every interface field
+  (Rule / Throttle / NAT) is now backed by a live datalist of the host's network
+  interfaces (`/api/interfaces` via `net.Interfaces()`), with a ⟳ **refresh**
+  button for when interfaces change (a VPN/tunnel coming up, etc.). Free text is
+  still accepted so you can scope a rule to an interface that is not up yet.
+
 ## [1.42.0] - 2026-07-08
 
 ### Added
@@ -761,6 +770,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.43.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.43.0
 [1.42.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.42.0
 [1.41.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.41.0
 [1.40.1]: https://github.com/dzaczek/nftgeo/releases/tag/v1.40.1
