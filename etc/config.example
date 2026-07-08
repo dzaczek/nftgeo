@@ -64,6 +64,13 @@ ZONE_CACHE_HOURS="20"
 # Log dropped packets to the kernel log / journald. Set to any non-empty value to
 # emit a rate-limited 'log prefix "nftgeo-drop "' before every drop rule; view
 # with: journalctl -k | grep nftgeo-drop. Off by default.
+#
+# Note: LOG_DROPS generates up to 10 log entries/second (configurable via
+# LOG_LIMIT). Over time these accumulate in journald. To limit retention, create
+# /etc/systemd/journald.conf.d/nftgeo.conf:
+#   [Journal]
+#   MaxRetentionSec=7day
+# Then: systemctl restart systemd-journald
 LOG_DROPS=""
 
 # Baseline hardening on every managed chain. Set to any non-empty value to accept
