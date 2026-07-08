@@ -49,7 +49,7 @@ package: build units
 tarball:
 	@mkdir -p $(DIST)
 	@tar -czf $(DIST)/nftgeo-$(VERSION).tar.gz \
-	  bin systemd etc tests install.sh uninstall.sh \
+	  bin systemd etc man examples tests install.sh uninstall.sh \
 	  README.md CHANGELOG.md CHEATSHEET.md ROADMAP.md LICENSE Makefile
 	@echo "wrote $(DIST)/nftgeo-$(VERSION).tar.gz"
 

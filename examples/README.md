@@ -33,6 +33,8 @@ Rule format: `<action> <dir> <proto> <port> <target>`. See the top-level
 | `50-egress-control.conf` | Restrict what the box is allowed to talk to |
 | `60-wireguard.conf` | WireGuard VPN endpoint |
 | `70-gateway-forward.conf` | Router/gateway forwarded traffic |
+| `71-nat-gateway.conf` | NAT gateway: masquerade / SNAT / DNAT port-forward |
+| `75-internal-zones.conf` | Internal firewall: zones + micro-segmentation |
 | `80-ping-icmp.conf` | Allow ping / IPv6 Neighbor Discovery |
 | `90-abuse-blocklist.conf` | Drop known-bad IPs everywhere |
 
@@ -51,5 +53,6 @@ Two extras that apply across all of these:
   in `/etc/nftgeo/config` to accept loopback, drop invalid packets, and always
   permit essential ICMPv6.
 
-NAT / port-forwarding and internal (inter-VLAN) segmentation are on the roadmap -
-see [ROADMAP.md](../ROADMAP.md).
+NAT / port-forwarding (`71-nat-gateway.conf`) and internal (inter-VLAN)
+segmentation (`75-internal-zones.conf`) both need IP forwarding
+(`sysctl net.ipv4.ip_forward=1`). See [ROADMAP.md](../ROADMAP.md) for status.

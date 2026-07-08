@@ -48,6 +48,8 @@ contents:
     dst: /usr/share/doc/nftgeo/README.md
   - src: CHEATSHEET.md
     dst: /usr/share/doc/nftgeo/CHEATSHEET.md
+  - src: man/nftgeo.8
+    dst: /usr/share/man/man8/nftgeo.8
   - dst: /etc/nftgeo/rules.d
     type: dir
   - dst: /etc/nftgeo/groups.d

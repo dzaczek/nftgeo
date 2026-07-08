@@ -9,6 +9,24 @@ All notable changes to `nftgeo` are documented here. Versions follow
 Planned work (P3 egress NAT, P4 port forwarding, P5 internal firewall /
 segmentation) is tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.39.0] - 2026-07-08
+
+### Added
+- **`nftgeo(8)` man page.** A full Linux man page covering the operator CLI
+  commands, the rules.conf grammar (filter / throttle / NAT / inter-zone rules),
+  configuration keys, files and examples. Installed to
+  `/usr/local/share/man/man8/` by `install.sh` and to `/usr/share/man/man8/` by
+  the `.deb`/`.rpm` packages (`man nftgeo`).
+- **Example fragments for NAT and zones.** `examples/71-nat-gateway.conf`
+  (masquerade / SNAT / DNAT port-forward) and `examples/75-internal-zones.conf`
+  (interface zones + `SEGMENT_DEFAULT` micro-segmentation).
+
+### Changed
+- Docs sweep for the P3–P5 features: README (egress/ingress NAT, zones),
+  CHEATSHEET, `config.example`, `rules.conf.example`, ROADMAP (P3/P4/P5 marked
+  shipped), and the examples index. `make tarball` now ships `man/` and
+  `examples/`.
+
 ## [1.38.0] - 2026-07-07
 
 ### Added
@@ -674,6 +692,7 @@ First tagged release. Captures the current feature set and recent hardening.
 - Documented that `allow <dir> any - <target>` closes the entire direction.
 - Refreshed stale `systemd` unit descriptions.
 
+[1.39.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.39.0
 [1.38.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.38.0
 [1.37.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.37.0
 [1.36.0]: https://github.com/dzaczek/nftgeo/releases/tag/v1.36.0

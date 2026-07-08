@@ -22,6 +22,12 @@ install -d -m 0755 /etc/nftgeo /etc/nftgeo/rules.d /etc/nftgeo/groups.d \
 install -m 0755 "${BASE_DIR}/bin/nftgeo-update" /usr/local/sbin/nftgeo-update
 install -m 0755 "${BASE_DIR}/bin/nftgeo" /usr/local/sbin/nftgeo
 
+if [ -f "${BASE_DIR}/man/nftgeo.8" ]; then
+	install -d -m 0755 /usr/local/share/man/man8
+	install -m 0644 "${BASE_DIR}/man/nftgeo.8" /usr/local/share/man/man8/nftgeo.8
+	command -v mandb >/dev/null 2>&1 && mandb -q >/dev/null 2>&1 || true
+fi
+
 if [ ! -f /etc/nftgeo/config ]; then
 	install -m 0600 "${BASE_DIR}/etc/config.example" /etc/nftgeo/config
 else

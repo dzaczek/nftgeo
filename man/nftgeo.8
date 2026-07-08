@@ -1,0 +1,286 @@
+.\" nftgeo(8) manual page
+.TH NFTGEO 8 "2026-07-08" "nftgeo 1.39.0" "System Administration"
+.SH NAME
+nftgeo \- declarative geo / abuse / segmentation firewall for nftables
+.SH SYNOPSIS
+.B nftgeo
+.I command
+.RI [ args ]
+.br
+.B nftgeo-update
+.RB [ --version ]
+.SH DESCRIPTION
+.B nftgeo
+builds and maintains an
+.BR nftables (8)
+ruleset in the
+.B inet nftgeo
+table from a small declarative configuration. You describe, per port and
+direction, which countries, regions, networks or hosts are allowed or denied;
+the engine resolves geo data, an optional AbuseIPDB / feed blocklist, and a
+whitelist into a single atomically-loaded ruleset.
+.PP
+.B nftgeo
+is the operator CLI documented here.
+.B nftgeo-update
+is the generation engine it drives; it is normally run by the
+.B nftgeo.service
+systemd unit and its twice-daily
+.BR nftgeo.timer .
+.PP
+Beyond geo filtering the engine also supports reactive brute-force throttling,
+a default-deny input policy, egress and ingress NAT (masquerade / SNAT / DNAT
+port-forward), and an internal firewall of interface-based zones with optional
+default-deny segmentation.
+.SH COMMANDS
+.TP
+.BI "check " ip
+Show what the firewall does to an address: whitelist / abuse / geo set
+membership, the rules that match it, and the resulting verdict.
+.TP
+.B status
+One-screen summary: version, last run, set sizes, drop counters, feed health,
+and the next scheduled run.
+.TP
+.B validate
+Render the ruleset from the current config and check it with
+.B nft -c
+without loading it. Exits non-zero if the config is invalid. Requires root.
+.TP
+.B plan
+Show how the rendered ruleset differs from what is loaded, as a policy diff
+(set contents elided). Requires root.
+.TP
+.BI "block " "ip " [ ttl ]
+Drop an address immediately for
+.I ttl
+(default 1h; e.g.\& 30m, 2d) without editing rules or reloading. Refuses a
+whitelisted address or your own SSH source unless
+.B --force
+is given. The block survives engine updates. Requires root.
+.TP
+.BI "unblock " ip
+Remove a dynamic block. Requires root.
+.TP
+.B blocklist
+List the current dynamic blocks and their remaining TTL.
+.TP
+.B apply
+Rebuild and load the ruleset now (runs the update engine). Requires root.
+.TP
+.BI "apply --confirm " [ T ]
+Apply, then automatically roll back after
+.I T
+seconds (default 120) unless confirmed \(em a deadman switch against a change
+that locks you out. Requires root.
+.TP
+.BR "apply --commit" ", " confirm
+Keep a
+.B --confirm
+apply by cancelling the pending rollback. Requires root.
+.TP
+.B rollback
+Restore the previous ruleset generation. Requires root.
+.TP
+.B version
+Print the nftgeo version.
+.TP
+.B help
+Show a usage summary.
+.SH RULES
+Rules live in
+.I /etc/nftgeo/rules.conf
+and
+.IR /etc/nftgeo/rules.d/*.conf ,
+one per line. Blank lines and lines starting with
+.B #
+are ignored; a trailing
+.B "# text"
+names the rule (used in drop logs).
+.SS Filter rules
+.nf
+.B "<allow|deny> <dir> <proto> <port> <target> [on <iface>]"
+.fi
+.TP
+.B dir
+.BR in ", " out ", " fwd-in ", " fwd-out
+(input, output, or the two forward directions).
+.TP
+.B proto
+.BR tcp ", " udp ", " sctp ", " all " (port-based); " icmp ", " icmpv6 ", " esp ", " ah ", " gre " (port-less, use " - "); " any .
+.TP
+.B port
+A single port, a range
+.RB ( 5060-5070 ),
+a list
+.RB ( 80,443 ),
+a
+.BI SERVICE_ NAME
+service, or
+.B -
+for port-less protocols.
+.TP
+.B target
+Any comma-separated mix of country code
+.RB ( pl ),
+region
+.RB ( europe ),
+literal IPv4/IPv6 address or CIDR, a
+.BI GROUP_ NAME
+list, a
+.BI HOST_ NAME
+label, the word
+.B any
+, or (with
+.B deny
+only) the AbuseIPDB blacklist keyword
+.BR abuse .
+.PP
+A port named by any
+.B allow
+rule becomes closed by default for that direction: only listed targets pass.
+.B deny
+is evaluated before
+.BR allow .
+Replies to your own connections are always accepted.
+.SS Reactive throttle
+.nf
+.B "throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]"
+.fi
+.PP
+Rate-limit new connections per source and auto-ban offenders (default ban
+.BR THROTTLE_BAN ,
+1h). Whitelisted sources are immune.
+.SS NAT (gateway)
+.nf
+.B "masquerade on <iface>"
+.B "snat out on <iface> to <ip>"
+.B "dnat <proto> <port> to <ip>[:<port>] [on <iface>]"
+.fi
+.PP
+.B masquerade
+and
+.B snat
+emit a source-NAT postrouting chain;
+.B dnat
+emits a destination-NAT (port-forward) prerouting chain. Enable
+.B net.ipv4.ip_forward=1
+for routing.
+.SS Inter-zone rules (internal firewall)
+.nf
+.B "<allow|deny> <zone> -> <zone> <proto> <port> [from <geo>]"
+.fi
+.PP
+Zones are named interface lists
+.RB ( ZONE_ NAME
+in config, including VLAN subinterfaces such as
+.BR eth0.100 ).
+The rule matches the source zone's interfaces
+.RB ( iifname )
+against the destination zone's
+.RB ( oifname )
+in the forward chain;
+.B from <geo>
+layers a source-geo set on top. With
+.B SEGMENT_DEFAULT="deny"
+all forwarded traffic between zone interfaces that no rule allows is dropped.
+.SH CONFIGURATION
+Settings live in
+.IR /etc/nftgeo/config ;
+object definitions may also live in
+.IR /etc/nftgeo/groups.d/*.conf .
+Selected keys:
+.TP
+.B WHITELIST ", " WHITELIST_HOSTS
+Addresses / hostnames that are never blocked (checked before every rule).
+.TP
+.B DEFAULT_INPUT
+.B accept
+(default, selective blocklist) or
+.B drop
+(default-deny input). Under
+.BR drop ,
+loopback, established/related, whitelist and explicit
+.B allow in
+rules still pass; deploy behind the
+.B apply --confirm
+deadman.
+.TP
+.B HARDEN
+Non-empty enables baseline hardening (accept loopback, drop invalid, essential
+ICMPv6).
+.TP
+.B LOG_DROPS
+Non-empty logs dropped packets with an
+.B nftgeo-drop:<reason>
+prefix (view with
+.BR "journalctl -k | grep nftgeo-drop" ).
+.TP
+.B SEGMENT_DEFAULT
+.B deny
+enables default-deny between zone interfaces.
+.TP
+.B ABUSEIPDB_API_KEY ", " ABUSE_FEEDS
+Populate the
+.B abuse
+blocklist from AbuseIPDB and/or extra netset/plaintext feeds.
+.TP
+.BI REGION_ NAME ", " GROUP_ NAME ", " SERVICE_ NAME ", " HOST_ NAME ", " ZONE_ NAME
+Reusable region, address-group, service, host-label and zone objects referenced
+by their lowercased suffix in rules.
+.SH FILES
+.TP
+.I /etc/nftgeo/config
+Settings.
+.TP
+.I /etc/nftgeo/rules.conf
+Main rule set.
+.TP
+.I /etc/nftgeo/rules.d/*.conf
+Additional rule fragments, loaded in sorted filename order.
+.TP
+.I /etc/nftgeo/groups.d/*.conf
+GROUP_ / REGION_ / SERVICE_ / HOST_ / ZONE_ object definitions.
+.TP
+.I /etc/nftables.d/nftgeo.nft
+The generated, loaded ruleset.
+.TP
+.I /var/lib/nftgeo/
+State: cached country zones, feeds, dynamic blocks, and ruleset generations.
+.SH EXAMPLES
+Allow inbound SSH only from Poland and one admin IP:
+.PP
+.RS
+.nf
+allow in tcp 22 pl
+allow in tcp 22 203.0.113.10
+.fi
+.RE
+.PP
+Block a scanner right now for two days:
+.PP
+.RS
+.nf
+nftgeo block 203.0.113.7 2d
+.fi
+.RE
+.PP
+Apply a risky change safely:
+.PP
+.RS
+.nf
+nftgeo apply --confirm 300
+# ... verify you still have access ...
+nftgeo apply --commit
+.fi
+.RE
+.SH SEE ALSO
+.BR nft (8),
+.BR nftables (8)
+.PP
+Full documentation:
+.I /usr/share/doc/nftgeo/README.md
+and
+.IR /usr/share/doc/nftgeo/CHEATSHEET.md .
+.SH AUTHOR
+Written by the nftgeo project.
