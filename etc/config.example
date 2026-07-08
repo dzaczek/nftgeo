@@ -78,6 +78,14 @@ LOG_DROPS=""
 # types IPv6 needs (so fencing v6 cannot break Neighbor Discovery). Off by default.
 HARDEN=""
 
+# Anti-spoofing: drop packets whose source address is not routable back
+# through the interface they arrived on (reverse-path filter, like rp_filter
+# but in the firewall). Space-separated list of interfaces to protect.
+# Example: ANTISPOOF="eth0"  (protect the WAN from LAN-spoofed source IPs)
+# Needs kernel >= 4.1 (nftables fib expression). IPv4 only; IPv6 uses the
+# ndisc/ neighbor cache and is not affected.
+ANTISPOOF=""
+
 # Input chain default policy. "accept" (default) = selective blocklist: only geo/
 # abuse/throttle and per-port deny-by-default drop, everything else passes.
 # "drop" = default-deny: only established/related, loopback, WHITELIST and your
