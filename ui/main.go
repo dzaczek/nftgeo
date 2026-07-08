@@ -210,7 +210,10 @@ func version() string {
 }
 
 func tableLoaded() bool {
-	_, err := run("nft", "list", "table", fam, table)
+	// List one chain, not the whole table: `list table` also dumps every set's
+	// elements, which is pathologically slow with a large abuse set — and this
+	// runs on every dashboard refresh.
+	_, err := run("nft", "list", "chain", fam, table, "input")
 	return err == nil
 }
 
@@ -654,15 +657,24 @@ func ruleComment(action, dir, proto, port, target, iface string) string {
 // all sharing the source comment).
 func ruleCounters() map[string]int64 {
 	m := map[string]int64{}
-	out, err := run("nft", "-j", "list", "table", fam, table)
-	if err != nil {
-		return m
+	// Per-chain, not `-j list table` (which also serialises every set element —
+	// pathological with a large abuse set). Rule counters live in the chains.
+	for _, hook := range []string{"input", "output", "forward"} {
+		out, err := run("nft", "-j", "list", "chain", fam, table, hook)
+		if err != nil {
+			continue
+		}
+		ruleCountersInto(m, out)
 	}
+	return m
+}
+
+func ruleCountersInto(m map[string]int64, out string) {
 	var doc struct {
 		Nftables []map[string]json.RawMessage `json:"nftables"`
 	}
 	if json.Unmarshal([]byte(out), &doc) != nil {
-		return m
+		return
 	}
 	for _, item := range doc.Nftables {
 		raw, ok := item["rule"]
@@ -687,7 +699,6 @@ func ruleCounters() map[string]int64 {
 			}
 		}
 	}
-	return m
 }
 
 // baselineCounters reads the implicit rules the engine puts at the top of every
@@ -698,33 +709,30 @@ func ruleCounters() map[string]int64 {
 // can explain why an "allow" rule's own hit count stays low.
 func baselineCounters() map[string]map[string]int64 {
 	out := map[string]map[string]int64{}
-	txt, err := run("nft", "list", "table", fam, table)
-	if err != nil {
-		return out
-	}
-	chain, cur := "", map[string]int64{}
-	for _, ln := range strings.Split(txt, "\n") {
-		t := strings.TrimSpace(ln)
-		if strings.HasPrefix(t, "chain ") {
-			if f := strings.Fields(t); len(f) >= 2 {
-				chain = f[1]
-				cur = map[string]int64{}
-				out[chain] = cur
+	// Per-chain, not `list table` (which also dumps every set's elements — slow
+	// with a large abuse set, and this runs on every dashboard refresh).
+	for _, hook := range []string{"input", "output", "forward"} {
+		txt, err := run("nft", "list", "chain", fam, table, hook)
+		if err != nil {
+			continue
+		}
+		cur := map[string]int64{}
+		out[hook] = cur
+		for _, ln := range strings.Split(txt, "\n") {
+			t := strings.TrimSpace(ln)
+			m := reCounter.FindStringSubmatch(t)
+			if m == nil {
+				continue
 			}
-			continue
-		}
-		m := reCounter.FindStringSubmatch(t)
-		if m == nil || chain == "" {
-			continue
-		}
-		n, _ := strconv.ParseInt(m[1], 10, 64)
-		switch {
-		case strings.Contains(t, "established,related") && strings.HasSuffix(t, "accept"):
-			cur["established"] += n
-		case strings.Contains(t, "@whitelist") && strings.HasSuffix(t, "accept"):
-			cur["whitelist"] += n
-		case strings.Contains(t, "ct state invalid") && strings.HasSuffix(t, "drop"):
-			cur["invalid"] += n
+			n, _ := strconv.ParseInt(m[1], 10, 64)
+			switch {
+			case strings.Contains(t, "established,related") && strings.HasSuffix(t, "accept"):
+				cur["established"] += n
+			case strings.Contains(t, "@whitelist") && strings.HasSuffix(t, "accept"):
+				cur["whitelist"] += n
+			case strings.Contains(t, "ct state invalid") && strings.HasSuffix(t, "drop"):
+				cur["invalid"] += n
+			}
 		}
 	}
 	return out
@@ -1736,7 +1744,7 @@ type objEntry struct {
 	Members []string `json:"members"`
 }
 
-var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE|HOST|ZONE|LIST)_([A-Za-z0-9_]+)=(.*)$`)
+var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE|HOST|ZONE|LIST|FEED)_([A-Za-z0-9_]+)=(.*)$`)
 var objNameRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 var zoneMemberRe = regexp.MustCompile(`^[A-Za-z0-9._@:-]+$`) // interface names incl. VLAN subif (eth0.100)
 var objMemberRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
@@ -1746,19 +1754,15 @@ var objMemberRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 // contain no whitespace and none of the shell-dangerous chars " ' ` $ \ < > .
 var feedURLRe = regexp.MustCompile("^https?://[^\\s\"'`$\\\\<>]+$")
 
-func parseObjects(text string) (groups, regions, services, hosts, zones, lists []objEntry, feeds []string) {
+func parseObjects(text string) (groups, regions, services, hosts, zones, lists, feeds []objEntry) {
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if v, ok := strings.CutPrefix(line, "ABUSE_FEEDS_UI="); ok {
-			feeds = strings.Fields(strings.Trim(strings.TrimSpace(v), `"`))
-			continue
-		}
 		m := objLineRe.FindStringSubmatch(line)
 		if m == nil {
-			continue
+			continue // includes the derived ABUSE_FEEDS_UI= line, rebuilt from FEED_*
 		}
 		val := strings.Trim(strings.TrimSpace(m[3]), `"`)
 		e := objEntry{Name: m[2], Members: strings.Fields(val)}
@@ -1773,6 +1777,8 @@ func parseObjects(text string) (groups, regions, services, hosts, zones, lists [
 			zones = append(zones, e)
 		case "LIST":
 			lists = append(lists, e)
+		case "FEED":
+			feeds = append(feeds, e)
 		default:
 			services = append(services, e)
 		}
@@ -1780,7 +1786,7 @@ func parseObjects(text string) (groups, regions, services, hosts, zones, lists [
 	return
 }
 
-func serializeObjects(groups, regions, services, hosts, zones, lists []objEntry, feeds []string) string {
+func serializeObjects(groups, regions, services, hosts, zones, lists, feeds []objEntry) string {
 	var b strings.Builder
 	b.WriteString("# Managed by nftgeo-ui (Objects tab). Do not hand-edit; the panel overwrites this file.\n")
 	for _, g := range groups {
@@ -1801,8 +1807,15 @@ func serializeObjects(groups, regions, services, hosts, zones, lists []objEntry,
 	for _, l := range lists {
 		fmt.Fprintf(&b, "LIST_%s=\"%s\"\n", strings.ToUpper(l.Name), strings.Join(l.Members, " "))
 	}
-	if len(feeds) > 0 {
-		fmt.Fprintf(&b, "ABUSE_FEEDS_UI=\"%s\"\n", strings.Join(feeds, " "))
+	// Named abuse feeds (label -> URL[s]) plus a derived ABUSE_FEEDS_UI line that
+	// the engine reads (it does not enumerate FEED_* itself).
+	var allURLs []string
+	for _, fd := range feeds {
+		fmt.Fprintf(&b, "FEED_%s=\"%s\"\n", strings.ToUpper(fd.Name), strings.Join(fd.Members, " "))
+		allURLs = append(allURLs, fd.Members...)
+	}
+	if len(allURLs) > 0 {
+		fmt.Fprintf(&b, "ABUSE_FEEDS_UI=\"%s\"\n", strings.Join(allURLs, " "))
 	}
 	return b.String()
 }
@@ -1855,7 +1868,7 @@ func checkNames(lists ...[]objEntry) error {
 
 // sanitizeObjects validates two namespaces separately: address/target names
 // (groups + regions + hosts, which all resolve as a rule target) and services.
-func sanitizeObjects(groups, regions, services, hosts, zones, lists []objEntry, feeds []string) error {
+func sanitizeObjects(groups, regions, services, hosts, zones, lists, feeds []objEntry) error {
 	if err := checkNames(groups, regions, hosts); err != nil {
 		return err
 	}
@@ -1865,9 +1878,22 @@ func sanitizeObjects(groups, regions, services, hosts, zones, lists []objEntry, 
 	if err := checkNames(lists); err != nil {
 		return err
 	}
-	for _, u := range feeds {
-		if !feedURLRe.MatchString(u) {
-			return fmt.Errorf("invalid feed URL %q (must be http(s):// with no spaces or shell metacharacters)", u)
+	seen := map[string]bool{}
+	for _, fd := range feeds {
+		if !objNameRe.MatchString(fd.Name) {
+			return fmt.Errorf("invalid feed label %q (letters, digits, underscore)", fd.Name)
+		}
+		if seen[strings.ToUpper(fd.Name)] {
+			return fmt.Errorf("duplicate feed label %q", fd.Name)
+		}
+		seen[strings.ToUpper(fd.Name)] = true
+		if len(fd.Members) == 0 {
+			return fmt.Errorf("feed %q has no URL", fd.Name)
+		}
+		for _, u := range fd.Members {
+			if !feedURLRe.MatchString(u) {
+				return fmt.Errorf("invalid feed URL %q (http(s):// only, no spaces or shell metacharacters)", u)
+			}
 		}
 	}
 	return checkZones(zones)
@@ -1901,7 +1927,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 			ls = []objEntry{}
 		}
 		if fd == nil {
-			fd = []string{}
+			fd = []objEntry{}
 		}
 		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls, "feeds": fd})
 	case http.MethodPut:
@@ -1912,7 +1938,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 			Hosts    []objEntry `json:"hosts"`
 			Zones    []objEntry `json:"zones"`
 			Lists    []objEntry `json:"lists"`
-			Feeds    []string   `json:"feeds"`
+			Feeds    []objEntry `json:"feeds"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)

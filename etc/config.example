@@ -27,6 +27,11 @@ ABUSEIPDB_RETENTION_DAYS="30"
 # https://blocklist.greensnow.co/greensnow.txt"
 ABUSE_FEEDS=""
 
+# Max entries kept from a single abuse feed. A runaway list (millions of IPs)
+# builds a huge nftables set that is slow to load and query; cap it to what the
+# box can handle. 0 disables the cap. Default 200000.
+ABUSE_FEEDS_MAX="200000"
+
 # Always-allow list. These addresses can reach any port even when they are
 # outside an allowed geo or appear on the AbuseIPDB blacklist. Space-separated,
 # IPv4 and IPv6, single addresses or CIDR ranges. Example:

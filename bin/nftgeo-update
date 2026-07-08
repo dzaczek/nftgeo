@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.50.0"
+NFTGEO_VERSION="1.51.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -66,6 +66,10 @@ ABUSEIPDB_STATE_FILE="${ABUSEIPDB_STATE_FILE:-${STATE_DIR}/abuseipdb.tsv}"
 # newline-separated URLs. Only fetched when a rule targets "abuse".
 ABUSE_FEEDS="${ABUSE_FEEDS:-}"
 ABUSE_FEEDS_CACHE_DIR="${ABUSE_FEEDS_CACHE_DIR:-${STATE_DIR}/feeds}"
+# Max entries kept from a single abuse feed. A runaway feed (millions of IPs)
+# builds a huge nftables set that is slow to load and to query; cap it to what
+# the box can comfortably handle. 0 disables the cap.
+ABUSE_FEEDS_MAX="${ABUSE_FEEDS_MAX:-200000}"
 
 IPDENY_V4_URL="${IPDENY_V4_URL:-https://www.ipdeny.com/ipblocks/data/aggregated}"
 IPDENY_V6_URL="${IPDENY_V6_URL:-https://www.ipdeny.com/ipv6/ipaddresses/aggregated}"
@@ -1045,6 +1049,14 @@ fetch_abuse_feeds() {
 			sed 's/[#;].*//' "$raw" | tr -d '\r' | awk 'NF{print $1}' > "${raw}.f"
 			{ grep -E "$IPV4_RE" "${raw}.f" || true; grep -Ei "$IPV6_RE" "${raw}.f" || true; } \
 				| sort -u > "${raw}.ok"
+			# Cap a single feed so a runaway list can't build a giant, slow set.
+			if [ "$ABUSE_FEEDS_MAX" -gt 0 ] 2>/dev/null; then
+				_feed_n="$(wc -l < "${raw}.ok")"
+				if [ "$_feed_n" -gt "$ABUSE_FEEDS_MAX" ]; then
+					echo "Abuse feed '${url}' has ${_feed_n} entries; capping at ABUSE_FEEDS_MAX=${ABUSE_FEEDS_MAX} (raise it in config if the box can handle more)." >&2
+					head -n "$ABUSE_FEEDS_MAX" "${raw}.ok" > "${raw}.cap" && mv "${raw}.cap" "${raw}.ok"
+				fi
+			fi
 			[ -s "${raw}.ok" ] && install -m 0644 "${raw}.ok" "$cache"
 		elif [ -s "$cache" ]; then
 			echo "Abuse feed '${url}' download failed; using cached copy." >&2

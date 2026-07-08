@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -316,12 +317,12 @@ func TestParseDraftRulesNatZone(t *testing.T) {
 }
 
 func TestObjectsRoundTrip(t *testing.T) {
-	g, r, s, h, z, l, f := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n" + `HOST_DB1="10.0.0.5"` + "\n" + `ZONE_GUEST="eth1 eth0.100"` + "\n" + `LIST_BADGUYS="1.2.3.4 5.6.7.0/24"` + "\n" + `ABUSE_FEEDS_UI="https://example.com/a.txt https://example.net/b.netset"` + "\n")
-	if len(g) != 1 || len(r) != 1 || len(s) != 1 || len(h) != 1 || len(z) != 1 || len(l) != 1 || len(f) != 2 {
+	g, r, s, h, z, l, f := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n" + `HOST_DB1="10.0.0.5"` + "\n" + `ZONE_GUEST="eth1 eth0.100"` + "\n" + `LIST_BADGUYS="1.2.3.4 5.6.7.0/24"` + "\n" + `FEED_SPAMHAUS="https://www.spamhaus.org/drop/drop.txt"` + "\n")
+	if len(g) != 1 || len(r) != 1 || len(s) != 1 || len(h) != 1 || len(z) != 1 || len(l) != 1 || len(f) != 1 {
 		t.Fatalf("counts g=%d r=%d s=%d h=%d z=%d l=%d f=%d", len(g), len(r), len(s), len(h), len(z), len(l), len(f))
 	}
-	if f[1] != "https://example.net/b.netset" {
-		t.Errorf("feeds parsed wrong: %+v", f)
+	if f[0].Name != "SPAMHAUS" || f[0].Members[0] != "https://www.spamhaus.org/drop/drop.txt" {
+		t.Errorf("feed parsed wrong: %+v", f)
 	}
 	if g[0].Name != "OFFICE" || len(g[0].Members) != 2 || g[0].Members[1] != "1.2.3.4" {
 		t.Errorf("group parsed wrong: %+v", g[0])
@@ -336,16 +337,19 @@ func TestObjectsRoundTrip(t *testing.T) {
 		t.Errorf("zone parsed wrong: %+v", z[0])
 	}
 	out := serializeObjects(g, r, s, h, z, l, f)
+	if !strings.Contains(out, `FEED_SPAMHAUS=`) || !strings.Contains(out, `ABUSE_FEEDS_UI=`) {
+		t.Errorf("serialize should emit FEED_* and the derived ABUSE_FEEDS_UI: %q", out)
+	}
 	g2, r2, s2, h2, z2, l2, f2 := parseObjects(out)
-	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 || len(h2) != 1 || len(z2) != 1 || len(l2) != 1 || len(f2) != 2 {
+	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 || len(h2) != 1 || len(z2) != 1 || len(l2) != 1 || len(f2) != 1 {
 		t.Errorf("re-parse of serialized objects lost entries: %q", out)
 	}
 }
 
 func TestSanitizeObjectsFeedURLs(t *testing.T) {
-	ok := []string{"https://iplists.firehol.org/files/firehol_level1.netset", "http://x.example/list.txt"}
+	ok := []objEntry{{Name: "FIREHOL", Members: []string{"https://iplists.firehol.org/files/firehol_level1.netset"}}}
 	if err := sanitizeObjects(nil, nil, nil, nil, nil, nil, ok); err != nil {
-		t.Errorf("valid feed URLs rejected: %v", err)
+		t.Errorf("valid feed rejected: %v", err)
 	}
 	for _, bad := range []string{
 		"ftp://x/list",             // not http(s)
@@ -354,9 +358,16 @@ func TestSanitizeObjectsFeedURLs(t *testing.T) {
 		"https://x/\"; rm -rf /\"", // quote/inject
 		"https://x/`id`",           // backtick
 	} {
-		if err := sanitizeObjects(nil, nil, nil, nil, nil, nil, []string{bad}); err == nil {
+		if err := sanitizeObjects(nil, nil, nil, nil, nil, nil, []objEntry{{Name: "X", Members: []string{bad}}}); err == nil {
 			t.Errorf("expected feed URL %q to be rejected", bad)
 		}
+	}
+	// bad label / empty url
+	if err := sanitizeObjects(nil, nil, nil, nil, nil, nil, []objEntry{{Name: "bad label", Members: []string{"https://x/y"}}}); err == nil {
+		t.Error("expected bad feed label to be rejected")
+	}
+	if err := sanitizeObjects(nil, nil, nil, nil, nil, nil, []objEntry{{Name: "X", Members: nil}}); err == nil {
+		t.Error("expected feed with no URL to be rejected")
 	}
 }
 

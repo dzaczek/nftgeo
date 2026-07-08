@@ -366,7 +366,13 @@
         <div class="card"><h3>nftables sets (live sizes)</h3><div id="o-sets"></div></div>
         <div class="card"><h3>Abuse sources <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— what fills the abuse blocklist</span></h3><div id="o-feeds"></div></div>
       </div>
-      <div class="card" style="margin-top:14px"><h3>Custom abuse feeds <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— your own blocklist URLs, imported like ABUSE_FEEDS</span></h3><div id="o-feeds-edit"></div></div>
+      <div class="card" style="margin-top:14px">
+        <div class="filters" style="justify-content:space-between">
+          <span class="muted" style="align-self:center"><b style="color:var(--fg)">Custom abuse feeds</b> — named blocklist URLs (label + URL), imported like <code>ABUSE_FEEDS</code>. Capped by <code>ABUSE_FEEDS_MAX</code>.</span>
+          <button class="btn-go" id="newfeed">+ New feed</button>
+        </div>
+        <div id="o-feeds-edit"></div>
+      </div>
       </div>
     </section>
   </main>
@@ -1035,7 +1041,7 @@ async function loadObjects(){
 
 // ---- editable objects (M6B.2 groups/regions, M6B.7/services) ----
 let OBJ={groups:[],regions:[],services:[],hosts:[],zones:[],lists:[],feeds:[]};
-function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:kind==='host'?OBJ.hosts:kind==='zone'?OBJ.zones:kind==='list'?OBJ.lists:OBJ.services;}
+function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:kind==='host'?OBJ.hosts:kind==='zone'?OBJ.zones:kind==='list'?OBJ.lists:kind==='feed'?OBJ.feeds:OBJ.services;}
 function plainchip(m){return `<span class="chip">${esc(m)}</span>`;}
 function objEditList(arr,kind){
   if(!arr.length)return `<span class="muted">none yet — use “New ${kind}” to add one.</span>`;
@@ -1050,24 +1056,7 @@ function renderManaged(){
   $('#o-hosts-edit').innerHTML=objEditList(OBJ.hosts,'host');
   $('#o-zones-edit').innerHTML=objEditList(OBJ.zones,'zone');
   $('#o-lists-edit').innerHTML=objEditList(OBJ.lists,'list');
-  renderFeeds();
-}
-// Custom abuse feed URLs (Reference tab): editable textarea -> ABUSE_FEEDS_UI,
-// deployed via the same Commit pipeline as the other objects.
-function renderFeeds(){
-  const el=$('#o-feeds-edit');if(!el)return;
-  const feeds=OBJ.feeds||[];
-  if(MODE==='ro'){
-    el.innerHTML=feeds.length?feeds.map(u=>`<div class="row"><span class="mono">${esc(u)}</span></div>`).join(''):'<span class="muted">none</span>';
-    return;
-  }
-  el.innerHTML=`<textarea id="feeds-ta" rows="4" style="width:100%;box-sizing:border-box" placeholder="https://iplists.firehol.org/files/firehol_level1.netset&#10;one http(s) URL per line">${esc(feeds.join('\n'))}</textarea>
-    <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><button class="btn-go" onclick="saveFeeds()">Save to draft</button>
-    <span class="muted" style="font-size:12px">The parser extracts IPs/CIDRs from any text list. Merged into the <code>abuse</code> sets, so a <code>deny … abuse</code> rule covers them. Deploy via Commit.</span></div>`;
-}
-async function saveFeeds(){
-  OBJ.feeds=$('#feeds-ta').value.split(/\s+/).map(x=>x.trim()).filter(Boolean);
-  await putObjects();
+  $('#o-feeds-edit').innerHTML=objEditList(OBJ.feeds,'feed');
 }
 function switchObjTab(ot){$$('#obj-tabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.ot===ot));
   $$('.ot').forEach(s=>s.style.display='none');$('#ot-'+ot).style.display='';}
@@ -1089,13 +1078,14 @@ function editObj(kind,i){
     service:['service','Ports (443), ranges (8000-8100), proto-tagged (53/udp), and/or other service names — space/comma separated. A bare port takes the rule’s protocol; a tagged port is fixed. Use proto <code>any</code>/<code>all</code> in a rule to emit every protocol the service defines.','80 443 53/udp','allow in tcp ',' any'],
     host:['host','A single IP or CIDR (or a few) — a named host usable as a rule target.','10.0.20.5','deny out any - ',''],
     zone:['zone','Interfaces that make up this network segment — space/comma separated. VLAN subinterfaces (e.g. <code>eth0.100</code>) are just interfaces. Pick from the host below or type your own.','eth1 eth0.100','allow ',' -&gt; dmz tcp 80'],
-    list:['IP list','IPs and CIDRs — space/comma separated. Use as a rule target to block or allow the whole list at once.','10.0.0.0/8 192.168.1.0/24 1.2.3.4','deny in any - ','']}[kind];
+    list:['IP list','IPs and CIDRs — space/comma separated. Use as a rule target to block or allow the whole list at once.','10.0.0.0/8 192.168.1.0/24 1.2.3.4','deny in any - ',''],
+    feed:['abuse feed','One or more blocklist URLs (http/https) under this label — the engine fetches each and merges the IPs into the <code>abuse</code> sets (capped by <code>ABUSE_FEEDS_MAX</code>), so a <code>deny … abuse</code> rule covers them.','https://iplists.firehol.org/files/firehol_level1.netset','','']}[kind];
   $('#drawertitle').textContent=(isNew?'New ':'Edit ')+meta[0];
   $('#drawerbody').innerHTML=`
-    <label class="fld"><span>Name</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="${kind==='service'?'WEB':kind==='zone'?'DMZ':'OFFICE'}" autocomplete="off"></label>
-    <label class="fld"><span>${kind==='zone'?'Interfaces':'Members'}</span><textarea id="objmembers" rows="${kind==='zone'?4:7}" placeholder="${meta[2]}">${esc(e.members.join(' '))}</textarea></label>
+    <label class="fld"><span>${kind==='feed'?'Label':'Name'}</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="${kind==='service'?'WEB':kind==='zone'?'DMZ':kind==='feed'?'FIREHOL':'OFFICE'}" autocomplete="off"></label>
+    <label class="fld"><span>${kind==='zone'?'Interfaces':kind==='feed'?'Feed URL(s)':'Members'}</span><textarea id="objmembers" rows="${kind==='zone'||kind==='feed'?4:7}" placeholder="${meta[2]}">${esc(e.members.join(' '))}</textarea></label>
     ${kind==='zone'?`<div class="fld"><span class="muted" style="font-size:12px">Add an interface on this host <span class="chip" style="cursor:pointer;border-style:dashed" onclick="refreshIfacesPick()" title="refresh">⟳</span></span><div class="chips" id="ifpick" style="margin-top:6px">${ifacePickChips()}</div></div>`:''}
-    <p class="muted" style="font-size:12px">${meta[1]}<br>Use it in a rule, e.g. <code>${meta[3]}${esc((e.name||'NAME').toLowerCase())}${meta[4]}</code>. Changes go to the draft — deploy via Commit.</p>
+    <p class="muted" style="font-size:12px">${meta[1]}${kind==='feed'?' Covered by any <code>deny … abuse</code> rule.':`<br>Use it in a rule, e.g. <code>${meta[3]}${esc((e.name||'NAME').toLowerCase())}${meta[4]}</code>`}. Changes go to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveObj('${kind}',${i})">Save to draft</button>
       ${isNew?'':`<button class="btn-rb" onclick="deleteObj('${kind}',${i})">Delete</button>`}
@@ -1129,6 +1119,7 @@ $('#v-objects').addEventListener('click',e=>{
   if(e.target.id==='newhost'){editObj('host',-1);return;}
   if(e.target.id==='newzone'){editObj('zone',-1);return;}
   if(e.target.id==='newlist'){editObj('list',-1);return;}
+  if(e.target.id==='newfeed'){editObj('feed',-1);return;}
   const item=e.target.closest('.objitem.editable');if(item){editObj(item.dataset.kind,+item.dataset.i);return;}
 });
 $('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer')closeDrawer();});
@@ -1181,7 +1172,7 @@ async function boot(){
   }catch(e){showLock('');return;}
   hideLock();
   if(MODE==='ro'){$('#modebadge').textContent='read-only';
-    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#newhost').style.display='none';$('#newzone').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#addsynproxy').style.display='none';$('#addzone').style.display='none';$('#addnat').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#newhost').style.display='none';$('#newzone').style.display='none';$('#newlist').style.display='none';$('#newfeed').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#addsynproxy').style.display='none';$('#addzone').style.display='none';$('#addnat').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();

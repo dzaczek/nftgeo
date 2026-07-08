@@ -8,6 +8,26 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.51.0] - 2026-07-08
+
+### Fixed
+- **Dashboard could melt the box with a large abuse set.** The UI ran
+  `nft list table` (which also serialises every set element) on `tableLoaded`,
+  `baselineCounters`, and `ruleCounters` — on every refresh. With a multi-million
+  IP abuse set each call took minutes and they piled up (load 15+). These now
+  query per **chain** (`nft list chain …`), which never dumps set elements, so the
+  dashboard is immune to set size.
+
+### Added
+- **`ABUSE_FEEDS_MAX`** (default 200000): caps the entries kept from a single
+  abuse feed, so a runaway blocklist (e.g. a 57 MB list) can't build a huge,
+  slow nftables set. 0 disables it.
+- **Custom abuse feeds are now labeled objects.** Manage them in **Objects →
+  Reference → + New feed** as `FEED_<LABEL>` objects (a label + one or more URLs),
+  edited/deleted like any other object and deployed via Commit. The engine reads
+  a derived `ABUSE_FEEDS_UI` (it doesn't enumerate `FEED_*`). Supersedes the flat
+  URL textarea from 1.50.0. URLs validated (http(s), no shell metacharacters).
+
 ## [1.50.0] - 2026-07-08
 
 ### Added
