@@ -53,20 +53,24 @@ Milestones:
 "I don't need another firewall" feature. Geo and interface qualifiers reused.
 
 ```text
-dnat in tcp 443  to 10.0.0.5:8443                 # WAN:443 -> internal:8443
-dnat in tcp 2222 europe to 10.0.0.5:22 on eth0    # geo-restricted, on the WAN
+dnat tcp 443  to 10.0.0.5:8443            # WAN:443 -> internal 10.0.0.5:8443
+dnat tcp 2222 to 10.0.0.5:22 on eth0      # scope the redirect to the WAN iface
 ```
+
+Shipped grammar: `dnat <proto> <port> to <ip>[:<port>] [on <iface>]` (IPv4/IPv6).
 
 Milestones:
 - [x] **M4.1** `prerouting` NAT chain scaffolding.
-- [x] **M4.2** `dnat <dir> <proto> <port> to <ip[:port]>` parse + emit.
-- [x] **M4.3** reuse the geo target and `on <iface>` qualifier.
-- [x] **M4.4** auto-emit the matching `fwd-in` accept so the forwarded packet
-  passes the filter (make it "just work").
-- [x] **M4.5** optional hairpin/reflexive NAT (reach the service via the public IP
-  from inside the LAN).
+- [x] **M4.2** `dnat <proto> <port> to <ip[:port]>` parse + emit (v4 + v6).
+- [~] **M4.3** `on <iface>` qualifier shipped; geo-restricted DNAT (`from <geo>`)
+  is **not yet** implemented.
+- [x] **M4.4** forwarded DNAT traffic passes the filter — achieved via the
+  accept-policy forward chain rather than an explicit auto-emitted `fwd-in` rule
+  (same "just works" outcome).
+- [ ] **M4.5** optional hairpin/reflexive NAT (reach the service via the public IP
+  from inside the LAN) — **not yet**.
 - [x] **M4.6** warn on disabled forwarding; IPv4-first.
-- [ ] **M4.7** docs, examples, tests.
+- [x] **M4.7** docs, examples, tests *(render fixtures + `examples/71-nat-gateway.conf`)*.
 
 ---
 
