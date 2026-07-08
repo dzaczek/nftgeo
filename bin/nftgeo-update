@@ -837,8 +837,8 @@ ensure_zones() {
 		t4="${TMP_DIR}/dl.v4"
 		t6="${TMP_DIR}/dl.v6"
 		: > "$t4"; : > "$t6"
-		curl -fsSL "${IPDENY_V4_URL}/${cc}-aggregated.zone" -o "$t4" 2>/dev/null || true
-		curl -fsSL "${IPDENY_V6_URL}/${cc}-aggregated.zone" -o "$t6" 2>/dev/null || true
+		curl -fsSL --user-agent "nftgeo/1.45.0" "${IPDENY_V4_URL}/${cc}-aggregated.zone" -o "$t4" 2>/dev/null || true
+		curl -fsSL --user-agent "nftgeo/1.45.0" "${IPDENY_V6_URL}/${cc}-aggregated.zone" -o "$t6" 2>/dev/null || true
 		grep -E "$IPV4_RE" "$t4" > "${t4}.f" 2>/dev/null || true
 		grep -Ei "$IPV6_RE" "$t6" > "${t6}.f" 2>/dev/null || true
 
@@ -908,7 +908,7 @@ fetch_abuseipdb() {
 		exit 1
 	fi
 
-	if ! curl -fsS --get "$ABUSEIPDB_URL" \
+	if ! curl -fsS --user-agent "nftgeo/1.45.0" --get "$ABUSEIPDB_URL" \
 		--data-urlencode "confidenceMinimum=${ABUSEIPDB_CONFIDENCE_MINIMUM}" \
 		--data-urlencode "limit=${ABUSEIPDB_LIMIT}" \
 		--data-urlencode "days=${ABUSEIPDB_DAYS}" \
@@ -981,7 +981,7 @@ fetch_abuse_feeds() {
 		[ -n "$url" ] || continue
 		cache="${ABUSE_FEEDS_CACHE_DIR}/$(printf '%s' "$url" | tr -c 'A-Za-z0-9' '_')"
 		raw="${TMP_DIR}/feed.raw"
-		if curl -fsSL "$url" -o "$raw" 2>/dev/null && [ -s "$raw" ]; then
+		if curl -fsSL --user-agent "nftgeo/1.45.0" "$url" -o "$raw" 2>/dev/null && [ -s "$raw" ]; then
 			sed 's/[#;].*//' "$raw" | tr -d '\r' | awk 'NF{print $1}' > "${raw}.f"
 			{ grep -E "$IPV4_RE" "${raw}.f" || true; grep -Ei "$IPV6_RE" "${raw}.f" || true; } \
 				| sort -u > "${raw}.ok"
