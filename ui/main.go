@@ -276,7 +276,9 @@ type nftJSON struct {
 }
 
 func sets() []Set {
-	out, err := run("nft", "-j", "list", "table", fam, table)
+	// `list sets` returns set declarations (name/type) only — no elements — so it
+	// never serialises a huge abuse set. (`list table` dumps every element.)
+	out, err := run("nft", "-j", "list", "sets", fam, table)
 	if err != nil {
 		return nil
 	}
@@ -308,6 +310,13 @@ func sets() []Set {
 }
 
 func setCount(name string) int {
+	// Never enumerate the abuse sets: they can hold millions of elements and
+	// listing them is what melted the dashboard. -1 means "not counted" (the UI
+	// shows the feed-based count instead). Other sets (whitelist/geo/throttle)
+	// are small and safe to count.
+	if strings.HasPrefix(name, "abuse") {
+		return -1
+	}
 	out, err := run("nft", "-j", "list", "set", fam, table, name)
 	if err != nil {
 		return 0

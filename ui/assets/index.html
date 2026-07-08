@@ -550,8 +550,10 @@ async function refresh(){
     try{const g=await j('/api/geo');$('#geonote').textContent=`· ${g.countries} countries indexed${g.full?'':' (rule-set only — set GEO_FULL=1 for global)'}`;}catch(e){}
     if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;try{map.series.regions[0].setValues(vals);}catch(e){}}
     renderLogs();
-    const st=await j('/api/sets'); const ab=(st||[]).find(x=>x.name==='abuse4'); $('#k-abuse').textContent=ab?ab.count:0;
-    window.SETS=st;
+    // abuse IPs tile from the (cheap) feed counts in health, not /api/sets —
+    // listing the abuse set can be huge, so it must not run on every refresh.
+    const abuseIPs=(s.health&&s.health.feeds||[]).reduce((a,f)=>a+(f.count||0),0);
+    $('#k-abuse').textContent=abuseIPs.toLocaleString();
     refreshCommitBar();
   }catch(e){console.error(e);}
 }
@@ -1035,7 +1037,8 @@ async function loadObjects(){
   const wl=[...(o.whitelist||[]).map(x=>['ip',x]),...(o.whitelistHosts||[]).map(x=>['host',x])];
   $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
   $('#o-feeds').innerHTML=(o.abuseSources||[]).length?o.abuseSources.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
-  $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
+  try{window.SETS=await j('/api/sets');}catch(e){window.SETS=[];}
+  $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count<0?'<span class="muted" title="not counted — see abuse sources">—</span>':x.count.toLocaleString()}</span></div>`).join('')||'<span class="muted">none</span>';
   const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[],lists:d.lists||[],feeds:d.feeds||[]}; renderManaged();
 }
 
