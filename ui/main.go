@@ -22,6 +22,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math/bits"
 	"net"
 	"net/http"
 	"net/url"
@@ -54,6 +55,7 @@ var (
 	geoFull     = env("GEO_FULL", "")
 	geoCacheDir = env("GEO_CACHE_DIR", "/var/lib/nftgeo/ui-geo")
 	ipdenyV4    = env("IPDENY_V4_URL", "https://www.ipdeny.com/ipblocks/data/aggregated")
+	ipdenyV6    = env("IPDENY_V6_URL", "https://www.ipdeny.com/ipv6/ipaddresses/aggregated")
 )
 
 // ISO 3166-1 alpha-2 codes (lowercase) - the ipdeny per-country zone filenames.
@@ -74,8 +76,11 @@ func geoFetchAll() {
 	var wg sync.WaitGroup
 	var n int64
 	client := &http.Client{Timeout: 25 * time.Second}
-	fetch := func(cc string) []byte {
+	fetch := func(cc string, suffix string) []byte {
 		url := ipdenyV4 + "/" + cc + "-aggregated.zone"
+		if suffix == "v6" {
+			url = ipdenyV6 + "/" + cc + "-aggregated.zone"
+		}
 		for attempt := 0; attempt < 3; attempt++ {
 			req, err := http.NewRequest("GET", url, nil)
 			if err != nil {
@@ -107,8 +112,13 @@ func geoFetchAll() {
 		go func(cc string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if b := fetch(cc); b != nil {
+			if b := fetch(cc, "v4"); b != nil {
 				if os.WriteFile(geoCacheDir+"/"+cc+".v4", b, 0644) == nil {
+					atomic.AddInt64(&n, 1)
+				}
+			}
+			if b := fetch(cc, "v6"); b != nil {
+				if os.WriteFile(geoCacheDir+"/"+cc+".v6", b, 0644) == nil {
 					atomic.AddInt64(&n, 1)
 				}
 			}
@@ -322,7 +332,8 @@ func setCount(name string) int {
 
 type geoIndex struct {
 	mu    sync.RWMutex
-	v4    map[byte][]v4net // first octet -> nets
+	v4    map[byte][]v4net   // first octet -> nets
+	v6    map[[2]byte][]v6net // first two bytes -> nets
 	when  time.Time
 	count int
 	ccs   int
@@ -331,11 +342,17 @@ type v4net struct {
 	ip, mask uint32
 	cc       string
 }
+type v6net struct {
+	ip   [16]byte
+	mask [16]byte
+	cc   string
+}
 
-var geo = &geoIndex{v4: map[byte][]v4net{}}
+var geo = &geoIndex{v4: map[byte][]v4net{}, v6: map[[2]byte][]v6net{}}
 
 func (g *geoIndex) load() {
 	idx := map[byte][]v4net{}
+	idx6 := map[[2]byte][]v6net{}
 	seen := map[string]bool{}
 	total := 0
 	// UI geo-cache first (broad coverage wins), then the engine's zone cache.
@@ -346,10 +363,13 @@ func (g *geoIndex) load() {
 		}
 		for _, e := range entries {
 			name := e.Name()
-			if !strings.HasSuffix(name, ".v4") {
+			isV4 := strings.HasSuffix(name, ".v4")
+			isV6 := strings.HasSuffix(name, ".v6")
+			if !isV4 && !isV6 {
 				continue
 			}
 			cc := strings.TrimSuffix(name, ".v4")
+			cc = strings.TrimSuffix(cc, ".v6")
 			if seen[cc] {
 				continue
 			}
@@ -367,17 +387,35 @@ func (g *geoIndex) load() {
 				if err != nil {
 					continue
 				}
-				ip4 := n.IP.To4()
-				if ip4 == nil {
-					continue
+				if isV4 {
+					ip4 := n.IP.To4()
+					if ip4 == nil {
+						continue
+					}
+					idx[ip4[0]] = append(idx[ip4[0]], v4net{be32(ip4), be32(net.IP(n.Mask).To4()), cc})
+					total++
+				} else {
+					ip6 := n.IP.To16()
+					if ip6 == nil {
+						continue
+					}
+					mask6 := net.IP(n.Mask).To16()
+					if mask6 == nil {
+						continue
+					}
+					var v6ip, v6mask [16]byte
+					copy(v6ip[:], ip6)
+					copy(v6mask[:], mask6)
+					key := [2]byte{ip6[0], ip6[1]}
+					idx6[key] = append(idx6[key], v6net{v6ip, v6mask, cc})
+					total++
 				}
-				idx[ip4[0]] = append(idx[ip4[0]], v4net{be32(ip4), be32(net.IP(n.Mask).To4()), cc})
-				total++
 			}
 		}
 	}
 	g.mu.Lock()
 	g.v4 = idx
+	g.v6 = idx6
 	g.when = time.Now()
 	g.count = total
 	g.ccs = len(seen)
@@ -390,18 +428,44 @@ func (g *geoIndex) lookup(ipStr string) string {
 		return ""
 	}
 	ip4 := ip.To4()
-	if ip4 == nil {
-		return "" // v6 geolocation not indexed in Phase A
+	if ip4 != nil {
+		u := be32(ip4)
+		g.mu.RLock()
+		defer g.mu.RUnlock()
+		best, bestMask := "", uint32(0)
+		for _, n := range g.v4[ip4[0]] {
+			if u&n.mask == n.ip {
+				if n.mask >= bestMask { // longest prefix wins
+					best, bestMask = n.cc, n.mask
+				}
+			}
+		}
+		return best
 	}
-	u := be32(ip4)
+	// IPv6 lookup
+	ip6 := ip.To16()
+	if ip6 == nil {
+		return ""
+	}
+	key := [2]byte{ip6[0], ip6[1]}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	best, bestMask := "", uint32(0)
-	for _, n := range g.v4[ip4[0]] {
-		if u&n.mask == n.ip {
-			if n.mask >= bestMask { // longest prefix wins
-				best, bestMask = n.cc, n.mask
+	best, bestMask := "", 0
+	for _, n := range g.v6[key] {
+		match := true
+		prefixLen := 0
+		for i := 0; i < 16; i++ {
+			if n.mask[i] == 0 {
+				break
 			}
+			if (ip6[i] & n.mask[i]) != n.ip[i] {
+				match = false
+				break
+			}
+			prefixLen += bits.LeadingZeros8(n.mask[i])
+		}
+		if match && prefixLen >= bestMask {
+			best, bestMask = n.cc, prefixLen
 		}
 	}
 	return best
