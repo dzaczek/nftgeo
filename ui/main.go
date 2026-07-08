@@ -1108,7 +1108,7 @@ func tokenCmd(args []string) {
 		exp = time.Now().Add(*ttl)
 	}
 	tok := mintToken(secret, mode, exp)
-	fmt.Printf("Open (valid until %s):\n  http://%s/?auth=%s\n", exp.Format("2006-01-02 15:04 MST"), *addr, tok)
+	fmt.Printf("Open (valid until %s):\n  http://%s/#auth=%s\n", exp.Format("2006-01-02 15:04 MST"), *addr, tok)
 	if mode == "ro" {
 		fmt.Println("Mode: read-only - long-term panel access, no firewall changes.")
 	} else {
