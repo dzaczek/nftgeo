@@ -5,6 +5,10 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# Clean up a stale sentinel from an interrupted "apply --confirm" deadman
+# (the nohup'd deadman process dies on reboot, but the sentinel file persists
+# and would block future applies until manually removed).
+ExecStartPre=-/bin/rm -f /var/lib/nftgeo/.pending-confirm
 ExecStart=/usr/local/sbin/nftgeo-update
 # Restore dynamic "nftgeo block" entries (e.g. after a reboot); non-fatal.
 ExecStartPost=-/usr/local/sbin/nftgeo restore-dyn

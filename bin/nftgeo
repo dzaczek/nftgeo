@@ -291,6 +291,11 @@ cmd_restore_dyn() {
 	# Re-create the dynamic block table from persisted state after a reboot,
 	# dropping entries whose TTL has passed. Idempotent; wired to run after each
 	# engine start (incl. boot) via the service.
+	#
+	# Also clean up a stale sentinel from an interrupted "apply --confirm":
+	# the nohup'd deadman process dies on reboot, but the sentinel file persists
+	# and would block future applies until manually removed.
+	rm -f "$SENTINEL" 2>/dev/null || true
 	[ -s "$DYN_STATE" ] || return 0
 	ensure_dyn
 	now="$(date +%s)"
