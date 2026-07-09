@@ -652,7 +652,7 @@ function renderWhitelistCard(){
   let wlHits=0;
   for(const ch of ['input','forward','output']){wlHits+=(BASELINE[ch]&&BASELINE[ch].whitelist)||0;}
   el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-    <span class="chip" style="background:var(--accent);color:#fff;font-weight:600">⊕ Whitelist</span>
+    <span class="chip" style="background:var(--acc);color:#fff;font-weight:600">⊕ Whitelist</span>
     <span class="muted" style="font-size:12px">${ipCount} IP${ipCount!==1?'s':''}${hostCount?` · ${hostCount} host${hostCount!==1?'s':''}`:''}${wlHits?` · ${wlHits.toLocaleString()} hits`:''}</span>
     <span style="display:flex;gap:4px;flex-wrap:wrap;flex:1;min-width:200px">
       ${ips.map(ip=>`<span class="chip obj" title="${esc(ip)}">${esc(ip)}</span>`).join('')}
@@ -679,11 +679,16 @@ async function whitelistDrawer(){
       <textarea id="wl-ips" rows="8" style="font-family:monospace;font-size:13px;resize:vertical" placeholder="10.0.0.0/8&#10;203.0.113.5&#10;2001:db8::/48">${esc(wl)}</textarea></label>
     <label class="fld"><span>Hostnames (one per line, resolved at apply time)</span>
       <textarea id="wl-hosts" rows="4" style="font-family:monospace;font-size:13px;resize:vertical" placeholder="vpn.example.net&#10;wireguard.example.ch">${esc(wlh)}</textarea></label>
-    <p class="muted" style="font-size:11px">⚠ Removing your own IP can lock you out. The draft → commit pipeline with deadman provides a safety net — if you lose access, the ruleset auto-rolls-back after the timer expires.</p>`;
-  $('#drawerfoot').innerHTML=`<button class="btn-ghost" onclick="closeDrawer()">Cancel</button><button class="btn-go" onclick="saveWhitelistDraft()">Save to draft</button>`;
+    <p class="muted" style="font-size:11px">⚠ Removing your own IP can lock you out. The draft → commit pipeline with deadman provides a safety net — if you lose access, the ruleset auto-rolls-back after the timer expires.</p>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn-go" onclick="saveWhitelistDrawer()">Save to draft</button>
+      <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
+    </div>`;
   openDrawer();
 }
-async function saveWhitelistDraft(){
+// Distinct from saveWhitelistDraft(msg) (the Objects → Reference inline editor):
+// this bulk-textarea version reads the drawer fields, so the names must differ.
+async function saveWhitelistDrawer(){
   const ips=$('#wl-ips').value.split('\n').map(s=>s.trim()).filter(Boolean);
   const hosts=$('#wl-hosts').value.split('\n').map(s=>s.trim()).filter(Boolean);
   const r=await post('/api/whitelist/draft',{whitelist:ips,whitelistHosts:hosts});
@@ -793,19 +798,23 @@ function rowHTML(r,n,ro,multi){
     <td>${s}</td><td>${d}</td><td>${svcc}</td>
     <td>${act}</td><td style="text-align:right">${hits}</td>${fcell}</tr>`;
 }
-// Map a rule's dir field to the nft chain it lives in.
+// Map a rule to the group it renders under. NAT rules (masquerade/snat/dnat)
+// live in a separate nat table, not the forward filter chain, so they get their
+// own group; inter-zone rules do run in the forward chain.
 function ruleChain(r){
-  if(r.kind==='zone'||r.kind==='nat')return 'forward'; // zone rules live in forward; NAT in postrouting/prerouting but group with forward
+  if(r.kind==='nat')return 'nat';
+  if(r.kind==='zone')return 'forward';
   const d=r.dir||'in';
   if(d==='out')return 'output';
   if(d.indexOf('fwd')===0)return 'forward';
   return 'input';
 }
-// Chain display metadata: name, hook, description, color.
+// Chain display metadata. Hooks reflect the actual nftgeo filter chains
+// (type filter hook <name> priority -100) — no prerouting/postrouting here.
 const CHAIN_INFO={
-  input:   {label:'INPUT',   hook:'prerouting→input',    desc:'Traffic TO this host',           icon:'⬇'},
-  forward: {label:'FORWARD', hook:'forward',             desc:'Traffic ROUTED through (zones/NAT)', icon:'↔'},
-  output:  {label:'OUTPUT',  hook:'output→postrouting',  desc:'Traffic FROM this host',         icon:'⬆'},
+  input:   {label:'INPUT',   hook:'hook input',   desc:'Traffic TO this host',              icon:'⬇'},
+  forward: {label:'FORWARD', hook:'hook forward', desc:'Traffic ROUTED through (zones)',     icon:'↔'},
+  output:  {label:'OUTPUT',  hook:'hook output',  desc:'Traffic FROM this host',            icon:'⬆'},
 };
 function renderPolicy(){
   const f=$('#pf').value.toLowerCase();
@@ -842,26 +851,31 @@ function renderPolicy(){
     const icon=isNat?'🔀':info.icon;
     // Chain header with flow visualization
     html+=`<div class="card" style="margin-bottom:12px">`;
-    html+=`<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px">
+    html+=`<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px">
       <span style="font-size:16px">${icon}</span>
       <b>${label}</b>
       <span class="muted" style="font-size:11px">${esc(desc)}</span>
       <span class="muted" style="font-size:11px;margin-left:auto">${rules.filter(r=>r.kind!=='section').length} rule${rules.filter(r=>r.kind!=='section').length!==1?'s':''}</span>
     </div>`;
-    // Flow visualization: baseline → user rules → default policy
+    // Flow bar: the FIXED evaluation order the engine emits (nftables matches
+    // top-down, first match wins). Baseline chips carry live counters; the
+    // rule-slot chips show where your rules run — deny before allow, then a
+    // per-port deny-by-default, then the chain policy. Order matches the engine
+    // (invalid drop → established → whitelist → … ), not the row order below.
     if(!isNat){
       const bc=BASELINE[ch]||{};
-      const flowParts=[];
-      if('established' in bc)flowParts.push(`<span class="chip" style="font-size:11px;background:var(--card2);color:var(--mut)" title="established/related connections">ct est ✓ ${bc.established?(bc.established).toLocaleString():0}</span>`);
-      if('whitelist' in bc)flowParts.push(`<span class="chip" style="font-size:11px;background:var(--accent);color:#fff" title="whitelisted sources">@wl ✓ ${bc.whitelist?(bc.whitelist).toLocaleString():0}</span>`);
-      if(bc.invalid)flowParts.push(`<span class="chip" style="font-size:11px;background:var(--danger);color:#fff" title="invalid conntrack state">invalid ✗ ${bc.invalid.toLocaleString()}</span>`);
-      if(flowParts.length){
-        html+=`<div style="padding:4px 12px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:11px;border-bottom:1px solid var(--border);background:var(--bg2)">
-          <span class="muted">flow:</span> ${flowParts.join(' <span class="muted">→</span> ')}
-          <span class="muted">→</span> <span class="chip" style="font-size:11px;background:var(--card2);color:var(--mut)">your rules below</span>
-          <span class="muted">→</span> <span class="chip" style="font-size:11px;background:var(--card2);color:var(--mut)">default policy</span>
-        </div>`;
-      }
+      const step=(t,bg,fg,tip)=>`<span class="chip" style="font-size:11px;background:${bg};color:${fg}" title="${tip}">${t}</span>`;
+      const parts=[];
+      if(bc.invalid)parts.push(step(`invalid ✗ ${bc.invalid.toLocaleString()}`,'var(--drop)','#fff','invalid conntrack state — dropped first'));
+      if('established' in bc)parts.push(step(`ct est ✓ ${(bc.established||0).toLocaleString()}`,'var(--card)','var(--mut)','replies to your own connections are accepted here'));
+      if('whitelist' in bc)parts.push(step(`@wl ✓ ${(bc.whitelist||0).toLocaleString()}`,'var(--acc)','#fff','whitelisted sources — always allowed, before your rules'));
+      parts.push(step('deny','var(--card)','var(--mut)','your explicit deny rules (incl. abuse) run before allows'));
+      parts.push(step('allow','var(--card)','var(--mut)','your explicit allow rules'));
+      parts.push(step('deny-by-default','var(--card)','var(--mut)','a port with any allow rule is closed to all other sources'));
+      parts.push(step('policy','var(--card)','var(--mut)','the chain default policy (accept, or drop if DEFAULT_INPUT=drop)'));
+      html+=`<div style="padding:4px 12px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:11px;border-bottom:1px solid var(--line);background:var(--bg)" title="Fixed evaluation order — independent of the row order in the table below.">
+        <span class="muted">order:</span> ${parts.join(' <span class="muted">→</span> ')}
+      </div>`;
     }
     // Rules table
     html+=`<div class="tablewrap"><table class="poltable"><tbody>`;
