@@ -26,9 +26,9 @@ check_lacks(){ echo "$out" | grep -qF "$1" && { echo "FAIL: unexpected '$1'"; fa
 check_has  "deny in tcp 22 any"
 check_has  "deny in tcp 8080 any"
 check_has  "deny out tcp 53 any"
+check_has  "deny in any HERMES any" # proto "any" + a proto-tagged service port
 check_lacks "deny in tcp 443 any"   # already had a catch-all deny
 check_lacks "deny in tcp 80 any"    # allow target is "any" (intentionally open)
-check_lacks "HERMES"                # non-port proto "any" — skipped, not garbage-migrated
 check_lacks "deny in icmp"          # portless rule — nothing to close per-port
 
 if [ "$fail" = 0 ]; then echo "migrate tests: PASS"; else echo "migrate tests: FAILED"; exit 1; fi

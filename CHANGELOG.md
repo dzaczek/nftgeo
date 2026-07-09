@@ -43,9 +43,10 @@ deny  in tcp 22 any     # close the port to everyone else
   <proto> <port> <target>` with no catch-all `deny ... any`, it generates that
   deny into a sorted-last `rules.d/zz-sequential-migration.conf`, reproducing the
   pre-1.57 per-port deny-by-default so upgrading does not silently open ports.
-  `--dry-run` previews; deploy behind the deadman. Only port-bearing rules
-  (tcp/udp/sctp/all with a real port) are migrated, so a malformed or portless
-  rule is left alone. Covered by `tests/migrate/run.sh`.
+  `--dry-run` previews; deploy behind the deadman. Rules that name a port are
+  migrated (including `proto any` with a proto-tagged service, e.g. a
+  `SERVICE_FOO="9119/tcp"` used as `allow in any FOO grp`); portless rules are
+  left alone. Covered by `tests/migrate/run.sh`.
 - **Open-port warning (#42).** `validate` (and every render) now warns when a
   port has a geo-restricted `allow in` but no catch-all `deny ... any` and
   `DEFAULT_INPUT` is `accept` — i.e. the port is left open to all other sources.
