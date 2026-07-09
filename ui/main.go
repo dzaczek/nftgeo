@@ -46,7 +46,7 @@ var (
 	fam                = env("TABLE_FAMILY", "inet")
 	table              = env("TABLE_NAME", "nftgeo")
 	zoneDir            = env("ZONE_DIR", "/var/lib/nftgeo/zones")
-	engine             = env("NFTGEO_UPDATE", "/usr/sbin/nftgeo-update")
+	engine             = env("NFTGEO_UPDATE", "/usr/local/sbin/nftgeo-update")
 	configFile         = env("CONFIG_FILE", "/etc/nftgeo/config")
 	rulesFile          = env("RULES_FILE", "/etc/nftgeo/rules.conf")
 	rulesDir           = env("RULES_DIR", "/etc/nftgeo/rules.d")
@@ -1812,7 +1812,7 @@ func tokenCmd(args []string) {
 // before an explicit Deploy, and a timed-out deadman auto-restores rules.conf.
 
 var (
-	nftgeoBin = env("NFTGEO_BIN", "/usr/sbin/nftgeo")
+	nftgeoBin = env("NFTGEO_BIN", "/usr/local/sbin/nftgeo")
 	stateDir  = env("STATE_DIR", "/var/lib/nftgeo")
 	groupsDir = env("GROUPS_DIR", "/etc/nftgeo/groups.d")
 	sentinel  = env("SENTINEL", filepath.Join(stateDir, ".pending-confirm"))

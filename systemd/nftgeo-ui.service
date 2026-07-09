@@ -7,7 +7,7 @@ After=network.target nftgeo.service
 # unlocks the editor, which stages a draft and commits via the deadman-guarded
 # CLI. Runs as root (reads the kernel log + nft; commits write /etc/nftgeo).
 # Bind stays on localhost; put a reverse proxy in front for remote access.
-ExecStart=/usr/sbin/nftgeo-ui -addr 127.0.0.1:8787
+ExecStart=/usr/local/sbin/nftgeo-ui -addr 127.0.0.1:8787
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
@@ -15,7 +15,6 @@ ProtectHome=true
 PrivateTmp=true
 # /usr and /boot read-only; /etc stays writable for commits.
 ProtectSystem=full
-ReadWritePaths=/etc/nftgeo
 
 [Install]
 WantedBy=multi-user.target
