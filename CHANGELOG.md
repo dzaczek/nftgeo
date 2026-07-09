@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.58.2] - 2026-07-09
+
+### Fixed
+- **Drag-to-reorder was broken in the chain-grouped Policy view (#58).** Since the
+  view groups rules into a table per chain, the drop target row is inside a
+  chain's `<tbody>`, not a direct child of the container, so the insert threw.
+  Insert relative to the target's parent instead. A moved row now briefly pulses.
+
+### Added
+- **Rule name colors (#58).** A rule's name is hashed to a stable HSL color, shown
+  as a dot next to the name and reused on the matching drop-log reason badge.
 ## [1.58.1] - 2026-07-09
 
 ### Added
