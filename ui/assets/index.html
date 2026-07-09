@@ -95,6 +95,9 @@
   .alert{padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;display:flex;align-items:center;gap:8px}
   .alert.crit{background:#3a1418;border:1px solid var(--drop);color:#ff8090}
   .alert.warn{background:#3a2a12;border:1px solid var(--warnc);color:var(--warnc)}
+  .hint{color:var(--warnc);cursor:help;font-weight:700;margin-left:1px}
+  .pbar{display:block;height:6px;margin-top:6px;background:#0004;border-radius:4px;overflow:hidden}
+  .pbar-fill{display:block;height:100%;background:var(--warnc);transition:width .5s}
   .alert .icon{font-size:16px}
   .mono{font-family:ui-monospace,monospace;font-size:12px}
   .ipl{cursor:pointer;border-bottom:1px dotted var(--mut)}.ipl:hover{color:var(--acc2)}
@@ -232,6 +235,7 @@
     <!-- DASHBOARD -->
     <section class="view active" id="v-dashboard">
       <div id="alerts"></div>
+      <div id="abuseload"></div>
       <div id="logwarn" class="warn" style="display:none">Drop logging is off — map &amp; drop stats stay empty. Set <code>LOG_DROPS="1"</code> in <code>/etc/nftgeo/config</code> and apply.</div>
       <div class="kpis">
         <div class="kpi"><b id="k-total">0</b><span>drops / 24h</span></div>
@@ -366,7 +370,13 @@
         <div class="card"><h3>nftables sets (live sizes)</h3><div id="o-sets"></div></div>
         <div class="card"><h3>Abuse sources <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— what fills the abuse blocklist</span></h3><div id="o-feeds"></div></div>
       </div>
-      <p class="muted" style="margin-top:10px;font-size:12px">Service &amp; host-label objects (SERVICE_*/HOST_*) arrive with the internal firewall (roadmap P5).</p>
+      <div class="card" style="margin-top:14px">
+        <div class="filters" style="justify-content:space-between">
+          <span class="muted" style="align-self:center"><b style="color:var(--fg)">Custom abuse feeds</b> — named blocklist URLs (label + URL), imported like <code>ABUSE_FEEDS</code>. Capped by <code>ABUSE_FEEDS_MAX</code>.</span>
+          <button class="btn-go" id="newfeed">+ New feed</button>
+        </div>
+        <div id="o-feeds-edit"></div>
+      </div>
       </div>
     </section>
   </main>
@@ -525,6 +535,16 @@ function renderAlerts(list){
     return `<div class="alert ${a.level}"><span class="icon">${icon}</span><span>${esc(a.msg)}</span></div>`;
   }).join('');
 }
+// Warning + progress bar while the engine loads a large abuse set in paced batches.
+function renderAbuseLoad(st){
+  const el=$('#abuseload');if(!el)return;
+  if(!st||!st.active){el.innerHTML='';el.style.display='none';return;}
+  el.style.display='block';
+  const pct=Math.max(0,Math.min(100,st.pct||0));
+  el.innerHTML=`<div class="alert warn"><span class="icon">⏳</span><span style="flex:1">
+    Loading a large abuse blocklist in batches to keep the box responsive — <b>${(st.loaded||0).toLocaleString()}</b> / ${(st.total||0).toLocaleString()} (${pct}%). Protection ramps up as it fills.
+    <span class="pbar"><span class="pbar-fill" style="width:${pct}%"></span></span></span></div>`;
+}
 async function refresh(){
   try{
     const s=await j('/api/status');
@@ -540,12 +560,18 @@ async function refresh(){
     bars($('#cc-in'),d.ingressByCC,'drop'); bars($('#cc-out'),d.egressByCC,''); bars($('#ports'),d.topPorts,'');
     sparkline($('#spark'),d.timeline);
     try{renderAlerts(await j('/api/alerts'));}catch(e){}
+    try{renderAbuseLoad(await j('/api/abuse-load'));}catch(e){}
     loadTopIPs();
     try{const g=await j('/api/geo');$('#geonote').textContent=`· ${g.countries} countries indexed${g.full?'':' (rule-set only — set GEO_FULL=1 for global)'}`;}catch(e){}
     if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;try{map.series.regions[0].setValues(vals);}catch(e){}}
     renderLogs();
-    const st=await j('/api/sets'); const ab=(st||[]).find(x=>x.name==='abuse4'); $('#k-abuse').textContent=ab?ab.count:0;
-    window.SETS=st;
+    // abuse IPs tile: the deduplicated count the engine writes to disk, not the
+    // sum of per-source feed counts (those overlap — one IP on many lists). Falls
+    // back to the source sum on an older engine. Never lists the (huge) live set.
+    const abuseSum=(s.health&&s.health.feeds||[]).reduce((a,f)=>a+(f.count||0),0);
+    const abuseIPs=(s.health&&s.health.abuseLoaded)||abuseSum;
+    $('#k-abuse').textContent=abuseIPs.toLocaleString();
+    $('#k-abuse').title=`${abuseIPs.toLocaleString()} unique IPs/ranges loaded (deduplicated). Sources sum to ${abuseSum.toLocaleString()} before overlap is removed.`;
     refreshCommitBar();
   }catch(e){console.error(e);}
 }
@@ -561,6 +587,15 @@ function renderLogs(){
 
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
 let OBJMAP={}, SVCS=[], ZONES=[], IFACES=[], FILES=[]; // tooltips; service/zone/iface autocomplete; rule files
+let BASELINE={}; // per-chain baseline accept counters, so a 0-hit allow rule can flag when the whitelist/established rules shadow it
+// Total traffic accepted by the implicit rules (established/related + whitelist)
+// ahead of a rule's chain — if > 0, a matched allow rule with 0 own hits is
+// likely shadowed there (e.g. your whitelisted SSH), not simply unused.
+function baselineAcceptsFor(dir){
+  const ch=dir==='out'?'output':(dir&&dir.indexOf('fwd')===0?'forward':'input');
+  const c=BASELINE[ch]||{};
+  return (c.whitelist||0)+(c.established||0);
+}
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};ZONES=o.zones||[];
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
@@ -570,14 +605,15 @@ async function loadPolicy(){
     ZONES=[...new Set([...ZONES,...(od.zones||[]).map(z=>(z.name||'').toLowerCase())])];}catch(e){}
   await loadIfaces();
   fillTargets(); fillServices(); fillZones();
+  try{BASELINE=await j('/api/baseline')||{};}catch(e){BASELINE={};}
+  renderBaseline(BASELINE);
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
-  try{renderBaseline(await j('/api/baseline'));}catch(e){renderBaseline(null);}
 }
 // Implicit accepts that run before your policy (no editable row of their own):
 // established/related + whitelist are where allowed/existing traffic — incl. your
 // own SSH — is counted, which is why an "allow" rule's own Hits stay low.
 function renderBaseline(b){
-  b=b||{};const el=$('#polbaseline');if(!el)return;
+  b=b||{};BASELINE=b;const el=$('#polbaseline');if(!el)return;
   const parts=[];
   for(const ch of ['input','forward','output']){
     const c=b[ch];if(!c)continue;const bits=[];
@@ -683,7 +719,7 @@ function rowHTML(r,n,ro,multi){
     [s,d]=srcDst(r);
     act=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
     svcc=svc(r)+ifchip;
-    hits=r.disabled?'<span class="muted">—</span>':(r.matched?`<b>${r.hits.toLocaleString()}</b>`:'<span class="muted">—</span>');
+    hits=r.disabled?'<span class="muted">—</span>':(!r.matched?'<span class="muted">—</span>':(r.hits===0&&r.action!=='deny'&&baselineAcceptsFor(r.dir)>0?`<b>0</b><span class="hint" title="0 new, non-whitelisted hits. Matching traffic from established connections or whitelisted sources — e.g. your own SSH — is accepted by the baseline rules above this policy, so it never reaches this rule.">*</span>`:`<b>${r.hits.toLocaleString()}</b>`));
   }
   return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
     <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${n}</span></td>
@@ -1028,9 +1064,14 @@ async function loadObjects(){
   $('#o-regions').innerHTML=objBlock(o.regions);
   const wl=[...(o.whitelist||[]).map(x=>['ip',x]),...(o.whitelistHosts||[]).map(x=>['host',x])];
   $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span>${MODE==='ro'?'':`<button class="btn-rb" style="font-size:10px;padding:1px 6px" onclick="removeWhitelistEntry('${esc(x)}','${t}')">🗑</button>`}</div>`).join(''):'<span class="muted">none</span>';
-  $('#o-feeds').innerHTML=(o.abuseSources||[]).length?o.abuseSources.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
-  $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
-  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[],lists:d.lists||[]}; renderManaged();
+  const asrc=o.abuseSources||[];
+  const asum=asrc.reduce((a,s)=>a+(s.count||0),0);
+  const auniq=o.abuseLoaded||0;
+  const ahead=asrc.length?`<div class="row" style="border-bottom:1px solid var(--line);margin-bottom:6px;padding-bottom:6px" title="One IP can appear on several lists. Sources are merged and deduplicated (plus CIDR-aggregated) before loading, so the unique total is smaller than the sum of the sources."><span><b>Unique loaded</b> <span class="muted">(deduplicated)</span></span><span><b style="color:var(--ok)">${auniq.toLocaleString()}</b> IPs <span class="muted">· sources sum ${asum.toLocaleString()}</span></span></div>`:'';
+  $('#o-feeds').innerHTML=asrc.length?ahead+asrc.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
+  try{window.SETS=await j('/api/sets');}catch(e){window.SETS=[];}
+  $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count<0?'<span class="muted" title="not counted — see abuse sources">—</span>':x.count.toLocaleString()}</span></div>`).join('')||'<span class="muted">none</span>';
+  const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[],lists:d.lists||[],feeds:d.feeds||[]}; renderManaged();
 }
 // ---- whitelist add/remove (Task 3) ----
 function showWhitelistAdd(){
@@ -1060,8 +1101,8 @@ async function removeWhitelistEntry(entry,kind){
 }
 
 // ---- editable objects (M6B.2 groups/regions, M6B.7/services) ----
-let OBJ={groups:[],regions:[],services:[],hosts:[],zones:[],lists:[]};
-function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:kind==='host'?OBJ.hosts:kind==='zone'?OBJ.zones:kind==='list'?OBJ.lists:OBJ.services;}
+let OBJ={groups:[],regions:[],services:[],hosts:[],zones:[],lists:[],feeds:[]};
+function listFor(kind){return kind==='group'?OBJ.groups:kind==='region'?OBJ.regions:kind==='host'?OBJ.hosts:kind==='zone'?OBJ.zones:kind==='list'?OBJ.lists:kind==='feed'?OBJ.feeds:OBJ.services;}
 function plainchip(m){return `<span class="chip">${esc(m)}</span>`;}
 function objEditList(arr,kind){
   if(!arr.length)return `<span class="muted">none yet — use “New ${kind}” to add one.</span>`;
@@ -1076,6 +1117,7 @@ function renderManaged(){
   $('#o-hosts-edit').innerHTML=objEditList(OBJ.hosts,'host');
   $('#o-zones-edit').innerHTML=objEditList(OBJ.zones,'zone');
   $('#o-lists-edit').innerHTML=objEditList(OBJ.lists,'list');
+  $('#o-feeds-edit').innerHTML=objEditList(OBJ.feeds,'feed');
 }
 function switchObjTab(ot){$$('#obj-tabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.ot===ot));
   $$('.ot').forEach(s=>s.style.display='none');$('#ot-'+ot).style.display='';}
@@ -1097,13 +1139,14 @@ function editObj(kind,i){
     service:['service','Ports (443), ranges (8000-8100), proto-tagged (53/udp), and/or other service names — space/comma separated. A bare port takes the rule’s protocol; a tagged port is fixed. Use proto <code>any</code>/<code>all</code> in a rule to emit every protocol the service defines.','80 443 53/udp','allow in tcp ',' any'],
     host:['host','A single IP or CIDR (or a few) — a named host usable as a rule target.','10.0.20.5','deny out any - ',''],
     zone:['zone','Interfaces that make up this network segment — space/comma separated. VLAN subinterfaces (e.g. <code>eth0.100</code>) are just interfaces. Pick from the host below or type your own.','eth1 eth0.100','allow ',' -&gt; dmz tcp 80'],
-    list:['IP list','IPs and CIDRs — space/comma separated. Use as a rule target to block or allow the whole list at once.','10.0.0.0/8 192.168.1.0/24 1.2.3.4','deny in any - ','']}[kind];
+    list:['IP list','IPs and CIDRs — space/comma separated. Use as a rule target to block or allow the whole list at once.','10.0.0.0/8 192.168.1.0/24 1.2.3.4','deny in any - ',''],
+    feed:['abuse feed','One or more blocklist URLs (http/https) under this label — the engine fetches each and merges the IPs into the <code>abuse</code> sets (capped by <code>ABUSE_FEEDS_MAX</code>), so a <code>deny … abuse</code> rule covers them.','https://iplists.firehol.org/files/firehol_level1.netset','','']}[kind];
   $('#drawertitle').textContent=(isNew?'New ':'Edit ')+meta[0];
   $('#drawerbody').innerHTML=`
-    <label class="fld"><span>Name</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="${kind==='service'?'WEB':kind==='zone'?'DMZ':'OFFICE'}" autocomplete="off"></label>
-    <label class="fld"><span>${kind==='zone'?'Interfaces':'Members'}</span><textarea id="objmembers" rows="${kind==='zone'?4:7}" placeholder="${meta[2]}">${esc(e.members.join(' '))}</textarea></label>
+    <label class="fld"><span>${kind==='feed'?'Label':'Name'}</span><input id="objname" value="${esc(e.name)}" ${isNew?'':'readonly'} placeholder="${kind==='service'?'WEB':kind==='zone'?'DMZ':kind==='feed'?'FIREHOL':'OFFICE'}" autocomplete="off"></label>
+    <label class="fld"><span>${kind==='zone'?'Interfaces':kind==='feed'?'Feed URL(s)':'Members'}</span><textarea id="objmembers" rows="${kind==='zone'||kind==='feed'?4:7}" placeholder="${meta[2]}">${esc(e.members.join(' '))}</textarea></label>
     ${kind==='zone'?`<div class="fld"><span class="muted" style="font-size:12px">Add an interface on this host <span class="chip" style="cursor:pointer;border-style:dashed" onclick="refreshIfacesPick()" title="refresh">⟳</span></span><div class="chips" id="ifpick" style="margin-top:6px">${ifacePickChips()}</div></div>`:''}
-    <p class="muted" style="font-size:12px">${meta[1]}<br>Use it in a rule, e.g. <code>${meta[3]}${esc((e.name||'NAME').toLowerCase())}${meta[4]}</code>. Changes go to the draft — deploy via Commit.</p>
+    <p class="muted" style="font-size:12px">${meta[1]}${kind==='feed'?' Covered by any <code>deny … abuse</code> rule.':`<br>Use it in a rule, e.g. <code>${meta[3]}${esc((e.name||'NAME').toLowerCase())}${meta[4]}</code>`}. Changes go to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveObj('${kind}',${i})">Save to draft</button>
       ${isNew?'':`<button class="btn-rb" onclick="deleteObj('${kind}',${i})">Delete</button>`}
@@ -1122,11 +1165,11 @@ async function saveObj(kind,i){
 }
 async function deleteObj(kind,i){listFor(kind).splice(i,1);await putObjects();closeDrawer();}
 async function putObjects(){
-  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions,services:OBJ.services,hosts:OBJ.hosts,zones:OBJ.zones,lists:OBJ.lists})});
+  const r=await fetch('/api/objects/draft',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:OBJ.groups,regions:OBJ.regions,services:OBJ.services,hosts:OBJ.hosts,zones:OBJ.zones,lists:OBJ.lists,feeds:OBJ.feeds})});
   if(r.status===401||r.status===403){showLock('Read-only session — cannot edit objects.');return;}
   const d=await r.json();
   if(d.error){toast('Rejected: '+d.error);return;}
-  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[],services:dd.services||[],hosts:dd.hosts||[],zones:dd.zones||[],lists:dd.lists||[]};renderManaged();
+  const dd=await j('/api/objects/draft');OBJ={groups:dd.groups||[],regions:dd.regions||[],services:dd.services||[],hosts:dd.hosts||[],zones:dd.zones||[],lists:dd.lists||[],feeds:dd.feeds||[]};renderManaged();
   refreshCommitBar();toast('Saved to draft.');
 }
 $('#v-objects').addEventListener('click',e=>{
@@ -1137,6 +1180,7 @@ $('#v-objects').addEventListener('click',e=>{
   if(e.target.id==='newhost'){editObj('host',-1);return;}
   if(e.target.id==='newzone'){editObj('zone',-1);return;}
   if(e.target.id==='newlist'){editObj('list',-1);return;}
+  if(e.target.id==='newfeed'){editObj('feed',-1);return;}
   const item=e.target.closest('.objitem.editable');if(item){editObj(item.dataset.kind,+item.dataset.i);return;}
 });
 $('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer')closeDrawer();});
@@ -1189,7 +1233,7 @@ async function boot(){
   }catch(e){showLock('');return;}
   hideLock();
   if(MODE==='ro'){$('#modebadge').textContent='read-only';
-    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#newhost').style.display='none';$('#newzone').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#addsynproxy').style.display='none';$('#addzone').style.display='none';$('#addnat').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
+    $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#newhost').style.display='none';$('#newzone').style.display='none';$('#newlist').style.display='none';$('#newfeed').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#addsynproxy').style.display='none';$('#addzone').style.display='none';$('#addnat').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
   initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
 }
 boot();

@@ -114,7 +114,14 @@ ABUSE_FEEDS="https://iplists.firehol.org/files/firehol_level1.netset
 https://www.spamhaus.org/drop/drop.txt"
 ```
 Bogon/private/reserved ranges are stripped automatically, so feeds can't block
-your own LAN/VPN/DNS.
+your own LAN/VPN/DNS. Add your own feed URLs from the dashboard (Objects →
+Reference → Custom abuse feeds).
+```sh
+ABUSE_FEEDS_MAX="200000"               # cap per feed (0 = no cap)
+ABUSE_FEEDS_AGGREGATE="1"              # collapse abuse IPs into CIDRs before loading
+ABUSE_FEEDS_BATCH="0"                   # >0: load a huge set in paced chunks of N
+ABUSE_FEEDS_BATCH_SLEEP="1"            # seconds between chunks (progress bar in UI)
+```
 
 ### Whitelist (never blocked — protect your admin access)
 ```sh

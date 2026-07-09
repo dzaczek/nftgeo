@@ -6,6 +6,12 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 ## [Unreleased]
 
+Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
+
+## [1.54.0] - 2026-07-09
+
+Integrates PR #35 (service templates, rule-stats, whitelist editor, docs).
+
 ### Added
 - **15 new service templates.** `nginx`, `kamailio`, `redis`, `postgres`,
   `mysql`, `gitlab`, `docker-registry`, `elasticsearch`, `grafana`,
@@ -18,16 +24,121 @@ All notable changes to `nftgeo` are documented here. Versions follow
   deny-abuse and allow-any rules, whitelist IP/host counts, and live
   whitelist hit counters from the kernel baseline.
 - **Whitelist management API (`/api/whitelist`).** GET, POST (add), and
-  DELETE (remove) endpoints for `WHITELIST` and `WHITELIST_HOSTS` entries
-  in config. Validates IP/CIDR via `net.ParseCIDR`/`net.ParseIP`.
+  DELETE (remove) endpoints for `WHITELIST` and `WHITELIST_HOSTS` entries.
+  Entries are validated (IP/CIDR via `net.ParseCIDR`/`net.ParseIP`, hostnames
+  rejected if they contain shell metacharacters). The config file is updated
+  in place, preserving its existing permissions (it holds the AbuseIPDB key)
+  and written atomically; the change takes effect on the next `nftgeo apply`.
 - **Dashboard whitelist editor.** The Objects → Reference tab now shows
   a **+ Add** button (with IP/CIDR or hostname selector) and a **🗑**
   button per entry for removing whitelist items with confirmation.
-- **README overhaul.** Restructured with ASCII architecture diagrams
-  showing the rule evaluation order, system architecture, draft→commit
-  pipeline, and dashboard layout. New template reference table.
+- **README diagrams.** A "How it works" and a "Rule evaluation order" ASCII
+  diagram, plus the expanded template list.
 
-Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
+## [1.53.1] - 2026-07-08
+
+### Added
+- **"Shadowed by whitelist" hint in Policy.** An allow rule that is loaded but has
+  0 hits now shows a small `*` when the traffic is actually being accepted ahead
+  of it by the established/related or whitelist baseline rules (e.g. your own
+  whitelisted SSH). Hovering explains why the rule's own counter stays at 0, so a
+  0 no longer looks like a broken counter.
+
+## [1.53.0] - 2026-07-08
+
+### Added
+- **Deduplicated abuse total.** The dashboard now shows how many unique IPs/ranges
+  are actually loaded into the abuse sets — read from the engine's on-disk,
+  merged, scrubbed and CIDR-aggregated set — instead of only summing the
+  per-source feed counts. The same IP on several feeds is counted once, so the
+  headline "abuse IPs" tile and the Abuse sources card now show the real total
+  next to the (larger) sum of sources, making feed overlap obvious.
+
+## [1.52.1] - 2026-07-08
+
+### Fixed
+- **IPv6 drop lookups showed `Range <nil>/29`.** The RDAP whois panel read the
+  block prefix only from the cidr0 `v4prefix` field, which is absent for IPv6
+  (those blocks use `v6prefix`), so every IPv6 drop rendered a nil range. It now
+  uses whichever prefix the block carries and omits the row when neither exists.
+- **Abuse sources mislabeled custom feeds as "blocklist".** The dashboard guessed
+  a feed's name by substring-matching its URL, and the generic token "blocklist"
+  shadowed the real provider (e.g. a feed on `blocklist.greensnow.co` showed as
+  "blocklist" instead of "greensnow"). UI-added feeds now display the label the
+  operator gave them, and unlabeled feeds resolve to the actual provider name.
+
+## [1.52.0] - 2026-07-08
+
+### Added
+- **CIDR aggregation for abuse feeds.** Before loading, abuse IPs are collapsed
+  into CIDR ranges (`ABUSE_FEEDS_AGGREGATE`, default on) so adjacent addresses
+  become a single prefix — a smaller nftables set that loads and matches faster.
+  Uses `iprange` (IPv4) / `aggregate6` (IPv6) when installed and falls back to
+  the kernel's set auto-merge otherwise. `install.sh` now pulls in `iprange`
+  best-effort. The run log reports `Aggregated abuse IPv4: X -> Y CIDRs`.
+- **Paced (batched) loading for very large blocklists.** When the abuse set has
+  more than `ABUSE_FEEDS_BATCH` entries (default 0 = off), the ruleset loads
+  with an empty abuse set and the engine fills it in chunks of that size,
+  pausing `ABUSE_FEEDS_BATCH_SLEEP` seconds between chunks, so a multi-million-IP
+  feed can't spike load average on a small box. Protection ramps up over the
+  load window; a warning is logged when batching starts.
+- **Abuse-load progress in the dashboard.** A new `/api/abuse-load` endpoint and
+  a warning banner with a progress bar show a batched load filling in real time
+  ("Loading a large abuse blocklist … loaded / total"), then clear when done.
+
+## [1.51.0] - 2026-07-08
+
+### Fixed
+- **Dashboard could melt the box with a large abuse set.** The UI ran
+  `nft list table` (which also serialises every set element) on `tableLoaded`,
+  `baselineCounters`, and `ruleCounters` — on every refresh. With a multi-million
+  IP abuse set each call took minutes and they piled up (load 15+). These now
+  query per **chain** (`nft list chain …`), which never dumps set elements, so the
+  dashboard is immune to set size.
+
+### Added
+- **`ABUSE_FEEDS_MAX`** (default 200000): caps the entries kept from a single
+  abuse feed, so a runaway blocklist (e.g. a 57 MB list) can't build a huge,
+  slow nftables set. 0 disables it.
+- **Custom abuse feeds are now labeled objects.** Manage them in **Objects →
+  Reference → + New feed** as `FEED_<LABEL>` objects (a label + one or more URLs),
+  edited/deleted like any other object and deployed via Commit. The engine reads
+  a derived `ABUSE_FEEDS_UI` (it doesn't enumerate `FEED_*`). Supersedes the flat
+  URL textarea from 1.50.0. URLs validated (http(s), no shell metacharacters).
+
+## [1.50.0] - 2026-07-08
+
+### Added
+- **Custom abuse feeds from the panel.** A new **Objects → Reference → Custom
+  abuse feeds** editor lets you add your own blocklist URLs. Stored as
+  `ABUSE_FEEDS_UI` in the UI-managed drop-in and appended to any `ABUSE_FEEDS`
+  from `config` (the engine fetches/parses them identically), so a `deny … abuse`
+  rule covers them. URLs are validated (http(s) only, no whitespace or shell
+  metacharacters) before being written to the sourced file; deployed via Commit.
+
+### Changed
+- **Top-IP stats store: lower memory/disk churn.** Cap by entry count
+  (`maxStatsEntries`) with a single-slice eviction instead of a per-entry byte
+  estimate, and only write `ui-stats.json` when new drops were actually ingested
+  (no periodic 50 MB rewrite when idle).
+
+## [1.49.1] - 2026-07-08
+
+### Fixed
+- **Top source IPs were over-counted ~12×.** The stats ingester polled the last
+  hour of drops every few minutes but never deduplicated, so each drop was
+  re-counted on every tick until it aged out of the window. Ingest now tracks a
+  high-water-mark timestamp and only records drops newer than the last one seen
+  (`filterNewDrops`), and `loadStats` resumes that mark from disk so a restart
+  doesn't re-count the overlap. Regression test added.
+
+## [1.49.0] - 2026-07-08
+
+### Added
+- **Custom IP lists (`LIST_<NAME>`).** Named IP/CIDR lists you manage from the
+  panel's **Objects > IP Lists** tab and use as a rule target — e.g. a personal
+  blocklist referenced by `deny in any - mylist`. Resolves like a `GROUP_` (v4/v6
+  split into address sets); threaded through the objects draft/commit pipeline.
 
 ## [1.48.0] - 2026-07-08
 

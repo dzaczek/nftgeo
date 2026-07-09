@@ -135,16 +135,52 @@ func runV(name string, args ...string) string {
 	return strings.TrimSpace(out)
 }
 
+// shortFeed names an unlabeled feed from its cache filename (the URL with every
+// non-alphanumeric char replaced by '_'). It prefers a recognizable provider
+// token; "blocklist" is deliberately not one - it is a substring of many hosts
+// (e.g. blocklist.greensnow.co) and would shadow the real name. UI-added feeds
+// are labeled by the operator instead (see feedLabels).
 func shortFeed(f string) string {
-	for _, k := range []string{"firehol", "spamhaus", "blocklist", "greensnow"} {
+	for _, k := range []string{"abuseipdb", "greensnow", "firehol", "spamhaus", "emergingthreats", "dshield", "talos", "blocklist_de"} {
 		if strings.Contains(f, k) {
-			return k
+			return strings.ReplaceAll(k, "_", ".")
 		}
 	}
-	if len(f) > 24 {
-		return f[:24]
+	s := strings.TrimPrefix(f, "https___")
+	s = strings.TrimPrefix(s, "http___")
+	if len(s) > 24 {
+		s = s[:24]
 	}
-	return f
+	return s
+}
+
+// sanitizeFeedURL mirrors the engine's cache-file naming (tr -c 'A-Za-z0-9' '_'),
+// so a configured feed URL can be matched to its cached file on disk.
+func sanitizeFeedURL(u string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, u)
+}
+
+// feedLabels maps each UI-configured feed's cache-file name to the label the
+// operator gave it, so abuseSources shows "GREENSNOW" instead of guessing a
+// name from the URL.
+func feedLabels() map[string]string {
+	m := map[string]string{}
+	b, err := os.ReadFile(objLiveFile)
+	if err != nil {
+		return m
+	}
+	_, _, _, _, _, _, feeds := parseObjects(string(b))
+	for _, fd := range feeds {
+		for _, u := range fd.Members {
+			m[sanitizeFeedURL(u)] = fd.Name
+		}
+	}
+	return m
 }
 
 // health gathers the status widgets: next scheduled run, last load, feed
@@ -180,6 +216,7 @@ func health(ch []Chain) map[string]interface{} {
 	// ABUSE_FEEDS netsets; abuseSources() covers both, so the dashboard widget
 	// matches the Reference tab instead of silently omitting AbuseIPDB.
 	h["feeds"] = abuseSources()
+	h["abuseLoaded"] = abuseLoadedCount()
 	return h
 }
 
@@ -210,7 +247,10 @@ func version() string {
 }
 
 func tableLoaded() bool {
-	_, err := run("nft", "list", "table", fam, table)
+	// List one chain, not the whole table: `list table` also dumps every set's
+	// elements, which is pathologically slow with a large abuse set — and this
+	// runs on every dashboard refresh.
+	_, err := run("nft", "list", "chain", fam, table, "input")
 	return err == nil
 }
 
@@ -273,7 +313,9 @@ type nftJSON struct {
 }
 
 func sets() []Set {
-	out, err := run("nft", "-j", "list", "table", fam, table)
+	// `list sets` returns set declarations (name/type) only — no elements — so it
+	// never serialises a huge abuse set. (`list table` dumps every element.)
+	out, err := run("nft", "-j", "list", "sets", fam, table)
 	if err != nil {
 		return nil
 	}
@@ -305,6 +347,13 @@ func sets() []Set {
 }
 
 func setCount(name string) int {
+	// Never enumerate the abuse sets: they can hold millions of elements and
+	// listing them is what melted the dashboard. -1 means "not counted" (the UI
+	// shows the feed-based count instead). Other sets (whitelist/geo/throttle)
+	// are small and safe to count.
+	if strings.HasPrefix(name, "abuse") {
+		return -1
+	}
 	out, err := run("nft", "-j", "list", "set", fam, table, name)
 	if err != nil {
 		return 0
@@ -654,15 +703,24 @@ func ruleComment(action, dir, proto, port, target, iface string) string {
 // all sharing the source comment).
 func ruleCounters() map[string]int64 {
 	m := map[string]int64{}
-	out, err := run("nft", "-j", "list", "table", fam, table)
-	if err != nil {
-		return m
+	// Per-chain, not `-j list table` (which also serialises every set element —
+	// pathological with a large abuse set). Rule counters live in the chains.
+	for _, hook := range []string{"input", "output", "forward"} {
+		out, err := run("nft", "-j", "list", "chain", fam, table, hook)
+		if err != nil {
+			continue
+		}
+		ruleCountersInto(m, out)
 	}
+	return m
+}
+
+func ruleCountersInto(m map[string]int64, out string) {
 	var doc struct {
 		Nftables []map[string]json.RawMessage `json:"nftables"`
 	}
 	if json.Unmarshal([]byte(out), &doc) != nil {
-		return m
+		return
 	}
 	for _, item := range doc.Nftables {
 		raw, ok := item["rule"]
@@ -687,7 +745,6 @@ func ruleCounters() map[string]int64 {
 			}
 		}
 	}
-	return m
 }
 
 // baselineCounters reads the implicit rules the engine puts at the top of every
@@ -698,33 +755,30 @@ func ruleCounters() map[string]int64 {
 // can explain why an "allow" rule's own hit count stays low.
 func baselineCounters() map[string]map[string]int64 {
 	out := map[string]map[string]int64{}
-	txt, err := run("nft", "list", "table", fam, table)
-	if err != nil {
-		return out
-	}
-	chain, cur := "", map[string]int64{}
-	for _, ln := range strings.Split(txt, "\n") {
-		t := strings.TrimSpace(ln)
-		if strings.HasPrefix(t, "chain ") {
-			if f := strings.Fields(t); len(f) >= 2 {
-				chain = f[1]
-				cur = map[string]int64{}
-				out[chain] = cur
+	// Per-chain, not `list table` (which also dumps every set's elements — slow
+	// with a large abuse set, and this runs on every dashboard refresh).
+	for _, hook := range []string{"input", "output", "forward"} {
+		txt, err := run("nft", "list", "chain", fam, table, hook)
+		if err != nil {
+			continue
+		}
+		cur := map[string]int64{}
+		out[hook] = cur
+		for _, ln := range strings.Split(txt, "\n") {
+			t := strings.TrimSpace(ln)
+			m := reCounter.FindStringSubmatch(t)
+			if m == nil {
+				continue
 			}
-			continue
-		}
-		m := reCounter.FindStringSubmatch(t)
-		if m == nil || chain == "" {
-			continue
-		}
-		n, _ := strconv.ParseInt(m[1], 10, 64)
-		switch {
-		case strings.Contains(t, "established,related") && strings.HasSuffix(t, "accept"):
-			cur["established"] += n
-		case strings.Contains(t, "@whitelist") && strings.HasSuffix(t, "accept"):
-			cur["whitelist"] += n
-		case strings.Contains(t, "ct state invalid") && strings.HasSuffix(t, "drop"):
-			cur["invalid"] += n
+			n, _ := strconv.ParseInt(m[1], 10, 64)
+			switch {
+			case strings.Contains(t, "established,related") && strings.HasSuffix(t, "accept"):
+				cur["established"] += n
+			case strings.Contains(t, "@whitelist") && strings.HasSuffix(t, "accept"):
+				cur["whitelist"] += n
+			case strings.Contains(t, "ct state invalid") && strings.HasSuffix(t, "drop"):
+				cur["invalid"] += n
+			}
 		}
 	}
 	return out
@@ -800,12 +854,37 @@ func buildAlerts(loaded bool, feeds []map[string]interface{}, timeline []int) []
 	return out
 }
 
+// abuseLoadStatus reports progress of a paced (batched) abuse-set load, written
+// by the engine to STATE_DIR/abuse-load.progress ("<loaded> <total> <ts>" while
+// running, "done <total> <ts>" when finished).
+func abuseLoadStatus() map[string]interface{} {
+	b, err := os.ReadFile(filepath.Join(stateDir, "abuse-load.progress"))
+	if err != nil {
+		return map[string]interface{}{"active": false}
+	}
+	f := strings.Fields(strings.TrimSpace(string(b)))
+	if len(f) < 3 || f[0] == "done" {
+		return map[string]interface{}{"active": false}
+	}
+	ts, _ := strconv.ParseInt(f[2], 10, 64)
+	if time.Now().Unix()-ts > 300 { // stale: the loader died
+		return map[string]interface{}{"active": false}
+	}
+	loaded, _ := strconv.ParseInt(f[0], 10, 64)
+	total, _ := strconv.ParseInt(f[1], 10, 64)
+	pct := 0
+	if total > 0 {
+		pct = int(loaded * 100 / total)
+	}
+	return map[string]interface{}{"active": true, "loaded": loaded, "total": total, "pct": pct}
+}
+
 // ---- in-memory stats store (M6C.4) -----------------------------------------
 // Keeps drop events in RAM for fast top-IP queries with time-range filtering.
-// Periodically dumps to disk (JSON) so stats survive restarts. Capped at
-// maxStatsBytes (default 50 MB) — oldest entries evicted first.
+// Dumps to disk (JSON) only when new drops arrive, so stats survive restarts.
+// Capped at maxStatsEntries — oldest entries evicted first.
 
-const maxStatsBytes = 50 * 1024 * 1024 // 50 MB
+const maxStatsEntries = 500000 // ~40 MB of drop events; oldest evicted first
 
 type statsEntry struct {
 	Ts     int64  `json:"ts"` // unix timestamp
@@ -819,9 +898,14 @@ var (
 	statsMu   sync.Mutex
 	statsData []statsEntry
 	statsFile = filepath.Join(stateDir, "ui-stats.json")
+	// High-water-mark of the newest drop ingested so far. ingestDropsLog polls
+	// the last hour every few minutes; without this it would re-ingest (and thus
+	// multiply-count) the same events on every tick. Written only by the single
+	// ingest goroutine (and loadStats before it starts), so no lock is needed.
+	lastIngestTs int64
 )
 
-// recordStats ingests drops from the kernel log (called periodically).
+// recordStats appends new drops, keeping at most maxStatsEntries (newest wins).
 func recordStats(entries []statsEntry) {
 	if len(entries) == 0 {
 		return
@@ -829,17 +913,11 @@ func recordStats(entries []statsEntry) {
 	statsMu.Lock()
 	defer statsMu.Unlock()
 	statsData = append(statsData, entries...)
-	// enforce memory cap: evict oldest entries
-	sz := statsSize()
-	for sz > maxStatsBytes && len(statsData) > 0 {
-		statsData = statsData[1:]
-		sz = statsSize()
+	if n := len(statsData); n > maxStatsEntries {
+		// keep the newest maxStatsEntries in one slice op (copy so the evicted
+		// head's backing array can be freed instead of leaking behind the slice).
+		statsData = append([]statsEntry(nil), statsData[n-maxStatsEntries:]...)
 	}
-}
-
-func statsSize() int {
-	// rough estimate: each entry ~100 bytes
-	return len(statsData) * 100
 }
 
 // topIPs returns top source IPs by drop count within [from, to] unix timestamps.
@@ -916,23 +994,48 @@ func loadStats() {
 		statsMu.Lock()
 		statsData = entries
 		statsMu.Unlock()
+		// Resume the high-water-mark from the newest persisted drop, so a restart
+		// doesn't re-ingest (and double-count) the overlap window.
+		for _, e := range entries {
+			if e.Ts > lastIngestTs {
+				lastIngestTs = e.Ts
+			}
+		}
 	}
 }
 
-// ingestDropsLog reads recent kernel drops and feeds them into the stats store.
-// Called on a ticker alongside the dashboard refresh.
-func ingestDropsLog() {
-	d := drops("-1h")
-	entries := make([]statsEntry, 0, len(d.Recent))
-	now := time.Now().Unix()
-	for _, dr := range d.Recent {
+// filterNewDrops turns kernel drops into stats entries, keeping only those newer
+// than 'after' (unix ts) so re-polling the same window never double-counts.
+// Returns the new entries and the new high-water-mark (>= after).
+func filterNewDrops(recent []Drop, after, now int64) ([]statsEntry, int64) {
+	entries := make([]statsEntry, 0, len(recent))
+	hw := after
+	for _, dr := range recent {
 		ts := now
 		if t, err := time.Parse(time.RFC3339, dr.Time); err == nil {
 			ts = t.Unix()
 		}
+		if ts <= after {
+			continue // already ingested on an earlier tick
+		}
+		if ts > hw {
+			hw = ts
+		}
 		entries = append(entries, statsEntry{Ts: ts, Src: dr.Src, CC: dr.CC, Port: dr.Dport, Reason: dr.Reason})
 	}
+	return entries, hw
+}
+
+// ingestDropsLog reads recent kernel drops and feeds the new ones into the stats
+// store. Called on a ticker; dedups via lastIngestTs.
+// ingestDropsLog records the newly-seen drops and returns how many were added
+// (0 = nothing new, so the caller can skip the disk write).
+func ingestDropsLog() int {
+	d := drops("-1h")
+	entries, hw := filterNewDrops(d.Recent, lastIngestTs, time.Now().Unix())
+	lastIngestTs = hw
 	recordStats(entries)
+	return len(entries)
 }
 
 func ruleFiles() []string {
@@ -1052,7 +1155,7 @@ func objects() map[string]interface{} {
 	}
 	return map[string]interface{}{"groups": groups, "regions": regions,
 		"whitelist": wl, "whitelistHosts": wlh, "feeds": feeds,
-		"zones": zoneNames(), "abuseSources": abuseSources(),
+		"zones": zoneNames(), "abuseSources": abuseSources(), "abuseLoaded": abuseLoadedCount(),
 		"lists": []map[string]string{}}
 }
 
@@ -1210,7 +1313,12 @@ func validIPOrCIDR(s string) bool {
 // WHITELIST (kind=ip) or WHITELIST_HOSTS (kind=host), and writes it back.
 // This writes directly to the live config file — changes take effect on the
 // next nftgeo-update run (or Commit in the UI).
+var whitelistMu sync.Mutex
+
 func whitelistMutate(entry, kind string, add bool) error {
+	// Serialize the read-modify-write so two concurrent edits can't lose one.
+	whitelistMu.Lock()
+	defer whitelistMu.Unlock()
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return fmt.Errorf("cannot read config: %w", err)
@@ -1265,7 +1373,31 @@ func whitelistMutate(entry, kind string, add bool) error {
 		lines = append(lines, fmt.Sprintf(`%s="%s"`, key, entry))
 	}
 	out := strings.Join(lines, "\n")
-	return os.WriteFile(configFile, []byte(out), 0644)
+	// Preserve the config's existing permissions — it holds ABUSEIPDB_API_KEY and
+	// is normally 0600; a plain WriteFile(...,0644) would make the key
+	// world-readable. Write a temp file in the same dir and rename it atomically,
+	// so a partial write can never corrupt or truncate the live config.
+	mode := os.FileMode(0600)
+	if fi, err := os.Stat(configFile); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(configFile), ".config.*")
+	if err != nil {
+		return fmt.Errorf("cannot create temp config: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write([]byte(out)); err != nil {
+		tmp.Close()
+		return fmt.Errorf("cannot write temp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("cannot finalize temp config: %w", err)
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return fmt.Errorf("cannot set config perms: %w", err)
+	}
+	return os.Rename(tmpName, configFile)
 }
 
 // hostInterfaces lists the machine's network interface names for the rule
@@ -1347,14 +1479,28 @@ func abuseSources() []map[string]interface{} {
 	if fi, err := os.Stat(stateFile); err == nil {
 		add("AbuseIPDB", stateFile, fi)
 	}
+	labels := feedLabels()
 	if ents, err := os.ReadDir(feedsDir); err == nil {
 		for _, e := range ents {
 			if fi, err := e.Info(); err == nil {
-				add(shortFeed(e.Name()), filepath.Join(feedsDir, e.Name()), fi)
+				name := labels[e.Name()]
+				if name == "" {
+					name = shortFeed(e.Name())
+				}
+				add(name, filepath.Join(feedsDir, e.Name()), fi)
 			}
 		}
 	}
 	return out
+}
+
+// abuseLoadedCount is the number of unique entries actually in the abuse sets.
+// The engine writes the deduplicated, scrubbed, CIDR-aggregated set to STATE_DIR
+// after each run, so this is the real total loaded into the firewall. Per-source
+// counts overlap (one IP can be on many feeds), so their sum is always larger.
+func abuseLoadedCount() int {
+	return countLines(filepath.Join(stateDir, "abuse4.set")) +
+		countLines(filepath.Join(stateDir, "abuse6.set"))
 }
 
 // ---- per-IP lookup: reverse DNS + RDAP (whois) -----------------------------
@@ -1380,6 +1526,20 @@ func rdapOrg(m map[string]interface{}) string {
 	return ""
 }
 
+// rdapCIDR renders one RDAP cidr0_cidrs entry as "prefix/length". The cidr0
+// extension carries the base in "v4prefix" for IPv4 blocks and "v6prefix" for
+// IPv6; using only one printed "<nil>/29" for the other family. Empty if absent.
+func rdapCIDR(cm map[string]interface{}) string {
+	prefix := cm["v4prefix"]
+	if prefix == nil {
+		prefix = cm["v6prefix"]
+	}
+	if prefix == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v/%v", prefix, cm["length"])
+}
+
 func doLookup(ip string) map[string]interface{} {
 	res := map[string]interface{}{"ip": ip}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1400,7 +1560,9 @@ func doLookup(ip string) map[string]interface{} {
 			}
 			if c, ok := m["cidr0_cidrs"].([]interface{}); ok && len(c) > 0 {
 				if cm, ok := c[0].(map[string]interface{}); ok {
-					w["cidr"] = fmt.Sprintf("%v/%v", cm["v4prefix"], cm["length"])
+					if s := rdapCIDR(cm); s != "" {
+						w["cidr"] = s
+					}
 				}
 			}
 			if org := rdapOrg(m); org != "" {
@@ -1924,12 +2086,17 @@ type objEntry struct {
 	Members []string `json:"members"`
 }
 
-var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE|HOST|ZONE|LIST)_([A-Za-z0-9_]+)=(.*)$`)
+var objLineRe = regexp.MustCompile(`^(GROUP|REGION|SERVICE|HOST|ZONE|LIST|FEED)_([A-Za-z0-9_]+)=(.*)$`)
 var objNameRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 var zoneMemberRe = regexp.MustCompile(`^[A-Za-z0-9._@:-]+$`) // interface names incl. VLAN subif (eth0.100)
 var objMemberRe = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
 
-func parseObjects(text string) (groups, regions, services, hosts, zones, lists []objEntry) {
+// feedURLRe validates a custom abuse-feed URL. The value is written into a
+// double-quoted, shell-sourced assignment (ABUSE_FEEDS_UI="..."), so it must
+// contain no whitespace and none of the shell-dangerous chars " ' ` $ \ < > .
+var feedURLRe = regexp.MustCompile("^https?://[^\\s\"'`$\\\\<>]+$")
+
+func parseObjects(text string) (groups, regions, services, hosts, zones, lists, feeds []objEntry) {
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -1937,7 +2104,7 @@ func parseObjects(text string) (groups, regions, services, hosts, zones, lists [
 		}
 		m := objLineRe.FindStringSubmatch(line)
 		if m == nil {
-			continue
+			continue // includes the derived ABUSE_FEEDS_UI= line, rebuilt from FEED_*
 		}
 		val := strings.Trim(strings.TrimSpace(m[3]), `"`)
 		e := objEntry{Name: m[2], Members: strings.Fields(val)}
@@ -1952,6 +2119,8 @@ func parseObjects(text string) (groups, regions, services, hosts, zones, lists [
 			zones = append(zones, e)
 		case "LIST":
 			lists = append(lists, e)
+		case "FEED":
+			feeds = append(feeds, e)
 		default:
 			services = append(services, e)
 		}
@@ -1959,7 +2128,7 @@ func parseObjects(text string) (groups, regions, services, hosts, zones, lists [
 	return
 }
 
-func serializeObjects(groups, regions, services, hosts, zones, lists []objEntry) string {
+func serializeObjects(groups, regions, services, hosts, zones, lists, feeds []objEntry) string {
 	var b strings.Builder
 	b.WriteString("# Managed by nftgeo-ui (Objects tab). Do not hand-edit; the panel overwrites this file.\n")
 	for _, g := range groups {
@@ -1979,6 +2148,16 @@ func serializeObjects(groups, regions, services, hosts, zones, lists []objEntry)
 	}
 	for _, l := range lists {
 		fmt.Fprintf(&b, "LIST_%s=\"%s\"\n", strings.ToUpper(l.Name), strings.Join(l.Members, " "))
+	}
+	// Named abuse feeds (label -> URL[s]) plus a derived ABUSE_FEEDS_UI line that
+	// the engine reads (it does not enumerate FEED_* itself).
+	var allURLs []string
+	for _, fd := range feeds {
+		fmt.Fprintf(&b, "FEED_%s=\"%s\"\n", strings.ToUpper(fd.Name), strings.Join(fd.Members, " "))
+		allURLs = append(allURLs, fd.Members...)
+	}
+	if len(allURLs) > 0 {
+		fmt.Fprintf(&b, "ABUSE_FEEDS_UI=\"%s\"\n", strings.Join(allURLs, " "))
 	}
 	return b.String()
 }
@@ -2031,7 +2210,7 @@ func checkNames(lists ...[]objEntry) error {
 
 // sanitizeObjects validates two namespaces separately: address/target names
 // (groups + regions + hosts, which all resolve as a rule target) and services.
-func sanitizeObjects(groups, regions, services, hosts, zones, lists []objEntry) error {
+func sanitizeObjects(groups, regions, services, hosts, zones, lists, feeds []objEntry) error {
 	if err := checkNames(groups, regions, hosts); err != nil {
 		return err
 	}
@@ -2040,6 +2219,24 @@ func sanitizeObjects(groups, regions, services, hosts, zones, lists []objEntry) 
 	}
 	if err := checkNames(lists); err != nil {
 		return err
+	}
+	seen := map[string]bool{}
+	for _, fd := range feeds {
+		if !objNameRe.MatchString(fd.Name) {
+			return fmt.Errorf("invalid feed label %q (letters, digits, underscore)", fd.Name)
+		}
+		if seen[strings.ToUpper(fd.Name)] {
+			return fmt.Errorf("duplicate feed label %q", fd.Name)
+		}
+		seen[strings.ToUpper(fd.Name)] = true
+		if len(fd.Members) == 0 {
+			return fmt.Errorf("feed %q has no URL", fd.Name)
+		}
+		for _, u := range fd.Members {
+			if !feedURLRe.MatchString(u) {
+				return fmt.Errorf("invalid feed URL %q (http(s):// only, no spaces or shell metacharacters)", u)
+			}
+		}
 	}
 	return checkZones(zones)
 }
@@ -2052,7 +2249,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if exists == nil {
 			text = readFileStr(objDraftFile)
 		}
-		g, rg, sv, hs, zn, ls := parseObjects(text)
+		g, rg, sv, hs, zn, ls, fd := parseObjects(text)
 		if g == nil {
 			g = []objEntry{}
 		}
@@ -2071,7 +2268,10 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if ls == nil {
 			ls = []objEntry{}
 		}
-		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls})
+		if fd == nil {
+			fd = []objEntry{}
+		}
+		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls, "feeds": fd})
 	case http.MethodPut:
 		var req struct {
 			Groups   []objEntry `json:"groups"`
@@ -2080,16 +2280,17 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 			Hosts    []objEntry `json:"hosts"`
 			Zones    []objEntry `json:"zones"`
 			Lists    []objEntry `json:"lists"`
+			Feeds    []objEntry `json:"feeds"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
-		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists); err != nil {
+		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists, req.Feeds); err != nil {
 			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
 			return
 		}
-		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists)
+		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists, req.Feeds)
 		os.MkdirAll(filepath.Dir(objDraftFile), 0755)
 		if err := os.WriteFile(objDraftFile, []byte(out), 0644); err != nil {
 			http.Error(w, `{"error":"cannot write objects draft"}`, http.StatusInternalServerError)
@@ -3193,13 +3394,17 @@ func main() {
 
 	reconcileCommit()
 
-	// Load persisted stats and start the ingest+dump ticker
+	// Load persisted stats and start the ingest+dump ticker. Only write to disk
+	// when new drops were actually ingested (no churn when the box is idle).
 	loadStats()
 	go func() {
-		ingestDropsLog()
-		for range time.Tick(5 * time.Minute) {
-			ingestDropsLog()
+		if ingestDropsLog() > 0 {
 			dumpStats()
+		}
+		for range time.Tick(5 * time.Minute) {
+			if ingestDropsLog() > 0 {
+				dumpStats()
+			}
 		}
 	}()
 
@@ -3255,6 +3460,9 @@ func main() {
 	api("/api/alerts", func(w http.ResponseWriter, r *http.Request) {
 		d := drops("")
 		writeJSON(w, buildAlerts(tableLoaded(), abuseSources(), d.Timeline))
+	})
+	api("/api/abuse-load", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, abuseLoadStatus())
 	})
 	api("/api/top-ips", func(w http.ResponseWriter, r *http.Request) {
 		fromStr := r.URL.Query().Get("from")

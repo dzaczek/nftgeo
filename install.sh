@@ -16,6 +16,9 @@ fi
 
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y curl nftables ca-certificates
+# iprange collapses abuse feeds into CIDRs (ABUSE_FEEDS_AGGREGATE); best-effort,
+# the engine falls back to kernel set auto-merge if it is unavailable.
+DEBIAN_FRONTEND=noninteractive apt-get install -y iprange || true
 
 install -d -m 0755 /etc/nftgeo /etc/nftgeo/rules.d /etc/nftgeo/groups.d \
 	/etc/nftables.d /var/lib/nftgeo /var/lib/nftgeo/zones /usr/local/sbin

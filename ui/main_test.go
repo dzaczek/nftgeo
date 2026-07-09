@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // backupLive must create the backup's parent dir (the per-file ui-backups/<...>
@@ -206,6 +208,31 @@ func TestBuildNatBody(t *testing.T) {
 	}
 }
 
+func TestFilterNewDropsDedup(t *testing.T) {
+	rfc := func(sec int64) string { return time.Unix(sec, 0).UTC().Format(time.RFC3339) }
+	now := int64(3000)
+	recent := []Drop{
+		{Time: rfc(1000), Src: "1.1.1.1"},
+		{Time: rfc(1500), Src: "2.2.2.2"},
+	}
+	// first ingest (hw starts at 0): both are new; high-water-mark = 1500
+	e1, hw1 := filterNewDrops(recent, 0, now)
+	if len(e1) != 2 || hw1 != 1500 {
+		t.Fatalf("first ingest: %d entries, hw %d (want 2, 1500)", len(e1), hw1)
+	}
+	// re-poll the SAME window (the old bug ingested these ~12x): nothing new
+	e2, hw2 := filterNewDrops(recent, hw1, now)
+	if len(e2) != 0 || hw2 != 1500 {
+		t.Fatalf("re-ingest double-counted: %d entries, hw %d (want 0, 1500)", len(e2), hw2)
+	}
+	// a genuinely newer drop appears: only it is ingested
+	recent3 := append(recent, Drop{Time: rfc(1800), Src: "3.3.3.3"})
+	e3, hw3 := filterNewDrops(recent3, hw2, now)
+	if len(e3) != 1 || e3[0].Src != "3.3.3.3" || hw3 != 1800 {
+		t.Fatalf("new drop: %+v, hw %d (want 1x 3.3.3.3, 1800)", e3, hw3)
+	}
+}
+
 func TestBuildSynproxyBody(t *testing.T) {
 	cases := []struct {
 		dir, port, iface, want string
@@ -290,9 +317,12 @@ func TestParseDraftRulesNatZone(t *testing.T) {
 }
 
 func TestObjectsRoundTrip(t *testing.T) {
-	g, r, s, h, z, l := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n" + `HOST_DB1="10.0.0.5"` + "\n" + `ZONE_GUEST="eth1 eth0.100"` + "\n" + `LIST_BADGUYS="1.2.3.4 5.6.7.0/24"` + "\n")
-	if len(g) != 1 || len(r) != 1 || len(s) != 1 || len(h) != 1 || len(z) != 1 || len(l) != 1 {
-		t.Fatalf("counts g=%d r=%d s=%d h=%d z=%d l=%d", len(g), len(r), len(s), len(h), len(z), len(l))
+	g, r, s, h, z, l, f := parseObjects(`GROUP_OFFICE="10.0.0.0/24 1.2.3.4"` + "\n" + `REGION_BLK="ru cn"` + "\n" + `SERVICE_WEB="80 443/tcp"` + "\n" + `HOST_DB1="10.0.0.5"` + "\n" + `ZONE_GUEST="eth1 eth0.100"` + "\n" + `LIST_BADGUYS="1.2.3.4 5.6.7.0/24"` + "\n" + `FEED_SPAMHAUS="https://www.spamhaus.org/drop/drop.txt"` + "\n")
+	if len(g) != 1 || len(r) != 1 || len(s) != 1 || len(h) != 1 || len(z) != 1 || len(l) != 1 || len(f) != 1 {
+		t.Fatalf("counts g=%d r=%d s=%d h=%d z=%d l=%d f=%d", len(g), len(r), len(s), len(h), len(z), len(l), len(f))
+	}
+	if f[0].Name != "SPAMHAUS" || f[0].Members[0] != "https://www.spamhaus.org/drop/drop.txt" {
+		t.Errorf("feed parsed wrong: %+v", f)
 	}
 	if g[0].Name != "OFFICE" || len(g[0].Members) != 2 || g[0].Members[1] != "1.2.3.4" {
 		t.Errorf("group parsed wrong: %+v", g[0])
@@ -306,28 +336,56 @@ func TestObjectsRoundTrip(t *testing.T) {
 	if z[0].Name != "GUEST" || len(z[0].Members) != 2 || z[0].Members[1] != "eth0.100" {
 		t.Errorf("zone parsed wrong: %+v", z[0])
 	}
-	out := serializeObjects(g, r, s, h, z, l)
-	g2, r2, s2, h2, z2, l2 := parseObjects(out)
-	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 || len(h2) != 1 || len(z2) != 1 || len(l2) != 1 {
+	out := serializeObjects(g, r, s, h, z, l, f)
+	if !strings.Contains(out, `FEED_SPAMHAUS=`) || !strings.Contains(out, `ABUSE_FEEDS_UI=`) {
+		t.Errorf("serialize should emit FEED_* and the derived ABUSE_FEEDS_UI: %q", out)
+	}
+	g2, r2, s2, h2, z2, l2, f2 := parseObjects(out)
+	if len(g2) != 1 || len(r2) != 1 || len(s2) != 1 || len(h2) != 1 || len(z2) != 1 || len(l2) != 1 || len(f2) != 1 {
 		t.Errorf("re-parse of serialized objects lost entries: %q", out)
 	}
 }
 
+func TestSanitizeObjectsFeedURLs(t *testing.T) {
+	ok := []objEntry{{Name: "FIREHOL", Members: []string{"https://iplists.firehol.org/files/firehol_level1.netset"}}}
+	if err := sanitizeObjects(nil, nil, nil, nil, nil, nil, ok); err != nil {
+		t.Errorf("valid feed rejected: %v", err)
+	}
+	for _, bad := range []string{
+		"ftp://x/list",             // not http(s)
+		`https://x/$(reboot)`,      // shell $()
+		"https://x/a b",            // whitespace
+		"https://x/\"; rm -rf /\"", // quote/inject
+		"https://x/`id`",           // backtick
+	} {
+		if err := sanitizeObjects(nil, nil, nil, nil, nil, nil, []objEntry{{Name: "X", Members: []string{bad}}}); err == nil {
+			t.Errorf("expected feed URL %q to be rejected", bad)
+		}
+	}
+	// bad label / empty url
+	if err := sanitizeObjects(nil, nil, nil, nil, nil, nil, []objEntry{{Name: "bad label", Members: []string{"https://x/y"}}}); err == nil {
+		t.Error("expected bad feed label to be rejected")
+	}
+	if err := sanitizeObjects(nil, nil, nil, nil, nil, nil, []objEntry{{Name: "X", Members: nil}}); err == nil {
+		t.Error("expected feed with no URL to be rejected")
+	}
+}
+
 func TestSanitizeObjectsRejectsInjection(t *testing.T) {
-	if err := sanitizeObjects([]objEntry{{Name: "X", Members: []string{"1.2.3.4; rm"}}}, nil, nil, nil, nil, nil); err == nil {
+	if err := sanitizeObjects([]objEntry{{Name: "X", Members: []string{"1.2.3.4; rm"}}}, nil, nil, nil, nil, nil, nil); err == nil {
 		t.Error("expected shell-metachar member to be rejected")
 	}
-	if err := sanitizeObjects([]objEntry{{Name: "bad name", Members: nil}}, nil, nil, nil, nil, nil); err == nil {
+	if err := sanitizeObjects([]objEntry{{Name: "bad name", Members: nil}}, nil, nil, nil, nil, nil, nil); err == nil {
 		t.Error("expected invalid name to be rejected")
 	}
-	if err := sanitizeObjects([]objEntry{{Name: "OK", Members: []string{"80", "443/tcp"}}}, nil, nil, nil, nil, nil); err != nil {
+	if err := sanitizeObjects([]objEntry{{Name: "OK", Members: []string{"80", "443/tcp"}}}, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Errorf("valid service members rejected: %v", err)
 	}
 	// zone interface members: VLAN subif OK, shell metachars rejected
-	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "GUEST", Members: []string{"eth0.100", "br-lan"}}}, nil); err != nil {
+	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "GUEST", Members: []string{"eth0.100", "br-lan"}}}, nil, nil); err != nil {
 		t.Errorf("valid zone interfaces rejected: %v", err)
 	}
-	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "Z", Members: []string{"eth0; rm"}}}, nil); err == nil {
+	if err := sanitizeObjects(nil, nil, nil, nil, []objEntry{{Name: "Z", Members: []string{"eth0; rm"}}}, nil, nil); err == nil {
 		t.Error("expected bad zone interface to be rejected")
 	}
 }
@@ -412,5 +470,93 @@ func TestBuildAlerts(t *testing.T) {
 	alerts = buildAlerts(true, healthyFeeds, spikeTimeline)
 	if len(alerts) != 1 || alerts[0].Kind != "drop-spike" {
 		t.Fatalf("expected 1 drop-spike alert, got %+v", alerts)
+	}
+}
+
+// rdapCIDR must handle IPv6 blocks (v6prefix), not just IPv4 (v4prefix); the
+// v4-only version rendered "<nil>/29" for every IPv6 drop lookup.
+func TestRDAPCIDRFamilies(t *testing.T) {
+	cases := []struct {
+		name string
+		in   map[string]interface{}
+		want string
+	}{
+		{"ipv4", map[string]interface{}{"v4prefix": "1.2.3.0", "length": float64(24)}, "1.2.3.0/24"},
+		{"ipv6", map[string]interface{}{"v6prefix": "2606:4700::", "length": float64(32)}, "2606:4700::/32"},
+		{"neither", map[string]interface{}{"length": float64(29)}, ""},
+	}
+	for _, c := range cases {
+		if got := rdapCIDR(c.in); got != c.want {
+			t.Errorf("%s: rdapCIDR = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// A feed URL on a "blocklist.*" host must not be mislabeled "blocklist"; the
+// provider name (or the operator's FEED_ label) should win.
+func TestShortFeedNaming(t *testing.T) {
+	cases := map[string]string{
+		"https___blocklist_greensnow_co_greensnow_txt":                             "greensnow",
+		"https___iplists_firehol_org_files_firehol_level1_netset":                  "firehol",
+		"https___www_spamhaus_org_drop_drop_txt":                                   "spamhaus",
+		"https___raw_githubusercontent_com_borestad_blocklist_abuseipdb_main_ipv4": "abuseipdb",
+		"https___lists_blocklist_de_lists_all_txt":                                 "blocklist.de",
+	}
+	for in, want := range cases {
+		if got := shortFeed(in); got != want {
+			t.Errorf("shortFeed(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := sanitizeFeedURL("https://blocklist.greensnow.co/greensnow.txt"); got != "https___blocklist_greensnow_co_greensnow_txt" {
+		t.Errorf("sanitizeFeedURL mismatch: %q", got)
+	}
+}
+
+func TestValidIPOrCIDR(t *testing.T) {
+	for _, s := range []string{"203.0.113.5", "10.0.0.0/8", "2001:db8::1", "2001:db8::/48"} {
+		if !validIPOrCIDR(s) {
+			t.Errorf("validIPOrCIDR(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "not-an-ip", "999.1.1.1", "10.0.0.0/33", "example.com"} {
+		if validIPOrCIDR(s) {
+			t.Errorf("validIPOrCIDR(%q) = true, want false", s)
+		}
+	}
+}
+
+// whitelistMutate must never widen the config's permissions (it holds the
+// AbuseIPDB key) and must preserve unrelated lines. Regression for the 0644 bug.
+func TestWhitelistMutatePreservesPermsAndKey(t *testing.T) {
+	dir := t.TempDir()
+	cf := filepath.Join(dir, "config")
+	if err := os.WriteFile(cf, []byte("ABUSEIPDB_API_KEY=\"secret\"\nWHITELIST=\"1.1.1.1\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := configFile
+	configFile = cf
+	defer func() { configFile = old }()
+
+	if err := whitelistMutate("2.2.2.2", "ip", true); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(cf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0600 {
+		t.Errorf("config perms widened to %v, want 0600", fi.Mode().Perm())
+	}
+	b, _ := os.ReadFile(cf)
+	s := string(b)
+	if !strings.Contains(s, "2.2.2.2") || !strings.Contains(s, "1.1.1.1") || !strings.Contains(s, "ABUSEIPDB_API_KEY") {
+		t.Errorf("add lost content: %q", s)
+	}
+	if err := whitelistMutate("1.1.1.1", "ip", false); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(cf)
+	if strings.Contains(string(b), "1.1.1.1") {
+		t.Errorf("delete did not remove entry: %q", b)
 	}
 }

@@ -237,6 +237,22 @@ Populate the
 .B abuse
 blocklist from AbuseIPDB and/or extra netset/plaintext feeds.
 .TP
+.B ABUSE_FEEDS_MAX ", " ABUSE_FEEDS_AGGREGATE ", " ABUSE_FEEDS_BATCH ", " ABUSE_FEEDS_BATCH_SLEEP
+Tune large blocklists:
+.B ABUSE_FEEDS_MAX
+caps entries kept per feed (default 200000, 0 = no cap);
+.B ABUSE_FEEDS_AGGREGATE
+(default 1) collapses abuse IPs into CIDR ranges before loading, using
+.B iprange
+/
+.B aggregate6
+when present;
+.B ABUSE_FEEDS_BATCH
+(default 0 = off) loads a set larger than this in paced chunks of this size,
+pausing
+.B ABUSE_FEEDS_BATCH_SLEEP
+seconds between chunks so a huge feed cannot spike load average.
+.TP
 .BI REGION_ NAME ", " GROUP_ NAME ", " SERVICE_ NAME ", " HOST_ NAME ", " ZONE_ NAME
 Reusable region, address-group, service, host-label and zone objects referenced
 by their lowercased suffix in rules.
