@@ -198,6 +198,7 @@ sudo nftgeo rollback                   # restore the previous generation
 ```sh
 HARDEN="1"                             # baseline: accept lo, drop invalid, ICMPv6
 LOG_DROPS="1"                          # log dropped packets to journald/dmesg
+LOG_WHITELIST="1"                      # log whitelist hits (nftgeo-accept:whitelist)
 ABUSE_FEEDS="https://..."              # extra blocklists
 WHITELIST_HOSTS="vpn.example.ch"       # hostname whitelist
 RESOLVERS="1.1.1.1 8.8.8.8 local"      # resolve whitelist hosts via public DNS first

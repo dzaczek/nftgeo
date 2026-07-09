@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.60.1"
+NFTGEO_VERSION="1.61.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -29,6 +29,9 @@ WHITELIST_HOSTS_STATE_FILE="${WHITELIST_HOSTS_STATE_FILE:-${STATE_DIR}/whitelist
 ZONE_CACHE_HOURS="${ZONE_CACHE_HOURS:-20}"
 # Optional: log dropped packets (rate-limited) to the kernel log / journald.
 LOG_DROPS="${LOG_DROPS:-}"
+# Optional: log whitelist hits (rate-limited) as "nftgeo-accept:whitelist", so you
+# can see which whitelisted sources actually connect. Independent of LOG_DROPS.
+LOG_WHITELIST="${LOG_WHITELIST:-}"
 LOG_PREFIX="${LOG_PREFIX:-nftgeo-drop }"
 LOG_LIMIT="${LOG_LIMIT:-limit rate 10/second}"
 # The drop reason (abuse|geo|deny|default-deny) is appended as ":<reason>" to the
@@ -1388,8 +1391,14 @@ emit_chain() {
 
 	# Whitelist always wins on every managed port.
 	for s in $sides; do
-		[ -s "${TMP_DIR}/whitelist4.set" ] && printf '\t\tip %s @whitelist4 counter accept\n' "$s"
-		[ -s "${TMP_DIR}/whitelist6.set" ] && printf '\t\tip6 %s @whitelist6 counter accept\n' "$s"
+		if [ -s "${TMP_DIR}/whitelist4.set" ]; then
+			[ -n "$LOG_WHITELIST" ] && printf '\t\tip %s @whitelist4 %s log prefix "nftgeo-accept:whitelist "\n' "$s" "$LOG_LIMIT"
+			printf '\t\tip %s @whitelist4 counter accept\n' "$s"
+		fi
+		if [ -s "${TMP_DIR}/whitelist6.set" ]; then
+			[ -n "$LOG_WHITELIST" ] && printf '\t\tip6 %s @whitelist6 %s log prefix "nftgeo-accept:whitelist "\n' "$s" "$LOG_LIMIT"
+			printf '\t\tip6 %s @whitelist6 counter accept\n' "$s"
+		fi
 	done
 
 	# SYN-flood protection (synproxy): emit before throttle and allow rules

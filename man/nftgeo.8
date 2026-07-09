@@ -1,5 +1,5 @@
 .\" nftgeo(8) manual page
-.TH NFTGEO 8 "2026-07-09" "nftgeo 1.60.1" "System Administration"
+.TH NFTGEO 8 "2026-07-09" "nftgeo 1.61.0" "System Administration"
 .SH NAME
 nftgeo \- declarative geo / abuse / segmentation firewall for nftables
 .SH SYNOPSIS
@@ -259,6 +259,14 @@ Non-empty logs dropped packets with an
 .B nftgeo-drop:<reason>
 prefix (view with
 .BR "journalctl -k | grep nftgeo-drop" ).
+.TP
+.B LOG_WHITELIST
+Non-empty logs whitelist hits (rate-limited) with an
+.B nftgeo-accept:whitelist
+prefix, so you can see which whitelisted sources actually connect. Independent of
+.BR LOG_DROPS ;
+shares
+.BR LOG_LIMIT .
 .TP
 .B SEGMENT_DEFAULT
 .B deny

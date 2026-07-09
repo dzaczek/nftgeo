@@ -609,6 +609,17 @@ Off by default. `LOG_PREFIX` and `LOG_LIMIT` (default `limit rate 10/second`)
 tune the label and rate. Because per-rule counters reset on reload, this is the
 way to keep a durable record of what is being blocked.
 
+To log the other side - the sources your whitelist lets in - set:
+
+```sh
+LOG_WHITELIST="1"
+```
+
+A rate-limited `log prefix "nftgeo-accept:whitelist "` is then emitted before the
+whitelist accept, so whitelist hits appear in the log view (with an `ACCEPT` badge)
+and in `journalctl -k | grep nftgeo-accept:whitelist`. Off by default; independent
+of `LOG_DROPS`; shares `LOG_LIMIT`.
+
 ### Hardening
 
 ```sh

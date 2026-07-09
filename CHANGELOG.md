@@ -8,6 +8,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.61.0] - 2026-07-09
+
+### Added
+- **`LOG_WHITELIST` — log whitelist hits.** Set `LOG_WHITELIST="1"` in the config
+  to emit a rate-limited `log prefix "nftgeo-accept:whitelist "` before the
+  whitelist accept, so you can see which whitelisted sources actually connect.
+  Entries show up in the dashboard log view with an `ACCEPT` badge (the accept-log
+  support added in 1.60.0) and in `journalctl -k | grep nftgeo-accept:whitelist`.
+  Off by default, independent of `LOG_DROPS`, shares `LOG_LIMIT`.
+
 ## [1.60.1] - 2026-07-09
 
 ### Fixed
