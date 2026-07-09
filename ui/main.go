@@ -662,7 +662,7 @@ type PolicyRule struct {
 	File    string `json:"file"`
 	Hits    int64  `json:"hits"`
 	Matched bool   `json:"matched"`
-	Log     bool   `json:"log"`  // per-rule logging toggle
+	Log     bool   `json:"log"`   // per-rule logging toggle
 	Color   string `json:"color"` // hex color for this rule's log prefix/badge
 }
 
@@ -2374,7 +2374,7 @@ type draftRule struct {
 	Hits     int64    `json:"hits"`
 	Matched  bool     `json:"matched"`
 	Log      bool     `json:"log"`   // per-rule logging toggle
-	Color    string   `json:"color"`  // hex color assigned to this rule
+	Color    string   `json:"color"` // hex color assigned to this rule
 }
 
 var sectionRe = regexp.MustCompile(`^#{2,}\s*(.*?)\s*#*$`)
@@ -2733,12 +2733,12 @@ func handleRuleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type logEntry struct {
-		Time   string `json:"time"`
-		Msg    string `json:"msg"`
-		Src    string `json:"src"`
-		Dst    string `json:"dst"`
-		Port   string `json:"port"`
-		Proto  string `json:"proto"`
+		Time  string `json:"time"`
+		Msg   string `json:"msg"`
+		Src   string `json:"src"`
+		Dst   string `json:"dst"`
+		Port  string `json:"port"`
+		Proto string `json:"proto"`
 	}
 	var entries []logEntry
 	for _, line := range strings.Split(out, "\n") {
