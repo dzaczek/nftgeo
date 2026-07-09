@@ -140,6 +140,20 @@ to `iifname` on the source side (`in`/`fwd-in`) and `oifname` on the destination
 side (`out`/`fwd-out`). Deny-by-default stays interface-agnostic: it closes the
 port on every interface except where an allow admits it.
 
+A rule may also end with `log` to log the connections it matches, independent of
+`LOG_DROPS` - `allow in tcp 22 pl log # ssh`. Allows are logged with an
+`nftgeo-accept:<name>` prefix, denies with `nftgeo-drop:<name>`, where `<name>` is
+the rule's trailing `# comment` (so the log line names the rule that matched):
+
+```sh
+allow in tcp 22 pl log        # ssh    -> journalctl -k | grep nftgeo-accept:ssh
+deny  in tcp 80 any log       # http    (logged even without LOG_DROPS)
+```
+
+The dashboard exposes the same switch: a **log** chip on each rule row, and a "Log
+connections" checkbox in the rule editor. Accept lines then appear in the log view
+with an `ACCEPT`/`DROP` badge, coloured by the matching rule.
+
 Define reusable address groups in `config` as `GROUP_<NAME>` variables;
 a group may itself mix IPs, subnets, country codes, and region names:
 

@@ -576,8 +576,9 @@ type Drop struct {
 	Dport  string `json:"dport"`
 	Proto  string `json:"proto"`
 	Dir    string `json:"dir"` // ingress|egress|forward
-	CC     string `json:"cc"`
-	Reason string `json:"reason"` // which policy dropped it: abuse|geo|deny|default-deny
+	CC      string `json:"cc"`
+	Reason  string `json:"reason"`  // which rule matched: abuse|geo|deny|default-deny or a rule name
+	Verdict string `json:"verdict"` // accept|drop (per-rule connection logging)
 }
 type DropsResp struct {
 	Enabled     bool           `json:"enabled"`
@@ -591,10 +592,10 @@ type DropsResp struct {
 
 var reKV = regexp.MustCompile(`(\w+)=(\S+)`)
 
-// The drop-log prefix is "nftgeo-drop:<label>" where <label> is the rule's name
-// or a policy category; capture it up to the nft "KEY=" fields (labels may
-// contain spaces).
-var reReason = regexp.MustCompile(`nftgeo-drop:(.+?)\s+(?:IN|OUT|MAC|PHYSIN|PHYSOUT|SRC|DST)=`)
+// The log prefix is "nftgeo-<drop|accept>:<label>" where <label> is the rule's
+// name or a policy category; capture the verdict and label up to the nft "KEY="
+// fields (labels may contain spaces). accept lines come from per-rule logging.
+var reReason = regexp.MustCompile(`nftgeo-(drop|accept):(.+?)\s+(?:IN|OUT|MAC|PHYSIN|PHYSOUT|SRC|DST)=`)
 
 func drops(since string) DropsResp {
 	resp := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}, Timeline: make([]int, 24)}
@@ -618,28 +619,33 @@ func drops(since string) DropsResp {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.Contains(line, "nftgeo-drop") {
+		if !strings.Contains(line, "nftgeo-drop") && !strings.Contains(line, "nftgeo-accept") {
 			continue
 		}
 		var rec struct {
 			Msg string `json:"MESSAGE"`
 			TS  string `json:"__REALTIME_TIMESTAMP"`
 		}
-		if json.Unmarshal([]byte(line), &rec) != nil || !strings.Contains(rec.Msg, "nftgeo-drop") {
+		if json.Unmarshal([]byte(line), &rec) != nil ||
+			(!strings.Contains(rec.Msg, "nftgeo-drop") && !strings.Contains(rec.Msg, "nftgeo-accept")) {
 			continue
 		}
 		f := map[string]string{}
 		for _, m := range reKV.FindAllStringSubmatch(rec.Msg, -1) {
 			f[m[1]] = m[2]
 		}
-		d := Drop{Src: f["SRC"], Dst: f["DST"], Dport: f["DPT"], Proto: f["PROTO"]}
+		d := Drop{Src: f["SRC"], Dst: f["DST"], Dport: f["DPT"], Proto: f["PROTO"], Verdict: "drop"}
 		if m := reReason.FindStringSubmatch(rec.Msg); m != nil {
-			d.Reason = m[1]
+			d.Verdict = m[1]
+			d.Reason = m[2]
 		}
+		// accept lines (per-rule connection logging) are shown in Recent but do
+		// not feed the drop analytics (totals, timeline, top ports, geo).
+		drop := d.Verdict == "drop"
 		if us, e := strconv.ParseInt(rec.TS, 10, 64); e == nil {
 			t := time.UnixMicro(us)
 			d.Time = t.UTC().Format(time.RFC3339)
-			if ha := int(time.Since(t).Hours()); ha >= 0 && ha < 24 {
+			if ha := int(time.Since(t).Hours()); drop && ha >= 0 && ha < 24 {
 				resp.Timeline[23-ha]++
 			}
 		}
@@ -648,23 +654,25 @@ func drops(since string) DropsResp {
 		case in && !out:
 			d.Dir = "ingress"
 			d.CC = geo.lookup(d.Src)
-			if d.CC != "" {
+			if drop && d.CC != "" {
 				resp.IngressByCC[d.CC]++
 			}
 		case out && !in:
 			d.Dir = "egress"
 			d.CC = geo.lookup(d.Dst)
-			if d.CC != "" {
+			if drop && d.CC != "" {
 				resp.EgressByCC[d.CC]++
 			}
 		default:
 			d.Dir = "forward"
 			d.CC = geo.lookup(d.Src)
 		}
-		if d.Dport != "" {
-			resp.TopPorts[d.Dport]++
+		if drop {
+			if d.Dport != "" {
+				resp.TopPorts[d.Dport]++
+			}
+			resp.Total++
 		}
-		resp.Total++
 		resp.Recent = append(resp.Recent, d)
 	}
 	// newest first, cap the recent list
@@ -2470,6 +2478,7 @@ type draftRule struct {
 	Port     string   `json:"port"`
 	Target   string   `json:"target"`
 	Iface    string   `json:"iface"`
+	Log      bool     `json:"log"`               // per-rule connection logging
 	Rate     string   `json:"rate,omitempty"`    // throttle only
 	Ban      string   `json:"ban,omitempty"`     // throttle only
 	Src      string   `json:"src,omitempty"`     // zone: source zone
@@ -2576,9 +2585,11 @@ func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, 
 		}
 	default: // filter
 		r.Action, r.Dir, r.Proto, r.Port, r.Target = f[0], f[1], f[2], f[3], f[4]
-		for i := 5; i < len(f)-1; i++ {
-			if f[i] == "on" {
+		for i := 5; i < len(f); i++ {
+			if f[i] == "on" && i+1 < len(f) {
 				r.Iface = f[i+1]
+			} else if f[i] == "log" {
+				r.Log = true
 			}
 		}
 	}
@@ -2839,6 +2850,53 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"saved": true, "disabled": found.Disabled})
+}
+
+// handleRulesToggleLog flips per-rule connection logging on a filter rule by
+// adding/removing the trailing "log" token in its verbatim body.
+func handleRulesToggleLog(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		File string `json:"file"`
+		ID   int    `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	rf := reqRuleFile(w, req.File)
+	if rf == nil {
+		return
+	}
+	rules, tail := parseDraftRules(draftTextFor(*rf))
+	var found *draftRule
+	for _, rr := range rules {
+		if rr.ID == req.ID {
+			found = rr
+		}
+	}
+	if found == nil || found.Kind != "filter" {
+		http.Error(w, `{"error":"log toggle only applies to filter rules"}`, http.StatusBadRequest)
+		return
+	}
+	fields := strings.Fields(found.Body)
+	out := fields[:0]
+	for _, tok := range fields {
+		if tok != "log" {
+			out = append(out, tok)
+		}
+	}
+	if found.Log {
+		found.Log = false
+		found.Body = strings.Join(out, " ")
+	} else {
+		found.Log = true
+		found.Body = strings.Join(out, " ") + " log"
+	}
+	if err := writeDraftFor(*rf, rules, tail); err != nil {
+		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"saved": true, "log": found.Log})
 }
 
 // handleRulesSection adds a new section header (no id) or renames one (with id).
@@ -3392,6 +3450,7 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		Src, Dst, Geo, NatType, Lan             string
 		Rate, Ban                               string
 		Name                                    string
+		Log                                     bool
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
@@ -3414,6 +3473,9 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		body, err = buildThrottleBody(req.Dir, req.Proto, req.Port, req.Rate, req.Ban, req.Iface)
 	default:
 		body, err = buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface)
+		if err == nil && req.Log {
+			body += " log"
+		}
 	}
 	if err != nil {
 		http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
@@ -3845,6 +3907,7 @@ func main() {
 	api("/api/rules/draft/reorder", handleRulesReorder)
 	api("/api/rules/draft/move", handleRulesMove)
 	api("/api/rules/draft/toggle", handleRulesToggle)
+	api("/api/rules/draft/toggle-log", handleRulesToggleLog)
 	api("/api/rules/draft/save", handleRulesSave)
 	api("/api/rules/draft/delete", handleRulesDelete)
 	api("/api/rules/draft/section", handleRulesSection)

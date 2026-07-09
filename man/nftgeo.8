@@ -1,5 +1,5 @@
 .\" nftgeo(8) manual page
-.TH NFTGEO 8 "2026-07-08" "nftgeo 1.46.0" "System Administration"
+.TH NFTGEO 8 "2026-07-09" "nftgeo 1.60.0" "System Administration"
 .SH NAME
 nftgeo \- declarative geo / abuse / segmentation firewall for nftables
 .SH SYNOPSIS
@@ -99,7 +99,7 @@ are ignored; a trailing
 names the rule (used in drop logs).
 .SS Filter rules
 .nf
-.B "<allow|deny> <dir> <proto> <port> <target> [on <iface>]"
+.B "<allow|deny> <dir> <proto> <port> <target> [on <iface>] [log]"
 .fi
 .TP
 .B dir
@@ -152,6 +152,22 @@ left open this way;
 .B "nftgeo migrate-sequential"
 adds the catch-all denies when upgrading an older config.
 Replies to your own connections are always accepted.
+.PP
+Append
+.B log
+to a rule to log the connections it matches, independently of
+.BR LOG_DROPS .
+Allows are logged with an
+.B nftgeo-accept:<name>
+prefix, denies with
+.BR nftgeo-drop:<name> ,
+where
+.I name
+is the rule's trailing
+.B "# comment"
+(view with
+.BR "journalctl -k | grep nftgeo-" ).
+The dashboard exposes the same toggle per rule.
 .SS Reactive throttle
 .nf
 .B "throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]"
