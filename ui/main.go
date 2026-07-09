@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -425,12 +426,13 @@ func (g *geoIndex) load() {
 				continue
 			}
 			seen[cc] = true
-			data, err := os.ReadFile(dir + "/" + name)
+			f, err := os.Open(dir + "/" + name)
 			if err != nil {
 				continue
 			}
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
+			scanner := bufio.NewScanner(f)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
 				if line == "" {
 					continue
 				}
@@ -462,6 +464,7 @@ func (g *geoIndex) load() {
 					total++
 				}
 			}
+			f.Close()
 		}
 	}
 	g.mu.Lock()
@@ -574,11 +577,26 @@ var reReason = regexp.MustCompile(`nftgeo-drop:(.+?)\s+(?:IN|OUT|MAC|PHYSIN|PHYS
 
 func drops(since string) DropsResp {
 	resp := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}, Timeline: make([]int, 24)}
-	out, err := run("journalctl", "-k", "-o", "json", "--no-pager", "--since", since)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "journalctl", "-k", "-o", "json", "--no-pager", "--since", since)
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return resp
 	}
-	for _, line := range strings.Split(out, "\n") {
+	if err := cmd.Start(); err != nil {
+		return resp
+	}
+	defer cmd.Wait()
+	defer stdout.Close()
+
+	scanner := bufio.NewScanner(stdout)
+	// Kernel log lines in journalctl JSON can sometimes be long, give it a 1MB buffer
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
 		if !strings.Contains(line, "nftgeo-drop") {
 			continue
 		}
@@ -1326,12 +1344,15 @@ func zoneNames() []string {
 }
 
 func countLines(p string) int {
-	b, err := os.ReadFile(p)
-	if err != nil || len(b) == 0 {
+	f, err := os.Open(p)
+	if err != nil {
 		return 0
 	}
-	n := strings.Count(string(b), "\n")
-	if !strings.HasSuffix(string(b), "\n") {
+	defer f.Close()
+
+	n := 0
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
 		n++
 	}
 	return n
@@ -1542,7 +1563,10 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Auth string `json:"auth"`
 	}
-	json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+		return
+	}
 	mode, nonce, ok := verifyToken(body.Auth)
 	if !ok {
 		http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
@@ -1934,7 +1958,7 @@ func handleDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]interface{}{"file": rf.rel, "exists": exists, "live": live, "draft": text, "diff": diff, "changed": changed})
 	case http.MethodPut:
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		if err != nil {
 			http.Error(w, `{"error":"read failed"}`, http.StatusBadRequest)
 			return
@@ -2162,7 +2186,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 			Lists    []objEntry `json:"lists"`
 			Feeds    []objEntry `json:"feeds"`
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
@@ -2225,7 +2249,7 @@ func handleWhitelistDraft(w http.ResponseWriter, r *http.Request) {
 			Whitelist      []string `json:"whitelist"`
 			WhitelistHosts []string `json:"whitelistHosts"`
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
@@ -2560,7 +2584,7 @@ func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
 		File  string `json:"file"`
 		Order []int  `json:"order"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
@@ -2600,7 +2624,7 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 		File string `json:"file"`
 		ID   int    `json:"id"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
@@ -2634,7 +2658,7 @@ func handleRulesSection(w http.ResponseWriter, r *http.Request) {
 		ID    *int   `json:"id"`
 		Title string `json:"title"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
@@ -2801,7 +2825,7 @@ func handleTemplates(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, append(builtinTemplates(), loadSavedTemplates()...))
 	case http.MethodPost:
 		var req struct{ Name, Description string }
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
@@ -2833,7 +2857,10 @@ func handleTemplateDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
 	}
-	json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+		return
+	}
 	list := loadSavedTemplates()
 	var keep []ruleTemplate
 	for _, t := range list {
@@ -2855,7 +2882,7 @@ func handleRulesImport(w http.ResponseWriter, r *http.Request) {
 		File string `json:"file"`
 		ID   string `json:"id"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
@@ -3176,7 +3203,7 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		Rate, Ban                               string
 		Name                                    string
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
@@ -3231,7 +3258,7 @@ func handleRulesDelete(w http.ResponseWriter, r *http.Request) {
 		File string `json:"file"`
 		ID   int    `json:"id"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
@@ -3333,7 +3360,10 @@ func handleCommitApply(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Seconds int `json:"seconds"`
 	}
-	json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+		return
+	}
 	T := req.Seconds
 	if T < 20 || T > 600 {
 		T = 90

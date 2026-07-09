@@ -8,6 +8,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.57.1] - 2026-07-09
+
+### Fixed
+- **Oversized API bodies could silently truncate a save (#47).** The dashboard
+  read request bodies through `io.LimitReader`, which silently drops bytes past
+  the cap — a large rule/objects/whitelist save could be stored truncated.
+  Switched every handler to `http.MaxBytesReader`, which rejects an oversized
+  body with an error instead, and the raw-editor now surfaces that error in a
+  toast. Also stream large files (`countLines`, geo index, `journalctl` drops)
+  with `bufio.Scanner` + a 10s timeout instead of reading them whole, to keep
+  the panel's memory bounded.
+
 ## [1.57.0] - 2026-07-09
 
 First step of the sequential-rule-model epic (#46). Engine only — do **not**
