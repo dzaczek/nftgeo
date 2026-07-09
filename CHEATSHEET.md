@@ -4,7 +4,7 @@ Quick reference for every command. Rules live in `/etc/nftgeo/rules.conf` (or
 `rules.d/*.conf`); settings in `/etc/nftgeo/config`. After editing files, apply
 with `sudo systemctl start nftgeo.service` (or `sudo nftgeo apply`).
 
-Rule line: `<action> <dir> <proto> <port> <target> [on <iface>]`
+Rule line: `<action> <dir> <proto> <port> <target> [on <iface>] [log]`
 - **action** `allow` | `deny`
 - **dir** `in` | `out` | `fwd-in` | `fwd-out`
 - **proto** `tcp` `udp` `sctp` `all` | `any` `icmp` `icmpv6` `esp` `ah` `gre`
@@ -14,6 +14,10 @@ Rule line: `<action> <dir> <proto> <port> <target> [on <iface>]`
 - **on `<iface>`** (optional) scope to one interface: `iifname` for the source
   side (`in`/`fwd-in`), `oifname` for the destination (`out`/`fwd-out`). Any real
   name works (`eth0`, `eth0.100`, `br-lan`, `wg0`, `home-Client-10`).
+- **log** (optional) log connections this rule matches, independent of
+  `LOG_DROPS`: allows as `nftgeo-accept:<name>`, denies as `nftgeo-drop:<name>`
+  (`<name>` = the rule's `# comment`). Toggle per rule in the dashboard.
+  `allow in tcp 22 pl log # ssh` → `journalctl -k | grep nftgeo-accept:ssh`
 
 Reactive throttle (auto-ban brute force):
 `throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]`

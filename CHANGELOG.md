@@ -8,6 +8,22 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.60.0] - 2026-07-09
+
+### Added
+- **Per-rule connection logging.** Any filter rule can now log the connections it
+  matches, independent of `LOG_DROPS`. Append the `log` keyword to a rule (after
+  the target / `on <iface>`), e.g. `allow in tcp 22 pl log # ssh`. Allows log with
+  an `nftgeo-accept:<name>` prefix, denies with `nftgeo-drop:<name>`, where
+  `<name>` is the rule's `# comment` name — so the log entry carries the rule that
+  matched. Toggle it per rule from the dashboard (the **log** chip on each rule row,
+  or the "Log connections" checkbox in the rule editor).
+- **Accept logs in the dashboard log view.** `nftgeo-accept:` lines now appear in
+  the log table with an `ACCEPT`/`DROP` verdict badge and a left accent coloured by
+  the matching rule (same name-hash colour as the Policy view), so a log entry ties
+  visually back to its rule. Accept lines are shown but excluded from the drop
+  analytics (totals, timeline, top ports, per-country counts).
+
 ## [1.59.1] - 2026-07-09
 
 ### Fixed

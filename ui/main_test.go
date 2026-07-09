@@ -70,11 +70,12 @@ func TestDropReasonRegex(t *testing.T) {
 		"nftgeo-drop:default-deny IN=eth0 SRC=9.9.9.9": "default-deny",
 		"nftgeo-drop:geo IN=eth0 SRC=1.2.3.4":          "geo",
 		"nftgeo-drop IN=eth0 SRC=1.2.3.4":              "", // old prefix, no reason
+		"nftgeo-accept:allow-ssh IN=eth0 SRC=1.2.3.4":  "allow-ssh", // per-rule accept log
 	}
 	for msg, want := range cases {
 		got := ""
 		if m := reReason.FindStringSubmatch(msg); m != nil {
-			got = m[1]
+			got = m[2] // m[1] is the verdict (drop|accept), m[2] the reason/label
 		}
 		if got != want {
 			t.Errorf("%q: got %q, want %q", msg, got, want)
@@ -150,6 +151,28 @@ func TestParseDraftRulesFields(t *testing.T) {
 	}
 	if items[3].Iface != "eth0" {
 		t.Errorf("item3 iface: %+v", items[3])
+	}
+}
+
+func TestParseDraftRulesLog(t *testing.T) {
+	// per-rule logging: the "log" token sets Log, is preserved verbatim on
+	// round-trip, and does not disturb target/iface parsing.
+	in := "allow in tcp 22 pl log # ssh\nallow in tcp 443 any on eth0 log\ndeny in tcp 80 any\n"
+	items, tail := parseDraftRules(in)
+	if len(items) != 3 {
+		t.Fatalf("got %d items, want 3", len(items))
+	}
+	if !items[0].Log || items[0].Target != "pl" || items[0].Name != "ssh" {
+		t.Errorf("rule0: %+v", items[0])
+	}
+	if !items[1].Log || items[1].Iface != "eth0" || items[1].Target != "any" {
+		t.Errorf("rule1: %+v", items[1])
+	}
+	if items[2].Log {
+		t.Errorf("rule2 should not log: %+v", items[2])
+	}
+	if got := serializeDraftRules(items, tail); got != in {
+		t.Errorf("round-trip mismatch:\n got %q\nwant %q", got, in)
 	}
 }
 

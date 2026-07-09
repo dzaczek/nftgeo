@@ -143,6 +143,9 @@
   .tog.on{background:#2ecc71}
   .tog::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
   .tog.on::after{left:18px}
+  .tlog{display:inline-block;margin-left:6px;padding:1px 5px;border-radius:5px;border:1px solid var(--bd);color:var(--mut);font-size:11px;line-height:1.4;cursor:pointer;vertical-align:middle;user-select:none}
+  .tlog.on{background:#2b6cb0;border-color:#2b6cb0;color:#fff}
+  .tlog:hover{border-color:#2b6cb0}
   .filecol{white-space:nowrap}
   .filebadge{font-size:11px;color:var(--mut);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-family:ui-monospace,monospace}
   .secrow td{background:var(--bg);cursor:pointer;border-top:1px solid var(--line)}
@@ -616,14 +619,21 @@ function getRuleColor(str) {
   const h = Math.abs(hash) % 360;
   return `hsl(${h}, 70%, 75%)`;
 }
+// A rule's log color is its name-hash color (same as the Policy view), so a log
+// entry visually ties back to the rule that matched. Fixed policy categories keep
+// their semantic colors.
+function reasonColor(x){return {abuse:'#ff8a9c',geo:'#9db4e6',deny:'#f4d98a','default-deny':'#ff8a9c',drop:'#c9c9c9'}[x]||getRuleColor(x);}
 function reasonBadge(x){if(!x)return '<span class="muted">—</span>';
-  const col={abuse:'#ff8a9c',geo:'#9db4e6',deny:'#f4d98a','default-deny':'#ff8a9c',drop:'#c9c9c9'}[x]||getRuleColor(x);
-  return `<span class="pill" style="background:#161d2e;color:${col};text-transform:none">${esc(x)}</span>`;}
+  return `<span class="pill" style="background:#161d2e;color:${reasonColor(x)};text-transform:none">${esc(x)}</span>`;}
 function renderLogs(){
   const dir=$('#lf-dir').value,cc=$('#lf-cc').value.toUpperCase(),port=$('#lf-port').value,ip=$('#lf-ip').value;
   const rows=(DROPS.recent||[]).filter(r=>(!dir||r.dir===dir)&&(!cc||(r.cc||'').toUpperCase().includes(cc))&&(!port||r.dport===port)&&(!ip||(r.src+r.dst).includes(ip)));
   $('#lf-count').textContent=rows.length+' shown';
-  $('#recent').innerHTML=rows.slice(0,300).map(r=>`<tr><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td><span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td><td>${reasonBadge(r.reason)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">no drops (enable LOG_DROPS)</td></tr>';
+  $('#recent').innerHTML=rows.slice(0,300).map(r=>{
+    const acc=r.verdict==='accept';
+    const vpill=`<span class="pill" style="background:${acc?'#173a2a':'#3a1720'};color:${acc?'#2ecc71':'#ff8a9c'}" title="${acc?'accepted (per-rule log)':'dropped'}">${acc?'ACCEPT':'DROP'}</span>`;
+    return `<tr style="border-left:3px solid ${reasonColor(r.reason)}"><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td>${vpill} <span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td><td>${reasonBadge(r.reason)}</td></tr>`;
+  }).join('')||'<tr><td colspan="7" class="muted">no log entries (enable LOG_DROPS or per-rule logging)</td></tr>';
 }
 
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
@@ -840,12 +850,15 @@ function rowHTML(r,n,ro,multi){
     svcc=svc(r)+ifchip;
     hits=r.disabled?'<span class="muted">—</span>':(!r.matched?'<span class="muted">—</span>':(r.hits===0&&r.action!=='deny'&&baselineAcceptsFor(r.dir)>0?`<b>0</b><span class="hint" title="0 new, non-whitelisted hits. Matching traffic from established connections or whitelisted sources — e.g. your own SSH — is accepted by the baseline rules above this policy, so it never reaches this rule.">*</span>`:`<b>${r.hits.toLocaleString()}</b>`));
   }
+  const logchip=r.action!=='throttle'
+    ? `<span class="tlog${r.log?' on':''}" ${ro?'':'data-togglelog="1"'} title="${r.log?'per-rule connection logging is ON — click to disable':'log connections matching this rule (click to enable)'}">log</span>`
+    : '';
   return `<tr class="prow${r.disabled?' rdis':''}${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
     <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}${mv}<span class="muted">${n}</span></td>
     <td>${tog}</td>
     ${namecell}
     <td>${s}</td><td>${d}</td><td>${svcc}</td>
-    <td>${act}</td><td style="text-align:right">${hits}</td>${fcell}</tr>`;
+    <td>${act}${logchip}</td><td style="text-align:right">${hits}</td>${fcell}</tr>`;
 }
 // Map a rule to the group it renders under. NAT rules (masquerade/snat/dnat)
 // live in a separate nat table, not the forward filter chain, so they get their
@@ -956,6 +969,8 @@ async function policyClickHandler(e){
   const file=row.dataset.file, id=+row.dataset.id;
   const t=e.target.closest('[data-toggle]');
   if(t){const r=await post('/api/rules/draft/toggle',{file,id});if(r&&r.error){toast(r.error);return;}await loadPolicy();refreshCommitBar();return;}
+  const tl=e.target.closest('[data-togglelog]');
+  if(tl){e.stopPropagation();const r=await post('/api/rules/draft/toggle-log',{file,id});if(r&&r.error){toast(r.error);return;}await loadPolicy();refreshCommitBar();return;}
   if(MODE==='ro')return;
   if(row.classList.contains('secrow')){sectionDrawer(file,id);return;}
   const r=findRule(file,id);
@@ -1203,8 +1218,8 @@ async function saveTpl(){const name=$('#tpl-name').value.trim();if(!name){toast(
 function ruleDrawer(file,id){
   if(MODE==='ro')return;
   const r=id!=null?findRule(file,id):null;
-  const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name}
-           :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:''};
+  const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name,log:!!r.log}
+           :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:'',log:false};
   const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
   $('#drawertitle').textContent=id!=null?'Edit rule':'New rule';
   $('#drawerbody').innerHTML=`
@@ -1220,6 +1235,7 @@ function ruleDrawer(file,id){
     </div>
     <label class="fld"><span>Target</span><input id="r-target" list="tgtlist" value="${esc(v.target)}" placeholder="any / abuse / country / region / group / IP" autocomplete="off"></label>
     ${ifaceFieldHTML('r-iface',v.iface,'Interface (optional)')}
+    <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="r-log" style="width:auto"${v.log?' checked':''}><span style="margin:0">Log connections matching this rule (nftgeo-accept/nftgeo-drop:&lt;name&gt;)</span></label>
     <p class="muted" style="font-size:12px"><b>Direction</b> sets what the target means: <b>in</b> = source, <b>out</b> = destination, <b>fwd-*</b> = forwarded. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveRule('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
@@ -1233,7 +1249,8 @@ function rProtoChange(){const p=$('#r-proto').value,pt=$('#r-port');
   else{pt.disabled=false;pt.placeholder=p==='any'?'blank = every port, or a service (e.g. dns)':'443, 80,443 or a service';}}
 async function saveRule(file,id){
   const b={file:($('#r-file')?$('#r-file').value:file),action:$('#r-action').value,dir:$('#r-dir').value,proto:$('#r-proto').value,port:$('#r-port').value,
-    target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value};
+    target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value,
+    log:$('#r-log')?$('#r-log').checked:false};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}
@@ -1252,7 +1269,7 @@ function inlineTarget(row,chip){
   const inp=cell.querySelector('input'); inp.focus(); inp.select(); let done=false;
   const commit=async()=>{if(done)return;done=true;const nt=inp.value.trim();
     if(!nt||nt===r.target){loadPolicy();return;}
-    const res=await post('/api/rules/draft/save',{file,id,action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:nt,iface:r.iface,name:r.name});
+    const res=await post('/api/rules/draft/save',{file,id,action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:nt,iface:r.iface,name:r.name,log:!!r.log});
     if(res&&res.error){toast('Rejected: '+res.error);} await loadPolicy(); refreshCommitBar();};
   inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}else if(e.key==='Escape'){done=true;loadPolicy();}});
   inp.addEventListener('blur',commit,{once:true});

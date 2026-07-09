@@ -21,3 +21,4 @@ GEMINI.md
 *.log
 /bin/nftgeo-ui
 /plan*.md
+/ui/ui

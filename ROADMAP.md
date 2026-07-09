@@ -21,6 +21,8 @@ nftgeo warns about (but does not flip) `ip_forward`/`forwarding` sysctls.
   `WHITELIST_HOSTS` with `RESOLVERS`.
 - Operator CLI: `check`, `status`, `validate`, `plan`, `block/unblock/blocklist`,
   `apply --confirm/--commit`, `rollback`; no-op reloads; `LOG_DROPS`.
+- Per-rule connection logging: `log` keyword on any filter rule (`nftgeo-accept:`
+  / `nftgeo-drop:<name>` prefix), toggleable per rule from the dashboard *(1.60.0)*.
 - **P1 — HARDEN**: loopback accept, `ct state invalid` drop, essential ICMPv6.
 - **P2 — Interfaces**: `on <iface>` on any rule, arbitrary interface names
   (VLANs, tunnels, bridges) with an unknown-interface warning.

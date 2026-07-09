@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.59.1"
+NFTGEO_VERSION="1.60.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -451,8 +451,8 @@ thr_key() {
 emit_set_match() {
 	# $1 l4 match (from l4_match: a clause, "any", or empty), $2 ipver (ip|ip6),
 	# $3 address side (saddr|daddr), $4 set name, $5 verdict (accept|drop),
-	# $6 iface clause, $7 source comment, $8 rule name (for the drop log). Emits
-	# nothing when the l4 match is empty.
+	# $6 iface clause, $7 source comment, $8 rule name (for the log),
+	# $9 per-rule log flag (1|0). Emits nothing when the l4 match is empty.
 	[ -n "$1" ] || return 0
 	ifc="${6:-}"; [ -n "$ifc" ] && ifc="${ifc} "
 	if [ "$1" = any ]; then
@@ -460,15 +460,16 @@ emit_set_match() {
 	else
 		mpfx="${ifc}$1 $2 $3 @$4"
 	fi
-	if [ "$5" = drop ] && [ -n "$LOG_DROPS" ]; then
-		# Log label: the rule's name if it has one, else the policy category
-		# (abuse blocklist vs a geo set).
+	# Log when the rule carries "log" ($9), or (for a drop) when LOG_DROPS is set.
+	if [ "${9:-0}" = 1 ] || { [ "$5" = drop ] && [ -n "$LOG_DROPS" ]; }; then
+		# Log label: the rule's name if it has one, else the policy category.
 		if [ -n "${8:-}" ]; then
 			_lr="$8"
 		else
-			case "$4" in abuse*) _lr=abuse ;; g_*) _lr=geo ;; *) _lr=drop ;; esac
+			case "$4" in abuse*) _lr=abuse ;; g_*) _lr=geo ;; *) [ "$5" = accept ] && _lr=allow || _lr=drop ;; esac
 		fi
-		printf '\t\t%s %s log prefix "%s:%s "\n' "$mpfx" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$_lr"
+		_pfx="$LOG_PREFIX_BASE"; [ "$5" = accept ] && _pfx="nftgeo-accept"
+		printf '\t\t%s %s log prefix "%s:%s "\n' "$mpfx" "$LOG_LIMIT" "$_pfx" "$_lr"
 	fi
 	if [ -n "${7:-}" ]; then
 		printf '\t\t%s counter %s comment "%s"\n' "$mpfx" "$5" "$7"
@@ -488,9 +489,10 @@ rule_comment() {
 }
 
 emit_norm() {
-	# action hook side proto port geosan iface [src-comment]. The comment (with
-	# spaces) is last so a plain `read ... src` absorbs it intact.
-	printf '%s %s %s %s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" "${8:-}" >> "$RULES_NORM"
+	# action hook side proto port geosan iface log [meta]. The meta (name|src,
+	# with spaces) is last so a plain `read ... meta` absorbs it intact; the log
+	# flag (0/1) is a single token before it.
+	printf '%s %s %s %s %s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" "${8:-0}" "${9:-}" >> "$RULES_NORM"
 }
 
 if_match() {
@@ -786,29 +788,31 @@ parse_rules_file() {
 			fi
 		fi
 
-		# Optional interface qualifier: "... <target> on <iface>" (inline # comment
-		# allowed after it). "on" maps to iifname on the source side (in/fwd-in) and
-		# oifname on the destination side (out/fwd-out). set -- clobbers only the
-		# already-saved positional args.
-		iface="-"
+		# Optional qualifiers after the target, in any order (inline # comment
+		# allowed after them): "on <iface>" and "log". "on" maps to iifname on the
+		# source side (in/fwd-in) and oifname on the destination side (out/fwd-out);
+		# "log" emits a per-rule log prefix (nftgeo-accept:/nftgeo-drop:<name>).
+		iface="-"; _rlog=0
 		set -- ${_rest%%#*}
-		if [ "${1:-}" = "on" ]; then
-			iface="${2:-}"
-			case "$iface" in
-				''|*[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: 'on' needs a valid interface name" >&2; exit 1 ;;
+		while [ -n "${1:-}" ]; do
+			case "$1" in
+				on)
+					iface="${2:-}"
+					case "$iface" in
+						''|*[!A-Za-z0-9._@:-]*) echo "${rf}:${lineno}: 'on' needs a valid interface name" >&2; exit 1 ;;
+					esac
+					if [ ! -e "/sys/class/net/${iface}" ]; then
+						case " ${WARNED_IFACES:-} " in
+							*" ${iface} "*) : ;;
+							*) echo "${rf}:${lineno}: warning: interface '${iface}' is not present; rules on it match nothing until it appears" >&2
+							   WARNED_IFACES="${WARNED_IFACES:-} ${iface}" ;;
+						esac
+					fi
+					shift 2 ;;
+				log) _rlog=1; shift ;;
+				*) echo "${rf}:${lineno}: unexpected '${1}' after target (only 'on <iface>' and 'log' allowed)" >&2; exit 1 ;;
 			esac
-			# Warn (don't fail - a VPN/tunnel iface may appear later) when the
-			# interface is absent now, so a typo can't silently break a rule.
-			if [ ! -e "/sys/class/net/${iface}" ]; then
-				case " ${WARNED_IFACES:-} " in
-					*" ${iface} "*) : ;;
-					*) echo "${rf}:${lineno}: warning: interface '${iface}' is not present; rules on it match nothing until it appears" >&2
-					   WARNED_IFACES="${WARNED_IFACES:-} ${iface}" ;;
-				esac
-			fi
-		elif [ -n "${1:-}" ]; then
-			echo "${rf}:${lineno}: unexpected '${1}' after target (only 'on <iface>' allowed)" >&2; exit 1
-		fi
+		done
 
 		# Metadata carried per rule: the rule's name (trailing # comment, used in
 		# drop logs) and the source stamp (counter comment for the UI). Packed as
@@ -821,12 +825,12 @@ parse_rules_file() {
 		_meta="${_name}|${_src}"
 		if [ -n "$_portless" ]; then
 			# proto any/icmp/icmpv6/esp/ah/gre with no port
-			emit_norm "$action" "$hook" "$side" "$proto" "$port" "$geosan" "$iface" "$_meta"
+			emit_norm "$action" "$hook" "$side" "$proto" "$port" "$geosan" "$iface" "$_rlog" "$_meta"
 		else
 			# one normalized rule per resolved protocol bucket (tcp/udp/sctp)
 			printf '%s\n' "$_buckets" | while IFS=' ' read -r _bp _bports; do
 				[ -n "$_bp" ] || continue
-				emit_norm "$action" "$hook" "$side" "$_bp" "$_bports" "$geosan" "$iface" "$_meta"
+				emit_norm "$action" "$hook" "$side" "$_bp" "$_bports" "$geosan" "$iface" "$_rlog" "$_meta"
 			done
 		fi
 	done < "$rf"
@@ -1423,30 +1427,32 @@ emit_chain() {
 	# on exactly the proto/port/direction named. There is no automatic
 	# deny-by-default: a port is closed only by an explicit "deny ... any" or by
 	# DEFAULT_INPUT="drop".
-	awk -v h="$hook" '($1=="allow" || $1=="deny") && $2==h' "$RULES_NORM" | while read -r _act _h side proto port geosan iface meta; do
+	awk -v h="$hook" '($1=="allow" || $1=="deny") && $2==h' "$RULES_NORM" | while read -r _act _h side proto port geosan iface _rlog meta; do
 		lname="${meta%%|*}"; src="${meta#*|}"
 		ifc="$(if_match "$side" "$iface")"
 		m4="$(l4_match "$proto" "$port" 4)"
 		m6="$(l4_match "$proto" "$port" 6)"
 		_vd=accept; [ "$_act" = deny ] && _vd=drop
+		# Per-rule logging: on when the rule carries "log", or (for a drop) when the
+		# global LOG_DROPS is set. Accepts log as nftgeo-accept:, drops nftgeo-drop:.
+		_dolog=0; { [ "$_rlog" = 1 ] || { [ "$_vd" = drop ] && [ -n "$LOG_DROPS" ]; }; } && _dolog=1
+		_pfx="$LOG_PREFIX_BASE"; [ "$_vd" = accept ] && _pfx="nftgeo-accept"
+		_lr="$lname"; [ -z "$_lr" ] && { [ "$_vd" = drop ] && _lr=deny || _lr=allow; }
 		if [ "$geosan" = "any" ]; then
 			# No address set: match on the proto/port alone (both families).
 			pre=""; [ -n "$ifc" ] && pre="${ifc} "
-			_lr="$lname"; [ -z "$_lr" ] && _lr=deny
 			printed=""
 			for m in "$m4" "$m6"; do
 				[ -n "$m" ] || continue
 				case "$printed" in *"|${m}|"*) continue ;; esac
 				printed="${printed}|${m}|"
 				mm=""; [ "$m" != any ] && mm="$m "
-				if [ "$_act" = deny ] && [ -n "$LOG_DROPS" ]; then
-					printf '\t\t%s%s%s log prefix "%s:%s "\n' "$pre" "$mm" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$_lr"
-				fi
+				[ "$_dolog" = 1 ] && printf '\t\t%s%s%s log prefix "%s:%s "\n' "$pre" "$mm" "$LOG_LIMIT" "$_pfx" "$_lr"
 				printf '\t\t%s%scounter %s comment "%s"\n' "$pre" "$mm" "$_vd" "$src"
 			done
 		else
-			emit_set_match "$m4" ip  "$side" "$(set_name "$geosan" 4)" "$_vd" "$ifc" "$src" "$lname"
-			emit_set_match "$m6" ip6 "$side" "$(set_name "$geosan" 6)" "$_vd" "$ifc" "$src" "$lname"
+			emit_set_match "$m4" ip  "$side" "$(set_name "$geosan" 4)" "$_vd" "$ifc" "$src" "$lname" "$_rlog"
+			emit_set_match "$m6" ip6 "$side" "$(set_name "$geosan" 6)" "$_vd" "$ifc" "$src" "$lname" "$_rlog"
 		fi
 	done
 
