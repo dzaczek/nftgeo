@@ -294,7 +294,9 @@ matching packets regardless of connection state — an extra early layer, not a
 replacement for `deny … abuse` filter rules. The whitelist is always accepted
 first and can never be dropped here. Opt-in: no `ingress.conf` means no ingress
 chain at all. Requires Linux ≥ 5.10 (inet ingress); `validate` + the deadman catch
-an unsupported kernel safely.
+an unsupported kernel safely. The ingress hook is **per-interface** — set
+`INGRESS_DEV` (space-separated) in the config, or the default-route interface is
+auto-detected.
 
 ### Config objects
 

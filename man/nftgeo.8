@@ -201,7 +201,11 @@ no ingress chain is emitted. It is an extra layer, not a replacement for
 .B "deny \(rs... abuse"
 filter rules; being stateless it drops matching packets regardless of state.
 Requires Linux \(>= 5.10 (inet ingress). Targets are the same as filter rules
-(country/region/IP/CIDR/group/host/\fBany\fR/\fBabuse\fR).
+(country/region/IP/CIDR/group/host/\fBany\fR/\fBabuse\fR). The ingress hook is
+per-interface: set
+.B INGRESS_DEV
+(space-separated interface list) in the config, or the default-route interface
+is auto-detected.
 .SS Reactive throttle
 .nf
 .B "throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]"

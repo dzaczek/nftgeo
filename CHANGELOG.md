@@ -8,6 +8,21 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.64.1] - 2026-07-09
+
+### Fixed
+- **Ingress chain now actually receives packets.** The `ingress` hook is
+  per-device, but the chain was created without one, so it saw zero traffic
+  (drops still happened later in `input`, masking the bug). The engine now emits
+  one ingress base chain per interface — from `INGRESS_DEV` (space-separated) or
+  the auto-detected default-route interface — each jumping to a shared
+  `ingress_rules` chain. Verified live: the ingress chain now counts and drops.
+- **Rule editor no longer offers ingress files.** The filter (`allow`/`deny`)
+  rule drawer's file picker listed `ingress.conf`/`ingress.d/*`, so saving a
+  filter rule there produced an `ingress rule must start with 'accept' or 'drop'`
+  error on apply. The picker now shows only rules files; ingress rules stay in the
+  dedicated ingress editor.
+
 ## [1.64.0] - 2026-07-09
 
 ### Added

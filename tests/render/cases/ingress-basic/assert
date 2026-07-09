@@ -1,6 +1,8 @@
-# Ingress hook: stateless early drop, whitelist auto-first, source-based.
-+ type filter hook ingress priority -300; policy accept;
+# Ingress hook: per-device base chain jumps to a shared rules chain; whitelist
+# auto-first; stateless source-based drops. Needs a device (INGRESS_DEV).
++ chain ingress_rules {
 + ip saddr @whitelist4 counter accept
 + ip saddr @abuse4 counter drop
 + tcp dport 22 limit rate 10/second log prefix "nftgeo-drop:drop SSH at ingress
-+ tcp dport 22 counter drop
++ type filter hook ingress device "eth0" priority -300; policy accept;
++ jump ingress_rules

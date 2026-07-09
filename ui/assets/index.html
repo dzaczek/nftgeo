@@ -749,8 +749,12 @@ async function saveWhitelistDrawer(){
   closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Whitelist saved to draft.');
 }
 function findRule(file,id){return (RULES||[]).find(r=>r.file===file&&r.id===id);}
+function isIngressFile(n){return n==='ingress.conf'||n.indexOf('ingress.d/')===0;}
 function fileSelectHTML(selId,sel){
-  const opts=FILES.map(f=>`<option${f.name===sel?' selected':''}>${esc(f.name)}</option>`).join('');
+  // Filter (allow/deny) rules only go in rules files — never ingress.conf, whose
+  // grammar is accept/drop (mixing them makes the engine reject the file).
+  const rf=(FILES||[]).filter(f=>!isIngressFile(f.name));
+  const opts=rf.map(f=>`<option${f.name===sel?' selected':''}>${esc(f.name)}</option>`).join('');
   return `<label class="fld"><span>File</span><select id="${selId}" onchange="onFileSelChange(this)">${opts}<option value="__new__">＋ New file…</option></select></label>`;
 }
 // "＋ New file…" creates an empty rules.d/<name>.conf so rules can be organised

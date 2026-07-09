@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.64.0"
+NFTGEO_VERSION="1.64.1"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -20,8 +20,11 @@ CONFIG_FILE="${CONFIG_FILE:-/etc/nftgeo/config}"
 RULES_FILE="${RULES_FILE:-/etc/nftgeo/rules.conf}"
 RULES_DIR="${RULES_DIR:-/etc/nftgeo/rules.d}"
 # Ingress hook (stateless, pre-routing early drop). Source-based accept/drop.
+# The ingress hook is per-device, so it needs the interface(s) to attach to;
+# INGRESS_DEV is a space-separated list (default: the default-route interface).
 INGRESS_FILE="${INGRESS_FILE:-/etc/nftgeo/ingress.conf}"
 INGRESS_DIR="${INGRESS_DIR:-/etc/nftgeo/ingress.d}"
+INGRESS_DEV="${INGRESS_DEV:-}"
 GROUPS_DIR="${GROUPS_DIR:-/etc/nftgeo/groups.d}"
 STATE_DIR="${STATE_DIR:-/var/lib/nftgeo}"
 ZONE_DIR="${ZONE_DIR:-${STATE_DIR}/zones}"
@@ -1612,8 +1615,17 @@ emit_chain() {
 # Only emitted when there are ingress rules (inet ingress needs kernel >= 5.10).
 emit_ingress() {
 	[ -s "$INGRESS_NORM" ] || return 0
-	printf '\tchain ingress {\n'
-	printf '\t\ttype filter hook ingress priority -300; policy accept;\n'
+	# The ingress hook is per-device. Attach to INGRESS_DEV, or auto-detect the
+	# default-route interface. Without a device the hook receives no packets.
+	_idevs="$INGRESS_DEV"
+	[ -n "$_idevs" ] || _idevs="$(ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)"
+	if [ -z "$_idevs" ]; then
+		echo "ingress rules present but no INGRESS_DEV set and no default route found; skipping ingress chain." >&2
+		return 0
+	fi
+	# The rules live in one regular chain; each per-device ingress base chain jumps
+	# to it (a base chain hooks a single device, so we need one per interface).
+	printf '\tchain ingress_rules {\n'
 	[ -s "${TMP_DIR}/whitelist4.set" ] && printf '\t\tip saddr @whitelist4 counter accept\n'
 	[ -s "${TMP_DIR}/whitelist6.set" ] && printf '\t\tip6 saddr @whitelist6 counter accept\n'
 	while read -r _act geosan proto port _ilog meta; do
@@ -1639,6 +1651,14 @@ emit_ingress() {
 		fi
 	done < "$INGRESS_NORM"
 	printf '\t}\n'
+	for _idev in $_idevs; do
+		case "$_idev" in *[!A-Za-z0-9._@:-]*) echo "bad interface in INGRESS_DEV: '${_idev}'" >&2; exit 1 ;; esac
+		_icn="ingress_$(printf '%s' "$_idev" | tr -cs 'a-zA-Z0-9' '_')"
+		printf '\tchain %s {\n' "$_icn"
+		printf '\t\ttype filter hook ingress device "%s" priority -300; policy accept;\n' "$_idev"
+		printf '\t\tjump ingress_rules\n'
+		printf '\t}\n'
+	done
 }
 
 generate() {
