@@ -69,7 +69,7 @@ func TestDropReasonRegex(t *testing.T) {
 		"nftgeo-drop:block others IN=eth0 SRC=1.2.3.4": "block others",
 		"nftgeo-drop:default-deny IN=eth0 SRC=9.9.9.9": "default-deny",
 		"nftgeo-drop:geo IN=eth0 SRC=1.2.3.4":          "geo",
-		"nftgeo-drop IN=eth0 SRC=1.2.3.4":              "", // old prefix, no reason
+		"nftgeo-drop IN=eth0 SRC=1.2.3.4":              "",          // old prefix, no reason
 		"nftgeo-accept:allow-ssh IN=eth0 SRC=1.2.3.4":  "allow-ssh", // per-rule accept log
 	}
 	for msg, want := range cases {

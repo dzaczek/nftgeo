@@ -570,12 +570,12 @@ func be32(b []byte) uint32 {
 // ---- drops from journald ----------------------------------------------------
 
 type Drop struct {
-	Time   string `json:"time"`
-	Src    string `json:"src"`
-	Dst    string `json:"dst"`
-	Dport  string `json:"dport"`
-	Proto  string `json:"proto"`
-	Dir    string `json:"dir"` // ingress|egress|forward
+	Time    string `json:"time"`
+	Src     string `json:"src"`
+	Dst     string `json:"dst"`
+	Dport   string `json:"dport"`
+	Proto   string `json:"proto"`
+	Dir     string `json:"dir"` // ingress|egress|forward
 	CC      string `json:"cc"`
 	Reason  string `json:"reason"`  // which rule matched: abuse|geo|deny|default-deny or a rule name
 	Verdict string `json:"verdict"` // accept|drop (per-rule connection logging)
