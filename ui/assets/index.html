@@ -194,6 +194,10 @@
     .sidefoot{margin:0 0 0 auto;border:0}.g2,.g3{grid-template-columns:1fr!important}}
   @keyframes movePulse { 0% { background: #3d8bfd40; } 100% { background: transparent; } }
   .highlight-move td { animation: movePulse 3s ease-out; }
+  .mv{display:inline-flex;gap:0;margin:0 3px;vertical-align:middle;opacity:.45}
+  .prow:hover .mv{opacity:1}
+  .mv span{cursor:pointer;color:var(--mut);font-size:11px;line-height:1;padding:0 2px;user-select:none}
+  .mv span:hover{color:var(--acc2)}
 </style>
 </head>
 <body>
@@ -761,9 +765,17 @@ function rowHTML(r,n,ro,multi){
   const fa=`data-file="${esc(r.file)}"`;
   const hl = (window.HIGHLIGHT_RULE && window.HIGHLIGHT_RULE.file === r.file && window.HIGHLIGHT_RULE.id === r.id) ? ' highlight-move' : '';
   const fcell=multi?`<td class="filecol">${fileBadge(r.file)}</td>`:'';
+  // Precise reorder controls (drag-and-drop is fiddly at chain ends): move a rule
+  // up/down one, or to the top/bottom of its file. stopPropagation so a click on
+  // an arrow doesn't also open the rule editor.
+  const mv=ro?'':`<span class="mv">`+
+    `<span title="Move to top" onclick="moveRule('${esc(r.file)}',${r.id},'top');event.stopPropagation()">⤒</span>`+
+    `<span title="Move up" onclick="moveRule('${esc(r.file)}',${r.id},'up');event.stopPropagation()">↑</span>`+
+    `<span title="Move down" onclick="moveRule('${esc(r.file)}',${r.id},'down');event.stopPropagation()">↓</span>`+
+    `<span title="Move to bottom" onclick="moveRule('${esc(r.file)}',${r.id},'bottom');event.stopPropagation()">⤓</span></span>`;
   if(r.kind==='section'){
     return `<tr class="prow secrow${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
-      <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}</td>
+      <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}${mv}</td>
       <td colspan="7" class="sectitle">§ ${esc(r.title||'(untitled)')}</td>${fcell}</tr>`;
   }
   const tog=`<span class="tog ${r.disabled?'':'on'}" ${ro?'':'data-toggle="1"'} title="${r.disabled?'disabled':'enabled'}"></span>`;
@@ -771,7 +783,7 @@ function rowHTML(r,n,ro,multi){
   const rcol=r.name?getRuleColor(r.name):'var(--mut)';
   const namecell=`<td>${r.name?`<span class="dot" style="background:${rcol};box-shadow:none;width:8px;height:8px"></span><span style="color:${rcol}">${esc(r.name)}</span>`:'<span class="muted">—</span>'}</td>`;
   const dash='<td style="text-align:right"><span class="muted">—</span></td>';
-  const hnd=`<td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${n}</span></td>`;
+  const hnd=`<td class="hnd">${ro?'':'<span class="grip">⠿</span>'}${mv}<span class="muted">${n}</span></td>`;
   // NAT rules (masquerade/snat/dnat) have no src→dst/service shape: show the
   // verbatim rule with a NAT badge. Edited via the Raw editor (see click handler).
   if(r.kind==='nat'){
@@ -814,7 +826,7 @@ function rowHTML(r,n,ro,multi){
     hits=r.disabled?'<span class="muted">—</span>':(!r.matched?'<span class="muted">—</span>':(r.hits===0&&r.action!=='deny'&&baselineAcceptsFor(r.dir)>0?`<b>0</b><span class="hint" title="0 new, non-whitelisted hits. Matching traffic from established connections or whitelisted sources — e.g. your own SSH — is accepted by the baseline rules above this policy, so it never reaches this rule.">*</span>`:`<b>${r.hits.toLocaleString()}</b>`));
   }
   return `<tr class="prow${r.disabled?' rdis':''}${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
-    <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${n}</span></td>
+    <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}${mv}<span class="muted">${n}</span></td>
     <td>${tog}</td>
     ${namecell}
     <td>${s}</td><td>${d}</td><td>${svcc}</td>
@@ -1251,6 +1263,24 @@ polBody.addEventListener('dragend',async e=>{
   setTimeout(() => { window.HIGHLIGHT_RULE = null; renderPolicy(); }, 3000);
   await loadPolicy(); refreshCommitBar();
 });
+
+// Button-based reorder (↑ ↓ ⤒ ⤓): move a rule within its file, then persist the
+// new order the same way drag-and-drop does. Precise, especially at chain ends.
+async function moveRule(file,id,where){
+  const cur=(RULES||[]).filter(r=>r.file===file).map(r=>r.id);
+  const i=cur.indexOf(id); if(i<0)return;
+  const ids=cur.slice(); ids.splice(i,1);
+  if(where==='up')ids.splice(Math.max(0,i-1),0,id);
+  else if(where==='down')ids.splice(Math.min(ids.length,i+1),0,id);
+  else if(where==='top')ids.unshift(id);
+  else ids.push(id);
+  if(ids.length===cur.length&&ids.every((v,k)=>v===cur[k]))return; // already there
+  const res=await post('/api/rules/draft/reorder',{file,order:ids});
+  if(res&&res.error){toast(res.error);loadPolicy();return;}
+  window.HIGHLIGHT_RULE={file,id};
+  setTimeout(()=>{window.HIGHLIGHT_RULE=null;renderPolicy();},2000);
+  await loadPolicy(); refreshCommitBar();
+}
 
 function chip(m){const ipish=/[.:]/.test(m);return `<span class="chip ${ipish?'ipl':''}"${ipish?` data-ip="${esc(m.split('/')[0])}"`:''}>${esc(m)}</span>`;}
 function objBlock(arr){return arr&&arr.length?arr.map(g=>{const mem=(g.value||'').split(/[ ,]+/).filter(Boolean);
