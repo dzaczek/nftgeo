@@ -8,6 +8,24 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.62.0] - 2026-07-09
+
+### Added
+- **Empty / `-` port = every port of the protocol.** A filter rule may now leave
+  the port blank (or use `-`) on `tcp`/`udp`/`sctp`/`all`, not just `any`:
+  `allow in tcp - pl` matches all TCP ports from Poland (rendered with
+  `meta l4proto tcp`), `deny in all - abuse` covers every TCP/UDP port. In the
+  dashboard, blanking the port field now saves such a rule instead of erroring.
+- **Built-in service catalog.** Common service names (ssh, http, https, dns, smtp,
+  rdp, postgres, wireguard, grafana, …) now resolve in the port field without a
+  `SERVICE_<NAME>` definition — `allow in tcp https any` just works. A user-defined
+  `SERVICE_<NAME>` still overrides a built-in of the same name. The dashboard's
+  port/service autocomplete is populated from this list (via `nftgeo-update
+  --services`, so it never drifts from what the engine resolves).
+- **Create rules.d files from the dashboard.** The rule editor's file picker gains
+  a "＋ New file…" entry that creates an empty `rules.d/<name>.conf`, so rules can
+  be organised across files without shell access.
+
 ## [1.61.0] - 2026-07-09
 
 ### Added

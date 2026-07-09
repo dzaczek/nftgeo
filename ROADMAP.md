@@ -24,6 +24,9 @@ nftgeo warns about (but does not flip) `ip_forward`/`forwarding` sysctls.
 - Per-rule connection logging: `log` keyword on any filter rule (`nftgeo-accept:`
   / `nftgeo-drop:<name>` prefix), toggleable per rule from the dashboard *(1.60.0)*.
 - `LOG_WHITELIST` — log whitelist hits as `nftgeo-accept:whitelist` *(1.61.0)*.
+- Built-in well-known service catalog (name → port, e.g. `https`), overridable by
+  `SERVICE_<NAME>`; empty/`-` port = every port of a proto (`tcp -`, `meta l4proto`);
+  create `rules.d/*.conf` files from the dashboard *(1.62.0)*.
 - **P1 — HARDEN**: loopback accept, `ct state invalid` drop, essential ICMPv6.
 - **P2 — Interfaces**: `on <iface>` on any rule, arbitrary interface names
   (VLANs, tunnels, bridges) with an unknown-interface warning.

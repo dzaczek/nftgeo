@@ -40,7 +40,7 @@ func TestBuildRuleBody(t *testing.T) {
 		{"bad_action", "bogus", "in", "tcp", "22", "any", "", "", true},
 		{"bad_dir", "allow", "sideways", "tcp", "22", "any", "", "", true},
 		{"bad_proto", "allow", "in", "ftp", "22", "any", "", "", true},
-		{"tcp_noport", "allow", "in", "tcp", "", "any", "", "", true},
+		{"tcp_allports", "allow", "in", "tcp", "", "any", "", "allow in tcp - any", false}, // empty port = every TCP port
 		{"inject_target", "allow", "in", "tcp", "22", "any; rm -rf /", "", "", true},
 		{"inject_port", "allow", "in", "tcp", "22;rm", "any", "", "", true},
 		{"inject_iface", "allow", "in", "tcp", "22", "any", "eth0;x", "", true},

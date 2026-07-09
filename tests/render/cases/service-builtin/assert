@@ -1,0 +1,4 @@
+# Built-in service names resolve (ssh, dns); a user SERVICE_ override wins (https->8443).
++ tcp dport 8443 counter accept comment "nftgeo:allow in tcp https any"
++ tcp dport 22 counter accept comment "nftgeo:allow in tcp ssh any"
++ udp dport 53 counter accept comment "nftgeo:allow in udp dns any"

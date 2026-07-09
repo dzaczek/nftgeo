@@ -1,5 +1,5 @@
 .\" nftgeo(8) manual page
-.TH NFTGEO 8 "2026-07-09" "nftgeo 1.61.0" "System Administration"
+.TH NFTGEO 8 "2026-07-09" "nftgeo 1.62.0" "System Administration"
 .SH NAME
 nftgeo \- declarative geo / abuse / segmentation firewall for nftables
 .SH SYNOPSIS
@@ -114,11 +114,22 @@ A single port, a range
 .RB ( 5060-5070 ),
 a list
 .RB ( 80,443 ),
-a
+a service name (a built-in well-known service such as
+.BR https ,
+.BR dns ,
+.BR rdp ,
+or a
 .BI SERVICE_ NAME
-service, or
+defined in the config, which overrides a built-in of the same name), or
 .B -
-for port-less protocols.
+(equivalently an empty field) which matches
+.I every
+port of the protocol \(em for port-less protocols, and for
+.BR tcp / udp / sctp / all
+to mean all ports (rendered with
+.BR "meta l4proto" ).
+.B "nftgeo-update --services"
+lists the built-in service names.
 .TP
 .B target
 Any comma-separated mix of country code

@@ -8,7 +8,8 @@ Rule line: `<action> <dir> <proto> <port> <target> [on <iface>] [log]`
 - **action** `allow` | `deny`
 - **dir** `in` | `out` | `fwd-in` | `fwd-out`
 - **proto** `tcp` `udp` `sctp` `all` | `any` `icmp` `icmpv6` `esp` `ah` `gre`
-- **port** `22` | `5060-5070` | `80,443` | service name `web` | `-` (port-less protos)
+- **port** `22` | `5060-5070` | `80,443` | service `https` (built-in or `SERVICE_`) |
+  `-` or blank = **every port** of the proto (`tcp -` = all TCP; `nftgeo-update --services` lists built-ins)
 - **target** country `pl` · region `europe` · IP `203.0.113.5` · CIDR `10.0.0.0/8`
   · group `office` · host label `db1` · `any` · `abuse` (deny-only)
 - **on `<iface>`** (optional) scope to one interface: `iifname` for the source

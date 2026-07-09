@@ -122,8 +122,12 @@ rule, so you choose its exact scope (see below).
   `icmp` (IPv4 only), `icmpv6` (IPv6 only), `esp`, `ah`, `gre`, or `any` (every
   protocol and port).
 - `port` - a single port (`22`), a range (`5060-5070`), a comma list
-  (`80,443`), or the name of a `SERVICE_<NAME>` (see below); use `-` for
-  port-less protocols (including `any`).
+  (`80,443`), or a service name - a built-in well-known service (`https`, `dns`,
+  `rdp`, …; `nftgeo-update --services` lists them) or a `SERVICE_<NAME>` from the
+  config (which overrides a built-in of the same name; see below). Use `-` or
+  leave the field blank to match **every port** of the protocol: for the
+  port-less protocols, and for `tcp`/`udp`/`sctp`/`all` to mean all of their
+  ports (e.g. `allow in tcp - pl` = all TCP from Poland, via `meta l4proto`).
 - `target` - what the source/destination address is matched against: any mix of,
   comma-separated, country codes (`pl`), region names (`europe`), literal IPv4/
   IPv6 addresses (`203.0.113.5`, `2001:db8::1`), IPv4/IPv6 with a mask

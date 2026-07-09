@@ -1,0 +1,4 @@
+# Empty/"-" port on a specific proto = every port of that proto (meta l4proto).
++ meta l4proto tcp ip saddr @g_pl4 counter accept
++ meta l4proto { tcp, udp } ip saddr @abuse4 counter drop
++ meta l4proto udp counter accept comment "nftgeo:allow in udp - any"

@@ -1,10 +1,19 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.61.0"
+NFTGEO_VERSION="1.62.0"
+
+# Built-in well-known services usable in the port field by name (e.g. "https").
+# Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
+# -> 53/udp, "allow in tcp dns" -> 53/tcp. A user SERVICE_<NAME> overrides a name.
+# Kept in sync with the dashboard's port/service autocomplete via "--services".
+BUILTIN_SERVICES="ssh:22 sftp:22 http:80 https:443 http-alt:8080 https-alt:8443 web:80,443 dns:53 dot:853 ntp:123 smtp:25 smtps:465 submission:587 imap:143 imaps:993 pop3:110 pop3s:995 ftp:21 telnet:23 rdp:3389 vnc:5900 mysql:3306 postgres:5432 redis:6379 mongodb:27017 memcached:11211 ldap:389 ldaps:636 snmp:161 syslog:514 rsync:873 nfs:2049 smb:445 sip:5060 sips:5061 wireguard:51820 openvpn:1194 tftp:69 kerberos:88 grafana:3000 prometheus:9090 node-exporter:9100 alertmanager:9093 elasticsearch:9200 kibana:5601 rabbitmq:5672 kafka:9092 etcd:2379 consul:8500 minio:9000"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
+	--services)
+		for _bs in $BUILTIN_SERVICES; do printf '%s %s\n' "${_bs%%:*}" "${_bs#*:}"; done
+		exit 0 ;;
 esac
 
 CONFIG_FILE="${CONFIG_FILE:-/etc/nftgeo/config}"
@@ -201,7 +210,13 @@ resolve_list() {
 
 resolve_service() {
 	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
-	eval "printf '%s' \"\${SERVICE_${u}:-}\""
+	_ov="$(eval "printf '%s' \"\${SERVICE_${u}:-}\"")"
+	if [ -n "$_ov" ]; then printf '%s' "$_ov"; return 0; fi
+	# Fall back to the built-in catalog (a user SERVICE_ above always wins).
+	_ln="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+	for _bs in $BUILTIN_SERVICES; do
+		case "$_bs" in "${_ln}:"*) printf '%s' "${_bs#*:}"; return 0 ;; esac
+	done
 }
 
 resolve_host_label() {
@@ -417,10 +432,12 @@ l4_match() {
 		any)          printf 'any' ;;
 		tcp|udp|sctp)
 			case "$2" in
+				-)   printf 'meta l4proto %s' "$1" ;;   # every port of this proto
 				*,*) printf '%s dport { %s }' "$1" "$2" ;;
 				*)   printf '%s dport %s' "$1" "$2" ;;
 			esac
 			;;
+		all)          printf 'meta l4proto { tcp, udp }' ;;   # portless "all" = every tcp/udp port
 		esp|ah|gre)   printf 'meta l4proto %s' "$1" ;;
 		icmp)   [ "$3" = 4 ] && printf 'meta l4proto icmp' || true ;;
 		icmpv6) [ "$3" = 6 ] && printf 'meta l4proto icmpv6' || true ;;
@@ -736,13 +753,18 @@ parse_rules_file() {
 		_portless=""; _buckets=""
 		case "$proto" in
 			tcp|udp|sctp|all)
+				# An empty / "-" / "any" port means every port of this protocol
+				# (matched with meta l4proto); otherwise resolve the port/service.
 				case "$port" in
-					-|any) echo "${rf}:${lineno}: proto '${proto}' needs a port or service" >&2; exit 1 ;;
+					-|any)
+						port=-; _portless=yes ;;
+					*)
+						if ! _buckets="$(resolve_service_field "$proto" "$port")"; then
+							echo "${rf}:${lineno}: bad port/service '${port}' (a number, N-M, a list, a SERVICE_ name, or a /tcp|/udp tag conflicting with proto '${proto}')" >&2
+							exit 1
+						fi
+						;;
 				esac
-				if ! _buckets="$(resolve_service_field "$proto" "$port")"; then
-					echo "${rf}:${lineno}: bad port/service '${port}' (a number, N-M, a list, a SERVICE_ name, or a /tcp|/udp tag conflicting with proto '${proto}')" >&2
-					exit 1
-				fi
 				;;
 			any)
 				# "any -" matches every protocol/port; "any <service>" defers the

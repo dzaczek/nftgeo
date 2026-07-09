@@ -639,7 +639,7 @@ function renderLogs(){
 }
 
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
-let OBJMAP={}, SVCS=[], ZONES=[], IFACES=[], FILES=[]; // tooltips; service/zone/iface autocomplete; rule files
+let OBJMAP={}, SVCS=[], ZONES=[], IFACES=[], FILES=[], BUILTIN_SVCS=[]; // tooltips; service/zone/iface autocomplete; rule files; built-in services
 let BASELINE={}; // per-chain baseline accept counters, so a 0-hit allow rule can flag when the whitelist/established rules shadow it
 let LOG_DROPS_ON=false; // global LOG_DROPS: when on, every deny is logged regardless of its per-rule flag
 // Total traffic accepted by the implicit rules (established/related + whitelist)
@@ -658,6 +658,7 @@ async function loadPolicy(){
     (od.groups||[]).concat(od.regions||[]).concat(od.hosts||[]).concat(od.lists||[]).forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=g.members||[]);
     // include draft-defined zones (not yet deployed) in the rule-drawer autocomplete
     ZONES=[...new Set([...ZONES,...(od.zones||[]).map(z=>(z.name||'').toLowerCase())])];}catch(e){}
+  try{if(!BUILTIN_SVCS.length){const bs=await j('/api/services');BUILTIN_SVCS=bs.services||[];}}catch(e){}
   await loadIfaces();
   fillTargets(); fillServices(); fillZones();
   try{BASELINE=await j('/api/baseline')||{};}catch(e){BASELINE={};}
@@ -748,12 +749,30 @@ async function saveWhitelistDrawer(){
 }
 function findRule(file,id){return (RULES||[]).find(r=>r.file===file&&r.id===id);}
 function fileSelectHTML(selId,sel){
-  if(FILES.length<=1)return '';
-  return `<label class="fld"><span>File</span><select id="${selId}">${FILES.map(f=>`<option${f.name===sel?' selected':''}>${esc(f.name)}</option>`).join('')}</select></label>`;
+  const opts=FILES.map(f=>`<option${f.name===sel?' selected':''}>${esc(f.name)}</option>`).join('');
+  return `<label class="fld"><span>File</span><select id="${selId}" onchange="onFileSelChange(this)">${opts}<option value="__new__">＋ New file…</option></select></label>`;
+}
+// "＋ New file…" creates an empty rules.d/<name>.conf so rules can be organised
+// across files; on success the new file is selected. Reverts on cancel/error.
+async function onFileSelChange(sel){
+  if(sel.value!=='__new__')return;
+  const prev=FILES[0]?FILES[0].name:'rules.conf';
+  const name=prompt('New rules.d file name (e.g. 50-webservers). ".conf" is added automatically.');
+  if(!name){sel.value=prev;return;}
+  const r=await post('/api/rules/file/create',{name});
+  if(r&&r.error){toast('Rejected: '+r.error);sel.value=prev;return;}
+  const d=await j('/api/rules/draft');FILES=d.files||FILES;
+  sel.innerHTML=FILES.map(f=>`<option${f.name===r.name?' selected':''}>${esc(f.name)}</option>`).join('')+'<option value="__new__">＋ New file…</option>';
+  toast('Created '+r.name+' — add rules, then Commit.');
 }
 const REGIONS=['europe','asia','africa','north_america','south_america','middle_east','oceania','caribbean'];
 function fillTargets(){$('#tgtlist').innerHTML=[...Object.keys(OBJMAP),'any','abuse',...REGIONS].map(o=>`<option value="${esc(o)}">`).join('');}
-function fillServices(){$('#svclist').innerHTML=SVCS.map(s=>`<option value="${esc(s)}">`).join('');}
+function fillServices(){
+  const seen=new Set(),opts=[];
+  (SVCS||[]).forEach(s=>{if(s&&!seen.has(s)){seen.add(s);opts.push(`<option value="${esc(s)}">custom</option>`);}});
+  (BUILTIN_SVCS||[]).forEach(b=>{if(b.name&&!seen.has(b.name)){seen.add(b.name);opts.push(`<option value="${esc(b.name)}">${esc(b.ports)}</option>`);}});
+  $('#svclist').innerHTML=opts.join('');
+}
 function fillZones(){$('#zonelist').innerHTML=[...ZONES,'any'].map(z=>`<option value="${esc(z)}">`).join('');}
 function fillIfaces(){$('#iflist').innerHTML=IFACES.map(i=>`<option value="${esc(i)}">`).join('');}
 async function loadIfaces(){try{const f=await j('/api/interfaces');IFACES=f.interfaces||[];}catch(e){}fillIfaces();}
@@ -1255,7 +1274,7 @@ function ruleDrawer(file,id){
 }
 function rProtoChange(){const p=$('#r-proto').value,pt=$('#r-port');
   if(p==='icmp'||p==='icmpv6'){pt.value='';pt.disabled=true;pt.placeholder='(no port)';}
-  else{pt.disabled=false;pt.placeholder=p==='any'?'blank = every port, or a service (e.g. dns)':'443, 80,443 or a service';}}
+  else{pt.disabled=false;pt.placeholder=p==='any'?'blank = every protocol & port, or a service':'blank = all '+p+' ports, or 443, 80,443, a service';}}
 async function saveRule(file,id){
   const b={file:($('#r-file')?$('#r-file').value:file),action:$('#r-action').value,dir:$('#r-dir').value,proto:$('#r-proto').value,port:$('#r-port').value,
     target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value,

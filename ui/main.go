@@ -2854,6 +2854,44 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 
 // handleRulesToggleLog flips per-rule connection logging on a filter rule by
 // adding/removing the trailing "log" token in its verbatim body.
+// ruleFileNameRe validates a new rules.d drop-in name (without the .conf).
+// Sorted filename order controls engine precedence, so numeric prefixes like
+// "50-web" are typical; keep it to safe path-free characters.
+var ruleFileNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// handleRulesFileCreate creates a new empty rules.d/<name>.conf so rules can be
+// organised across files from the dashboard. The file is empty (just a header),
+// so it has no effect on the ruleset until rules are added to it via the draft.
+func handleRulesFileCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	name = strings.TrimSuffix(name, ".conf")
+	if !ruleFileNameRe.MatchString(name) {
+		http.Error(w, `{"error":"invalid file name (letters, digits, . _ - only, e.g. 50-web)"}`, http.StatusBadRequest)
+		return
+	}
+	rel := "rules.d/" + name + ".conf"
+	if findRuleFile(rel) != nil {
+		http.Error(w, `{"error":"a file with that name already exists"}`, http.StatusBadRequest)
+		return
+	}
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		http.Error(w, `{"error":"cannot create rules.d"}`, http.StatusInternalServerError)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, name+".conf"), []byte("# "+name+"\n"), 0o644); err != nil {
+		http.Error(w, `{"error":"cannot write file"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"created": true, "name": rel})
+}
+
 func handleRulesToggleLog(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		File string `json:"file"`
@@ -3322,11 +3360,9 @@ func buildRuleBody(action, dir, proto, port, target, iface string) (string, erro
 		port = "-" // port-less protocols
 	default:
 		if port == "" {
-			if proto == "any" {
-				port = "-" // "any -" matches every protocol/port
-			} else {
-				return "", fmt.Errorf("proto %s needs a port or service", proto)
-			}
+			// Empty port = every port of this protocol ("any -" = every
+			// protocol/port; "tcp -" = all TCP via meta l4proto).
+			port = "-"
 		}
 	}
 	if port != "-" && !rulePortRe.MatchString(port) {
@@ -3876,6 +3912,22 @@ func main() {
 	api("/api/interfaces", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"interfaces": hostInterfaces()})
 	})
+	// Built-in well-known services for the port/service autocomplete. Sourced
+	// from the engine (`--services`) so the list never drifts from what resolves.
+	api("/api/services", func(w http.ResponseWriter, r *http.Request) {
+		out, _ := run(engine, "--services")
+		type svc struct {
+			Name  string `json:"name"`
+			Ports string `json:"ports"`
+		}
+		var list []svc
+		for _, ln := range strings.Split(out, "\n") {
+			if f := strings.Fields(ln); len(f) == 2 {
+				list = append(list, svc{f[0], f[1]})
+			}
+		}
+		writeJSON(w, map[string]interface{}{"services": list})
+	})
 	api("/api/geo", func(w http.ResponseWriter, r *http.Request) {
 		geo.mu.RLock()
 		cnt, ccs, when := geo.count, geo.ccs, geo.when
@@ -3911,6 +3963,7 @@ func main() {
 	api("/api/rules/draft/move", handleRulesMove)
 	api("/api/rules/draft/toggle", handleRulesToggle)
 	api("/api/rules/draft/toggle-log", handleRulesToggleLog)
+	api("/api/rules/file/create", handleRulesFileCreate)
 	api("/api/rules/draft/save", handleRulesSave)
 	api("/api/rules/draft/delete", handleRulesDelete)
 	api("/api/rules/draft/section", handleRulesSection)
