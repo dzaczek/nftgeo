@@ -8,6 +8,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.58.3] - 2026-07-09
+
+### Added
+- **Precise rule reordering buttons.** Each editable Policy row now has ↑ / ↓
+  (move one) and ⤒ / ⤓ (move to top / bottom of its file) controls, next to the
+  drag handle — drag-and-drop stays but is fiddly at chain ends, so these give an
+  exact click. Hidden for read-only sessions; the moved row pulses.
+
 ## [1.58.2] - 2026-07-09
 
 ### Fixed
