@@ -1264,31 +1264,37 @@ polBody.addEventListener('dragend',async e=>{
   await loadPolicy(); refreshCommitBar();
 });
 
-// Button-based reorder (↑ ↓ ⤒ ⤓). The Policy view is grouped by chain, so we
-// reorder the rule among its VISIBLE same-chain neighbours (within the same
-// file — the backend stores one order per file), then translate that back into a
-// full file order (rules of other chains keep their slots) and persist it the
-// same way drag-and-drop does. That way the move matches what you see.
+// Button-based reorder (↑ ↓ ⤒ ⤓). The Policy view groups rules by chain, and the
+// numbered files (rules.conf, then rules.d/* by name) give a global order. So we
+// move the rule within the GLOBAL same-chain sequence across all files — staying
+// in its file (reorder) or crossing into the neighbouring file (move) as needed.
+function fileIds(f){return (RULES||[]).filter(r=>r.file===f).map(r=>r.id);}
 async function moveRule(file,id,where){
-  const fileRules=(RULES||[]).filter(r=>r.file===file);
-  const target=fileRules.find(r=>r.id===id); if(!target)return;
-  const ch=ruleChain(target);
-  const sameChain=fileRules.filter(r=>ruleChain(r)===ch);
-  const before=sameChain.map(r=>r.id);
-  const si=before.indexOf(id); if(si<0)return;
-  const seq=before.slice(); seq.splice(si,1);
-  if(where==='up')seq.splice(Math.max(0,si-1),0,id);
-  else if(where==='down')seq.splice(Math.min(seq.length,si+1),0,id);
-  else if(where==='top')seq.unshift(id);
-  else seq.push(id);
-  if(seq.every((v,k)=>v===before[k])){toast('Already at the '+(where==='up'||where==='top'?'top':'bottom')+' of this chain in this file.');return;}
-  // Rebuild the full file order: keep other-chain rules in place, drop the
-  // same-chain rules into their slots in the new sequence.
-  const inChain=new Set(before); let k=0;
-  const order=fileRules.map(r=>inChain.has(r.id)?seq[k++]:r.id);
-  const res=await post('/api/rules/draft/reorder',{file,order});
+  const seq=(RULES||[]).filter(r=>{const t=(RULES||[]).find(x=>x.file===file&&x.id===id);return t&&ruleChain(r)===ruleChain(t);});
+  const i=seq.findIndex(r=>r.file===file&&r.id===id); if(i<0)return;
+  let j; if(where==='up')j=i-1; else if(where==='down')j=i+1; else if(where==='top')j=0; else j=seq.length-1;
+  if(j<0||j>=seq.length||j===i){toast('Already at the '+((where==='up'||where==='top')?'top':'bottom')+' of this chain.');return;}
+  // Where should it land: a neighbour to sit before/after, or the extreme file.
+  let destFile, mode, nb;
+  if(where==='top'){destFile=seq[0].file; mode='start';}
+  else if(where==='bottom'){destFile=seq[seq.length-1].file; mode='end';}
+  else if(where==='up'){nb=seq[i-1]; destFile=nb.file; mode='before';}
+  else {nb=seq[i+1]; destFile=nb.file; mode='after';}
+  let res;
+  if(destFile===file){ // stays in the same file → reorder
+    const ids=fileIds(file); const from=ids.indexOf(id); ids.splice(from,1);
+    let at; if(mode==='start')at=0; else if(mode==='end')at=ids.length;
+    else{const ni=ids.indexOf(nb.id); at=mode==='before'?ni:ni+1;}
+    ids.splice(at,0,id);
+    res=await post('/api/rules/draft/reorder',{file,order:ids});
+  }else{ // crosses into another file → move
+    let toIndex; const dids=fileIds(destFile);
+    if(mode==='start')toIndex=0; else if(mode==='end')toIndex=dids.length;
+    else{const ni=dids.indexOf(nb.id); toIndex=mode==='before'?ni:ni+1;}
+    res=await post('/api/rules/draft/move',{fromFile:file,fromId:id,toFile:destFile,toIndex});
+  }
   if(res&&res.error){toast(res.error);loadPolicy();return;}
-  window.HIGHLIGHT_RULE={file,id};
+  window.HIGHLIGHT_RULE={file:destFile,id};
   setTimeout(()=>{window.HIGHLIGHT_RULE=null;renderPolicy();},2000);
   await loadPolicy(); refreshCommitBar();
 }

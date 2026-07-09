@@ -2744,6 +2744,71 @@ func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"saved": true})
 }
 
+// handleRulesMove moves a single rule from one file to another at a position,
+// so the UI can reorder rules across the numbered files (rules.conf, rules.d/*)
+// which the engine evaluates in that global file order. Within a file, use
+// /reorder instead.
+func handleRulesMove(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FromFile string `json:"fromFile"`
+		FromID   int    `json:"fromId"`
+		ToFile   string `json:"toFile"`
+		ToIndex  int    `json:"toIndex"` // insert position among toFile's items; <0 or too large = end
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	if req.FromFile == req.ToFile {
+		http.Error(w, `{"error":"same file — use reorder"}`, http.StatusBadRequest)
+		return
+	}
+	fromRf := reqRuleFile(w, req.FromFile)
+	if fromRf == nil {
+		return
+	}
+	toRf := reqRuleFile(w, req.ToFile)
+	if toRf == nil {
+		return
+	}
+	fromRules, fromTail := parseDraftRules(draftTextFor(*fromRf))
+	toRules, toTail := parseDraftRules(draftTextFor(*toRf))
+
+	var moved *draftRule
+	kept := make([]*draftRule, 0, len(fromRules))
+	for _, rr := range fromRules {
+		if rr.ID == req.FromID && moved == nil {
+			moved = rr
+		} else {
+			kept = append(kept, rr)
+		}
+	}
+	if moved == nil {
+		http.Error(w, `{"error":"rule not found in source file"}`, http.StatusBadRequest)
+		return
+	}
+	moved.File = toRf.rel
+
+	idx := req.ToIndex
+	if idx < 0 || idx > len(toRules) {
+		idx = len(toRules)
+	}
+	newTo := make([]*draftRule, 0, len(toRules)+1)
+	newTo = append(newTo, toRules[:idx]...)
+	newTo = append(newTo, moved)
+	newTo = append(newTo, toRules[idx:]...)
+
+	if err := writeDraftFor(*fromRf, kept, fromTail); err != nil {
+		http.Error(w, `{"error":"cannot write source draft"}`, http.StatusInternalServerError)
+		return
+	}
+	if err := writeDraftFor(*toRf, newTo, toTail); err != nil {
+		http.Error(w, `{"error":"cannot write destination draft"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"saved": true})
+}
+
 func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		File string `json:"file"`
@@ -3778,6 +3843,7 @@ func main() {
 	api("/api/objects/draft", handleObjectsDraft)
 	api("/api/rules/draft", handleRulesDraft)
 	api("/api/rules/draft/reorder", handleRulesReorder)
+	api("/api/rules/draft/move", handleRulesMove)
 	api("/api/rules/draft/toggle", handleRulesToggle)
 	api("/api/rules/draft/save", handleRulesSave)
 	api("/api/rules/draft/delete", handleRulesDelete)

@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.59.0] - 2026-07-09
+
+### Added
+- **Reorder rules across files.** The numbered files (`rules.conf`, then
+  `rules.d/*.conf` by name) form one global evaluation order, so the Policy
+  view's ↑ / ↓ / ⤒ / ⤓ buttons now move a rule through the whole chain — a rule
+  at the top of one file steps up into the previous file, and ⤒ / ⤓ jump to the
+  global top/bottom of the chain. Same-file moves use the reorder endpoint;
+  crossing a file boundary uses a new `/api/rules/draft/move` endpoint (moves the
+  rule's draft from one file to another at a position). Everything still deploys
+  through the draft → Commit pipeline.
 ## [1.58.4] - 2026-07-09
 
 ### Fixed
