@@ -1048,7 +1048,9 @@ func filterNewDrops(recent []Drop, after, now int64) ([]statsEntry, int64) {
 		if ts > hw {
 			hw = ts
 		}
-		if dr.Action == "accept" { continue }
+		if dr.Action == "accept" {
+			continue
+		}
 		entries = append(entries, statsEntry{Ts: ts, Src: dr.Src, CC: dr.CC, Port: dr.Dport, Reason: dr.Reason})
 	}
 	return entries, hw
