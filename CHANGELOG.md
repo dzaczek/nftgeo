@@ -6,6 +6,27 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 ## [Unreleased]
 
+### Added
+- **15 new service templates.** `nginx`, `kamailio`, `redis`, `postgres`,
+  `mysql`, `gitlab`, `docker-registry`, `elasticsearch`, `grafana`,
+  `dns-server`, `openvpn`, `minecraft`, `mosh`, `prometheus-stack` —
+  bringing the total built-in template count from 6 to 21. Each includes
+  abuse filtering and uses placeholder group names (`ADMINS`, `APPS`,
+  `MONITORING`) for easy adaptation.
+- **Rule statistics API (`/api/rule-stats`).** Returns a breakdown of all
+  rules by action (allow/deny/throttle/synproxy/nat/zone), counts of
+  deny-abuse and allow-any rules, whitelist IP/host counts, and live
+  whitelist hit counters from the kernel baseline.
+- **Whitelist management API (`/api/whitelist`).** GET, POST (add), and
+  DELETE (remove) endpoints for `WHITELIST` and `WHITELIST_HOSTS` entries
+  in config. Validates IP/CIDR via `net.ParseCIDR`/`net.ParseIP`.
+- **Dashboard whitelist editor.** The Objects → Reference tab now shows
+  a **+ Add** button (with IP/CIDR or hostname selector) and a **🗑**
+  button per entry for removing whitelist items with confirmation.
+- **README overhaul.** Restructured with ASCII architecture diagrams
+  showing the rule evaluation order, system architecture, draft→commit
+  pipeline, and dashboard layout. New template reference table.
+
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
 ## [1.48.0] - 2026-07-08

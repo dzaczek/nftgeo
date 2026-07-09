@@ -360,7 +360,7 @@
       <div class="grid g3">
         <div class="card"><h3>All live groups</h3><div id="o-groups"></div></div>
         <div class="card"><h3>All live regions</h3><div id="o-regions"></div></div>
-        <div class="card"><h3>Whitelist</h3><div id="o-wl"></div></div>
+        <div class="card"><h3>Whitelist <button class="btn-go" style="font-size:11px;padding:2px 8px;margin-left:6px" onclick="showWhitelistAdd()" id="wl-add-btn">+ Add</button></h3><div id="o-wl"></div><div id="wl-add-form" style="display:none;margin-top:8px"><input id="wl-entry" placeholder="IP / CIDR or hostname" style="width:60%;font-size:12px" autocomplete="off"><select id="wl-kind" style="font-size:12px"><option value="ip">IP/CIDR</option><option value="host">Hostname</option></select><button class="btn-go" style="font-size:11px;padding:2px 8px" onclick="addWhitelistEntry()">Add</button> <button class="btn-rb" style="font-size:11px;padding:2px 8px" onclick="hideWhitelistAdd()">Cancel</button></div></div>
       </div>
       <div class="grid g2" style="margin-top:14px">
         <div class="card"><h3>nftables sets (live sizes)</h3><div id="o-sets"></div></div>
@@ -1027,10 +1027,36 @@ async function loadObjects(){
   $('#o-groups').innerHTML=objBlock(o.groups);
   $('#o-regions').innerHTML=objBlock(o.regions);
   const wl=[...(o.whitelist||[]).map(x=>['ip',x]),...(o.whitelistHosts||[]).map(x=>['host',x])];
-  $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span></div>`).join(''):'<span class="muted">none</span>';
+  $('#o-wl').innerHTML=wl.length?wl.map(([t,x])=>`<div class="row"><span class="mono ${t==='ip'?'ipl':''}"${t==='ip'?` data-ip="${esc(x.split('/')[0])}"`:''}>${esc(x)}</span><span class="muted">${t}</span>${MODE==='ro'?'':`<button class="btn-rb" style="font-size:10px;padding:1px 6px" onclick="removeWhitelistEntry('${esc(x)}','${t}')">🗑</button>`}</div>`).join(''):'<span class="muted">none</span>';
   $('#o-feeds').innerHTML=(o.abuseSources||[]).length?o.abuseSources.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
   $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count}</span></div>`).join('')||'<span class="muted">none</span>';
   const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[],lists:d.lists||[]}; renderManaged();
+}
+// ---- whitelist add/remove (Task 3) ----
+function showWhitelistAdd(){
+  const f=$('#wl-add-form'); if(!f)return; f.style.display='block'; $('#wl-entry').focus();
+}
+function hideWhitelistAdd(){
+  const f=$('#wl-add-form'); if(!f)return; f.style.display='none'; $('#wl-entry').value='';
+}
+async function addWhitelistEntry(){
+  const entry=$('#wl-entry').value.trim(); if(!entry){return;}
+  const kind=$('#wl-kind').value;
+  try{
+    const r=await fetch('/api/whitelist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entry,kind})});
+    if(r.status===401||r.status===403){showLock('Read-only session — cannot edit whitelist.');return;}
+    const d=await r.json(); if(d.error){toast('Rejected: '+d.error);return;}
+    hideWhitelistAdd(); await loadObjects(); toast('Whitelist entry added — run nftgeo apply to activate');
+  }catch(e){toast('Error: '+(e.message||e));}
+}
+async function removeWhitelistEntry(entry,kind){
+  if(!confirm('Remove '+entry+' from whitelist?'))return;
+  try{
+    const r=await fetch('/api/whitelist',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({entry,kind})});
+    if(r.status===401||r.status===403){showLock('Read-only session — cannot edit whitelist.');return;}
+    const d=await r.json(); if(d.error){toast('Rejected: '+d.error);return;}
+    await loadObjects(); toast('Removed — run nftgeo apply to activate');
+  }catch(e){toast('Error: '+(e.message||e));}
 }
 
 // ---- editable objects (M6B.2 groups/regions, M6B.7/services) ----
