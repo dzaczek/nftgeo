@@ -273,6 +273,27 @@ type Chain struct {
 var reCounter = regexp.MustCompile(`counter packets (\d+) bytes (\d+)`)
 var reVerdict = regexp.MustCompile(`counter packets \d+ bytes \d+ (accept|drop)`)
 
+// reChainPolicy matches the default policy in a chain header, e.g.
+// "type filter hook input priority -100; policy accept;".
+var reChainPolicy = regexp.MustCompile(`policy (accept|drop)`)
+
+// chainPolicies reports each managed chain's default policy — the verdict for a
+// packet that matched no rule. input follows DEFAULT_INPUT; output/forward are
+// accept. Returns hook -> "accept"|"drop".
+func chainPolicies() map[string]string {
+	out := map[string]string{}
+	for _, hook := range []string{"input", "output", "forward"} {
+		txt, err := run("nft", "list", "chain", fam, table, hook)
+		if err != nil {
+			continue
+		}
+		if m := reChainPolicy.FindStringSubmatch(txt); m != nil {
+			out[hook] = m[1]
+		}
+	}
+	return out
+}
+
 func chains() []Chain {
 	var res []Chain
 	for _, hook := range []string{"input", "output", "forward"} {
@@ -3680,7 +3701,25 @@ func main() {
 		writeJSON(w, p)
 	})
 	api("/api/baseline", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, baselineCounters())
+		// Merge per-chain baseline counters with each chain's default policy, so
+		// the Policy view can show what happens to unmatched packets.
+		bc := baselineCounters()
+		pol := chainPolicies()
+		out := map[string]map[string]interface{}{}
+		for hook, ctr := range bc {
+			m := map[string]interface{}{}
+			for k, v := range ctr {
+				m[k] = v
+			}
+			out[hook] = m
+		}
+		for hook, p := range pol {
+			if out[hook] == nil {
+				out[hook] = map[string]interface{}{}
+			}
+			out[hook]["policy"] = p
+		}
+		writeJSON(w, out)
 	})
 	api("/api/alerts", func(w http.ResponseWriter, r *http.Request) {
 		d := drops("")
