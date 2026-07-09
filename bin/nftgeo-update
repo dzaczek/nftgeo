@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.54.0"
+NFTGEO_VERSION="1.55.0"
 
 case "${1:-}" in
 	--version|-V) echo "nftgeo-update ${NFTGEO_VERSION}"; exit 0 ;;
@@ -18,6 +18,8 @@ TABLE_FAMILY="${TABLE_FAMILY:-inet}"
 TABLE_NAME="${TABLE_NAME:-nftgeo}"
 WHITELIST="${WHITELIST:-}"
 WHITELIST_HOSTS="${WHITELIST_HOSTS:-}"
+WHITELIST_FILE="${WHITELIST_FILE:-/etc/nftgeo/whitelist.conf}"
+WHITELIST_HOSTS_FILE="${WHITELIST_HOSTS_FILE:-/etc/nftgeo/whitelist-hosts.conf}"
 WHITELIST_HOSTS_RETENTION_DAYS="${WHITELIST_HOSTS_RETENTION_DAYS:-7}"
 # Resolvers tried, in order, for WHITELIST_HOSTS. "local" = system resolver
 # (getent); an IP = query that DNS server directly (needs dig/host/nslookup).
@@ -1184,11 +1186,32 @@ resolve_host() {
 
 resolve_whitelist_hosts() {
 	# Resolve WHITELIST_HOSTS to IPs and append them to the raw whitelist files.
+	# Hostnames come from WHITELIST_HOSTS_FILE (one per line, # comments and blank
+	# lines skipped) when it has any entry, otherwise from the legacy
+	# WHITELIST_HOSTS shell variable (space-separated, sourced from config). The
+	# file is the authoritative, UI-managed source once populated; the variable is
+	# a fallback/seed so an entry removed in the UI stays removed.
 	# State (host<TAB>ip<TAB>last_seen) is kept in WHITELIST_HOSTS_STATE_FILE: a
 	# successful lookup replaces a host's addresses, a failed one retains the last
 	# known ones for WHITELIST_HOSTS_RETENTION_DAYS so a DNS blip cannot drop
 	# access, and stale addresses age out after that window.
-	[ -n "$WHITELIST_HOSTS" ] || return 0
+
+	_wl_hosts=""
+	if [ -r "$WHITELIST_HOSTS_FILE" ]; then
+		while IFS= read -r _line || [ -n "$_line" ]; do
+			case "$_line" in
+				''|\#*) continue ;;
+			esac
+			_wl_hosts="$_wl_hosts $_line"
+		done < "$WHITELIST_HOSTS_FILE"
+	fi
+	# Fall back to the legacy variable only when the file has no usable entries.
+	[ -n "$(printf '%s' "$_wl_hosts" | tr -d ' ')" ] || _wl_hosts="$WHITELIST_HOSTS"
+
+	# Strip to unique tokens.
+	_wl_hosts="$(printf '%s\n' $_wl_hosts | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')"
+
+	[ -n "$_wl_hosts" ] || return 0
 
 	# In render/dry-run mode don't touch DNS or mutate state: reuse the last
 	# resolved addresses so validate/plan stay fast and side-effect-free.
@@ -1214,7 +1237,7 @@ resolve_whitelist_hosts() {
 	new_state="${TMP_DIR}/wlhosts.new"
 	: > "$new_state"
 
-	for host in $WHITELIST_HOSTS; do
+	for host in $_wl_hosts; do
 		resolved="$(resolve_host "$host" | sort -u)"
 		if [ -n "$resolved" ]; then
 			printf '%s\n' "$resolved" | while read -r ip; do
@@ -1246,7 +1269,22 @@ build_whitelist() {
 	: > "${TMP_DIR}/wl4.raw"
 	: > "${TMP_DIR}/wl6.raw"
 
-	for entry in $WHITELIST; do
+	# IP/CIDR entries: WHITELIST_FILE (one per line, # comments and blank lines
+	# skipped) is authoritative once it has any entry; otherwise fall back to the
+	# legacy WHITELIST shell variable (space-separated, sourced from config). This
+	# lets the UI-managed file remove an entry without the config variable
+	# re-adding it, while an empty/absent file keeps the legacy behaviour.
+	_wl_entries=""
+	if [ -r "$WHITELIST_FILE" ]; then
+		while IFS= read -r _wl_entry || [ -n "$_wl_entry" ]; do
+			case "$_wl_entry" in
+				''|\#*) continue ;;
+			esac
+			_wl_entries="$_wl_entries $_wl_entry"
+		done < "$WHITELIST_FILE"
+	fi
+	[ -n "$(printf '%s' "$_wl_entries" | tr -d ' ')" ] || _wl_entries="$WHITELIST"
+	for entry in $_wl_entries; do
 		case "$entry" in
 			*:*) echo "$entry" >> "${TMP_DIR}/wl6.raw" ;;
 			*)   echo "$entry" >> "${TMP_DIR}/wl4.raw" ;;

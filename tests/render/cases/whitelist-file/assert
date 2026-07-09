@@ -1,0 +1,6 @@
+# whitelist entries from whitelist.conf must appear in the nft sets
++ 10.0.0.1
++ 192.168.1.0/24
++ 2001:db8::1
++ @whitelist4
++ @whitelist6

@@ -48,15 +48,25 @@ ABUSE_FEEDS_BATCH="0"
 ABUSE_FEEDS_BATCH_SLEEP="1"
 
 # Always-allow list. These addresses can reach any port even when they are
-# outside an allowed geo or appear on the AbuseIPDB blacklist. Space-separated,
-# IPv4 and IPv6, single addresses or CIDR ranges. Example:
+# outside an allowed geo or appear on the AbuseIPDB blacklist.
+#
+# Preferred: put entries in /etc/nftgeo/whitelist.conf (one IP/CIDR per line,
+# # comments allowed). The file is read by the engine and editable via the UI
+# dashboard's Whitelist tab with full draft → commit → deadman safety.
+#
+# Legacy: WHITELIST= here still works (space-separated) for backward compat.
+# The file is preferred once it has any entry; WHITELIST= is used only when the
+# file is empty/absent. Example:
 # WHITELIST="203.0.113.10 198.51.100.0/24 2001:db8::/48"
 WHITELIST=""
 
 # Hostnames to keep whitelisted by name (WHITELIST only accepts literal IPs).
 # Each is resolved to its IPs on every run, so the systemd timer re-resolves them
-# periodically, and the addresses are merged into the whitelist above. Handy for
-# a dynamic-DNS admin endpoint (e.g. a WireGuard box). Space-separated. Example:
+# periodically, and the addresses are merged into the whitelist above.
+#
+# Preferred: put entries in /etc/nftgeo/whitelist-hosts.conf (one per line).
+# Legacy: WHITELIST_HOSTS= here still works (space-separated); used only when the
+# file is empty/absent. Example:
 # WHITELIST_HOSTS="wireguard.example.ch vpn.example.net"
 WHITELIST_HOSTS=""
 

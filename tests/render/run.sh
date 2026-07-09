@@ -28,6 +28,9 @@ for case_dir in "$here"/cases/*/; do
 	mkdir -p "$tmp/zones" "$tmp/rules.d" "$tmp/groups.d" "$tmp/state"
 	# a case may ship extra groups.d drop-ins
 	[ -d "$case_dir/groups.d" ] && cp "$case_dir"/groups.d/*.conf "$tmp/groups.d/" 2>/dev/null || true
+	# a case may ship a whitelist.conf / whitelist-hosts.conf
+	[ -f "$case_dir/whitelist.conf" ] && cp "$case_dir/whitelist.conf" "$tmp/whitelist.conf"
+	[ -f "$case_dir/whitelist-hosts.conf" ] && cp "$case_dir/whitelist-hosts.conf" "$tmp/whitelist-hosts.conf"
 
 	out="$tmp/out.nft"
 	err="$tmp/err.txt"
@@ -35,6 +38,7 @@ for case_dir in "$here"/cases/*/; do
 	NFTGEO_SKIP_NFT_CHECK=1 RENDER_ONLY=1 RENDER_OUT="$out" \
 		CONFIG_FILE="$cfg" RULES_FILE="$case_dir/rules.conf" RULES_DIR="$tmp/rules.d" \
 		GROUPS_DIR="$tmp/groups.d" ZONE_DIR="$tmp/zones" STATE_DIR="$tmp/state" \
+		WHITELIST_FILE="$tmp/whitelist.conf" WHITELIST_HOSTS_FILE="$tmp/whitelist-hosts.conf" \
 		"$engine" >/dev/null 2>"$err"
 	rc=$?
 	set -e

@@ -200,6 +200,13 @@ Selected keys:
 .TP
 .B WHITELIST ", " WHITELIST_HOSTS
 Addresses / hostnames that are never blocked (checked before every rule).
+Preferred storage is
+.I /etc/nftgeo/whitelist.conf
+and
+.I /etc/nftgeo/whitelist-hosts.conf
+(one entry per line), editable from the dashboard through the draft/commit
+deadman; each file is authoritative when it has any entry, otherwise these
+config variables are used.
 .TP
 .B DEFAULT_INPUT
 .B accept
