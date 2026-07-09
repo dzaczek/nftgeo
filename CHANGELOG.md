@@ -8,6 +8,34 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.57.0] - 2026-07-09
+
+First step of the sequential-rule-model epic (#46). Engine only — do **not**
+release/deploy on its own; the migration (#43) and docs (#44) must land first.
+
+### Changed — ⚠️ BREAKING: rule evaluation is now sequential (file order)
+
+- **`allow`/`deny` rules are evaluated top-to-bottom in the order they appear**
+  in `rules.conf`/`rules.d`, first match wins — like a classic firewall. The
+  previous model emitted all `deny` before all `allow`, so order in the file did
+  not matter; now it does. (#41)
+- **Automatic deny-by-default is removed.** Previously a port with any geo-fenced
+  `allow` was implicitly closed to every other source. Now a port is closed only
+  by an explicit `deny <dir> <proto> <port> any` **or** by `DEFAULT_INPUT="drop"`.
+- **Migration required.** Existing configs that relied on deny-by-default will
+  leave those ports open under this version until an explicit trailing `deny` is
+  added — see #43 for the automated migration. The baseline still runs first and
+  is unchanged (loopback, `ct invalid`, `established,related`, whitelist,
+  synproxy, throttle), so this cannot bypass the whitelist or open established
+  state; it only affects ports you geo-fenced with `allow`.
+
+Idiom going forward:
+
+```
+allow in tcp 22 pl
+deny  in tcp 22 any     # close the port to everyone else
+```
+
 ## [1.56.0] - 2026-07-09
 
 Integrates PR #40 (chain-grouped Policy view) after fixing its correctness bugs.
