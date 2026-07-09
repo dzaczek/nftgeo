@@ -395,6 +395,16 @@
     <pre>sudo nftgeo-ui token</pre>
     <p class="muted">and open the printed link. For long-term read-only access:</p>
     <pre>sudo nftgeo-ui token --ro</pre>
+    <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px;">
+      <p class="muted" style="margin-bottom:0">Or paste your token here:</p>
+      <div style="display:flex;gap:10px;">
+        <input type="text" id="manual-token" placeholder="Paste token..." style="flex:1" onkeydown="if(event.key==='Enter') submitManualToken()">
+        <button class="btn" onclick="submitManualToken()">Log In</button>
+      </div>
+      <div id="lockspin" style="display:none; text-align:center; margin-top:10px;">
+        <div class="spinner"></div>
+      </div>
+    </div>
     <p id="lockmsg" style="color:var(--drop)"></p>
   </div>
 </div>
@@ -1389,6 +1399,67 @@ document.addEventListener('click',e=>{const t=e.target.closest('.ipl');if(t&&t.d
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeDrawer();}});
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
 
+function showPendingLock(msg){$('#lockmsg').textContent=msg;$('#lock').style.display='flex';$('#lockspin').style.display='block';}
+
+async function pollSession(pollId) {
+  showPendingLock('Trwa oczekiwanie na akceptacje sesji przez drugiego usera...');
+  return new Promise(resolve => {
+    const p = setInterval(async () => {
+      try {
+        const r = await fetch('/api/session_poll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({poll_id:pollId})});
+        if(!r.ok) { clearInterval(p); resolve({error: 'Session rejected or timed out.'}); return; }
+        const d = await r.json();
+        if(d.status === 'ok') { clearInterval(p); resolve(d); return; }
+      }catch(e){}
+    }, 2000);
+  });
+}
+
+async function handlePendingSession(d) {
+  if (d.pending_session && !document.getElementById('pending-alert')) {
+    const alertHtml = `
+      <div id="pending-alert" style="position:fixed;bottom:20px;right:20px;background:#c0392b;color:#fff;padding:15px;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,0.5);z-index:9999;">
+        <div style="font-weight:bold;margin-bottom:10px;">Ostrzeżenie: Ktoś otwiera nową sesję!</div>
+        <div style="margin-bottom:10px;">Pozostało: <span id="pending-countdown">${Math.floor(d.pending_expires_in)}</span>s</div>
+        <button onclick="rejectPendingSession()" style="background:#fff;color:#c0392b;border:none;padding:5px 10px;cursor:pointer;border-radius:2px;font-weight:bold;">Przerwij sesję</button>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', alertHtml);
+    let timeLeft = Math.floor(d.pending_expires_in);
+    window.pendingInterval = setInterval(() => {
+      timeLeft--;
+      const cd = document.getElementById('pending-countdown');
+      if (cd) cd.textContent = timeLeft;
+      if (timeLeft <= 0) {
+        clearInterval(window.pendingInterval);
+        const pa = document.getElementById('pending-alert');
+        if (pa) pa.remove();
+        location.reload(); // The other session is taking over
+      }
+    }, 1000);
+  } else if (!d.pending_session && document.getElementById('pending-alert')) {
+    clearInterval(window.pendingInterval);
+    document.getElementById('pending-alert').remove();
+  }
+}
+
+async function rejectPendingSession() {
+  try {
+    await fetch('/api/session_reject',{method:'POST'});
+    clearInterval(window.pendingInterval);
+    const pa = document.getElementById('pending-alert');
+    if (pa) pa.remove();
+  } catch(e){}
+}
+
+async function submitManualToken() {
+  const t = $('#manual-token').value.trim();
+  if(!t) return;
+  // Use fragment to reboot cleanly
+  location.hash = 'auth=' + t;
+  location.reload();
+}
+
 async function boot(){
   // Auth token in URL fragment (#auth=...) — not sent to the server or logged
   // in access logs, unlike a query parameter (?auth=...).
@@ -1399,18 +1470,32 @@ async function boot(){
       const r=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({auth})});
       history.replaceState({},'',location.pathname);
       if(!r.ok){showLock('Invalid or expired token — generate a new one on the host.');return;}
-      MODE=(await r.json()).mode||'rw';
+      const d=await r.json();
+      if(d.status==='pending'){
+        const pollResult = await pollSession(d.poll_id);
+        if (pollResult.error) { showLock(pollResult.error); return; }
+        MODE=pollResult.mode||'rw';
+      } else {
+        MODE=d.mode||'rw';
+      }
     }catch(e){showLock('Auth failed.');return;}
   }
   try{
     const me=await fetch('/api/me');
     if(me.status===401||me.status===403){showLock('');return;}
-    if(me.ok){const d=await me.json();MODE=d.mode||MODE;if(d.auth===false)$('#modebadge').textContent='no-auth';}
+    if(me.ok){const d=await me.json();MODE=d.mode||MODE;if(d.auth===false)$('#modebadge').textContent='no-auth'; handlePendingSession(d);}
   }catch(e){showLock('');return;}
   hideLock();
   if(MODE==='ro'){$('#modebadge').textContent='read-only';
     $('#newgroup').style.display='none';$('#newregion').style.display='none';$('#newservice').style.display='none';$('#newhost').style.display='none';$('#newzone').style.display='none';$('#newlist').style.display='none';$('#newfeed').style.display='none';$('#addrule').style.display='none';$('#addsection').style.display='none';$('#addthrottle').style.display='none';$('#addsynproxy').style.display='none';$('#addzone').style.display='none';$('#addnat').style.display='none';$('#rawbtn').style.display='none';$('#templatesbtn').style.display='none';}
-  initMap(); refresh(); REFRESHER=setInterval(refresh,5000);
+  initMap(); refresh(); REFRESHER=setInterval(async () => {
+    try {
+      const me=await fetch('/api/me');
+      if(me.status===401||me.status===403){ location.reload(); return; }
+      if(me.ok){ const d=await me.json(); handlePendingSession(d); }
+    } catch(e) {}
+    refresh();
+  },5000);
 }
 boot();
 </script>
