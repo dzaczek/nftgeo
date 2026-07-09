@@ -8,6 +8,30 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.55.0] - 2026-07-09
+
+Integrates PR #39 and closes the two follow-ups from the PR #35 review.
+
+### Added
+- **Whitelist as dedicated files with the deadman (closes #37).** The whitelist
+  now lives in `/etc/nftgeo/whitelist.conf` (IPs/CIDRs) and
+  `/etc/nftgeo/whitelist-hosts.conf` (hostnames), edited from the dashboard
+  through the same **draft → commit → deadman** pipeline as rules and objects —
+  no more direct writes to the live config, and a whitelist change that would cut
+  your access auto-rolls-back. The engine reads each file when it has any entry
+  and otherwise falls back to the legacy `WHITELIST=` / `WHITELIST_HOSTS=` config
+  variables, so existing setups keep working and an entry removed in the UI stays
+  removed. New `/api/whitelist/draft` endpoint; `WHITELIST_FILE` /
+  `WHITELIST_HOSTS_FILE` engine variables.
+- **Template group-target validation (closes #38).** Importing a service template
+  that references an undefined group (e.g. `ADMINS`, `APPS`, `MONITORING`) now
+  returns a warning telling you to create the `GROUP_*` object first, instead of
+  failing silently at commit time.
+
+### Removed
+- The v1.54.0 direct-config-write whitelist endpoint (`/api/whitelist`
+  POST/DELETE) is superseded by the draft pipeline above.
+
 ## [1.54.0] - 2026-07-09
 
 Integrates PR #35 (service templates, rule-stats, whitelist editor, docs).

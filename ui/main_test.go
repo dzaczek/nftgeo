@@ -512,51 +512,60 @@ func TestShortFeedNaming(t *testing.T) {
 	}
 }
 
-func TestValidIPOrCIDR(t *testing.T) {
+func TestValidWhitelistEntry(t *testing.T) {
 	for _, s := range []string{"203.0.113.5", "10.0.0.0/8", "2001:db8::1", "2001:db8::/48"} {
-		if !validIPOrCIDR(s) {
-			t.Errorf("validIPOrCIDR(%q) = false, want true", s)
+		if !validWhitelistEntry(s) {
+			t.Errorf("validWhitelistEntry(%q) = false, want true", s)
 		}
 	}
 	for _, s := range []string{"", "not-an-ip", "999.1.1.1", "10.0.0.0/33", "example.com"} {
-		if validIPOrCIDR(s) {
-			t.Errorf("validIPOrCIDR(%q) = true, want false", s)
+		if validWhitelistEntry(s) {
+			t.Errorf("validWhitelistEntry(%q) = true, want false", s)
+		}
+	}
+	for _, s := range []string{"vpn.example.ch", "host-1.internal_net"} {
+		if !validHostname(s) {
+			t.Errorf("validHostname(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "bad host", "a;b", "x`y"} {
+		if validHostname(s) {
+			t.Errorf("validHostname(%q) = true, want false", s)
 		}
 	}
 }
 
-// whitelistMutate must never widen the config's permissions (it holds the
-// AbuseIPDB key) and must preserve unrelated lines. Regression for the 0644 bug.
-func TestWhitelistMutatePreservesPermsAndKey(t *testing.T) {
+// The dedicated whitelist file is authoritative once it has an entry; an empty
+// or absent file falls back to the legacy config variable. This is the core of
+// the fix for #37 (an entry removed in the UI must stay removed).
+func TestCurrentWhitelistFilePrecedence(t *testing.T) {
 	dir := t.TempDir()
 	cf := filepath.Join(dir, "config")
-	if err := os.WriteFile(cf, []byte("ABUSEIPDB_API_KEY=\"secret\"\nWHITELIST=\"1.1.1.1\"\n"), 0600); err != nil {
+	wf := filepath.Join(dir, "whitelist.conf")
+	if err := os.WriteFile(cf, []byte("WHITELIST=\"1.1.1.1 2.2.2.2\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	old := configFile
-	configFile = cf
-	defer func() { configFile = old }()
+	oc, ow := configFile, whitelistFile
+	configFile, whitelistFile = cf, wf
+	defer func() { configFile, whitelistFile = oc, ow }()
 
-	if err := whitelistMutate("2.2.2.2", "ip", true); err != nil {
+	// No file yet → legacy config var.
+	if got := currentWhitelist(); len(got) != 2 {
+		t.Fatalf("no file: got %v, want the 2 config entries", got)
+	}
+	// File with entries → file wins (config var ignored, so a removal sticks).
+	if err := os.WriteFile(wf, []byte("# managed\n9.9.9.9\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fi, err := os.Stat(cf)
-	if err != nil {
+	got := currentWhitelist()
+	if len(got) != 1 || got[0] != "9.9.9.9" {
+		t.Errorf("with file: got %v, want [9.9.9.9]", got)
+	}
+	// Empty file → back to the config var (safety fallback, no accidental empty).
+	if err := os.WriteFile(wf, []byte("# only a comment\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if fi.Mode().Perm() != 0600 {
-		t.Errorf("config perms widened to %v, want 0600", fi.Mode().Perm())
-	}
-	b, _ := os.ReadFile(cf)
-	s := string(b)
-	if !strings.Contains(s, "2.2.2.2") || !strings.Contains(s, "1.1.1.1") || !strings.Contains(s, "ABUSEIPDB_API_KEY") {
-		t.Errorf("add lost content: %q", s)
-	}
-	if err := whitelistMutate("1.1.1.1", "ip", false); err != nil {
-		t.Fatal(err)
-	}
-	b, _ = os.ReadFile(cf)
-	if strings.Contains(string(b), "1.1.1.1") {
-		t.Errorf("delete did not remove entry: %q", b)
+	if got := currentWhitelist(); len(got) != 2 {
+		t.Errorf("empty file: got %v, want the 2 config entries", got)
 	}
 }

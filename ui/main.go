@@ -42,14 +42,16 @@ import (
 var assetsFS embed.FS
 
 var (
-	fam        = env("TABLE_FAMILY", "inet")
-	table      = env("TABLE_NAME", "nftgeo")
-	zoneDir    = env("ZONE_DIR", "/var/lib/nftgeo/zones")
-	engine     = env("NFTGEO_UPDATE", "/usr/local/sbin/nftgeo-update")
-	configFile = env("CONFIG_FILE", "/etc/nftgeo/config")
-	rulesFile  = env("RULES_FILE", "/etc/nftgeo/rules.conf")
-	rulesDir   = env("RULES_DIR", "/etc/nftgeo/rules.d")
-	feedsDir   = env("ABUSE_FEEDS_CACHE_DIR", "/var/lib/nftgeo/feeds")
+	fam                = env("TABLE_FAMILY", "inet")
+	table              = env("TABLE_NAME", "nftgeo")
+	zoneDir            = env("ZONE_DIR", "/var/lib/nftgeo/zones")
+	engine             = env("NFTGEO_UPDATE", "/usr/local/sbin/nftgeo-update")
+	configFile         = env("CONFIG_FILE", "/etc/nftgeo/config")
+	rulesFile          = env("RULES_FILE", "/etc/nftgeo/rules.conf")
+	rulesDir           = env("RULES_DIR", "/etc/nftgeo/rules.d")
+	whitelistFile      = env("WHITELIST_FILE", "/etc/nftgeo/whitelist.conf")
+	whitelistHostsFile = env("WHITELIST_HOSTS_FILE", "/etc/nftgeo/whitelist-hosts.conf")
+	feedsDir           = env("ABUSE_FEEDS_CACHE_DIR", "/var/lib/nftgeo/feeds")
 	// Optional full offline geo dataset (GEO_FULL=1): fetch every ipdeny country
 	// zone into a UI-owned cache so the drop map covers all sources.
 	geoFull     = env("GEO_FULL", "")
@@ -1145,18 +1147,67 @@ func objects() map[string]interface{} {
 			groups = append(groups, map[string]string{"name": strings.ToLower(k[6:]), "value": v})
 		case strings.HasPrefix(k, "REGION_"):
 			regions = append(regions, map[string]string{"name": strings.ToLower(k[7:]), "value": v})
-		case k == "WHITELIST":
-			wl = strings.Fields(v)
-		case k == "WHITELIST_HOSTS":
-			wlh = strings.Fields(v)
 		case k == "ABUSE_FEEDS":
 			feeds = strings.Fields(v)
 		}
 	}
+	// Whitelist is file-managed (whitelist.conf / whitelist-hosts.conf), with the
+	// legacy config vars as a fallback — same precedence the engine uses.
+	wl = currentWhitelist()
+	wlh = currentWhitelistHosts()
 	return map[string]interface{}{"groups": groups, "regions": regions,
 		"whitelist": wl, "whitelistHosts": wlh, "feeds": feeds,
 		"zones": zoneNames(), "abuseSources": abuseSources(), "abuseLoaded": abuseLoadedCount(),
 		"lists": []map[string]string{}}
+}
+
+// readListFile reads a whitelist-style file: one entry per line, skipping blank
+// lines and # comments. Returns nil if the file doesn't exist or has no entries.
+func readListFile(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return parseList(string(data))
+}
+
+// extractConfigVar scans config-style content for KEY="value" (or KEY=value)
+// and returns the whitespace-split fields. Used as the legacy fallback when the
+// dedicated whitelist file has no entries.
+func extractConfigVar(data []byte, key string) []string {
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		eq := strings.Index(line, "=")
+		if eq < 0 {
+			continue
+		}
+		if strings.TrimSpace(line[:eq]) == key {
+			return strings.Fields(strings.Trim(strings.TrimSpace(line[eq+1:]), `"`))
+		}
+	}
+	return nil
+}
+
+// currentWhitelist / currentWhitelistHosts return the effective entries the way
+// the engine sees them: the dedicated file when it has any entry, else the
+// legacy config variable. Keeps the UI and the engine in agreement.
+func currentWhitelist() []string {
+	if wl := readListFile(whitelistFile); len(wl) > 0 {
+		return wl
+	}
+	data, _ := os.ReadFile(configFile)
+	return extractConfigVar(data, "WHITELIST")
+}
+
+func currentWhitelistHosts() []string {
+	if wlh := readListFile(whitelistHostsFile); len(wlh) > 0 {
+		return wlh
+	}
+	data, _ := os.ReadFile(configFile)
+	return extractConfigVar(data, "WHITELIST_HOSTS")
 }
 
 // ruleStats counts rules by action and target type across all rule files,
@@ -1218,186 +1269,6 @@ func ruleStats() map[string]interface{} {
 	}
 	stats["whitelistHits"] = wlHits
 	return stats
-}
-
-// handleWhitelist manages the WHITELIST and WHITELIST_HOSTS entries in config.
-// GET returns the current lists; POST adds an entry; DELETE removes one.
-// Writes go through the same Commit pipeline as objects — the config file is
-// only touched on Deploy.
-func handleWhitelist(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		obj := objects()
-		wl, _ := obj["whitelist"].([]string)
-		wlh, _ := obj["whitelistHosts"].([]string)
-		writeJSON(w, map[string]interface{}{
-			"whitelist": wl, "whitelistHosts": wlh,
-		})
-	case http.MethodPost:
-		var req struct {
-			Entry string `json:"entry"`
-			Kind  string `json:"kind"` // "ip" or "host"
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
-			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
-			return
-		}
-		entry := strings.TrimSpace(req.Entry)
-		if entry == "" {
-			http.Error(w, `{"error":"entry is required"}`, http.StatusBadRequest)
-			return
-		}
-		if req.Kind != "host" {
-			req.Kind = "ip"
-		}
-		// validate: "ip" must be an IP or CIDR; "host" must be a hostname
-		if req.Kind == "ip" {
-			if !validIPOrCIDR(entry) {
-				http.Error(w, `{"error":"invalid IP or CIDR"}`, http.StatusBadRequest)
-				return
-			}
-		} else {
-			// basic hostname check
-			if strings.ContainsAny(entry, " 	\"'`#;|<>(){}\n\r") {
-				http.Error(w, `{"error":"invalid hostname"}`, http.StatusBadRequest)
-				return
-			}
-		}
-		// read current config, modify the WHITELIST or WHITELIST_HOSTS line
-		if err := whitelistMutate(entry, req.Kind, true); err != nil {
-			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]interface{}{"saved": true})
-	case http.MethodDelete:
-		var req struct {
-			Entry string `json:"entry"`
-			Kind  string `json:"kind"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
-			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
-			return
-		}
-		entry := strings.TrimSpace(req.Entry)
-		if entry == "" {
-			http.Error(w, `{"error":"entry is required"}`, http.StatusBadRequest)
-			return
-		}
-		if req.Kind != "host" {
-			req.Kind = "ip"
-		}
-		if err := whitelistMutate(entry, req.Kind, false); err != nil {
-			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]interface{}{"removed": true})
-	default:
-		http.Error(w, `{"error":"method"}`, http.StatusMethodNotAllowed)
-	}
-}
-
-// validIPOrCIDR checks if a string is a valid IP address or CIDR range.
-func validIPOrCIDR(s string) bool {
-	// Try as CIDR first
-	if _, _, err := net.ParseCIDR(s); err == nil {
-		return true
-	}
-	// Try as plain IP
-	if ip := net.ParseIP(s); ip != nil {
-		return true
-	}
-	return false
-}
-
-// whitelistMutate reads the config file, adds or removes an entry from
-// WHITELIST (kind=ip) or WHITELIST_HOSTS (kind=host), and writes it back.
-// This writes directly to the live config file — changes take effect on the
-// next nftgeo-update run (or Commit in the UI).
-var whitelistMu sync.Mutex
-
-func whitelistMutate(entry, kind string, add bool) error {
-	// Serialize the read-modify-write so two concurrent edits can't lose one.
-	whitelistMu.Lock()
-	defer whitelistMu.Unlock()
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		return fmt.Errorf("cannot read config: %w", err)
-	}
-	key := "WHITELIST"
-	if kind == "host" {
-		key = "WHITELIST_HOSTS"
-	}
-	var lines []string
-	found := false
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, key+"=") || strings.HasPrefix(trimmed, key+" =") {
-			found = true
-			// extract current values
-			eq := strings.Index(line, "=")
-			if eq < 0 {
-				lines = append(lines, line)
-				continue
-			}
-			val := strings.Trim(strings.TrimSpace(line[eq+1:]), `"`)
-			fields := strings.Fields(val)
-			if add {
-				// check for duplicate
-				dup := false
-				for _, f := range fields {
-					if f == entry {
-						dup = true
-						break
-					}
-				}
-				if !dup {
-					fields = append(fields, entry)
-				}
-			} else {
-				var keep []string
-				for _, f := range fields {
-					if f != entry {
-						keep = append(keep, f)
-					}
-				}
-				fields = keep
-			}
-			newVal := strings.Join(fields, " ")
-			lines = append(lines, fmt.Sprintf(`%s="%s"`, key, newVal))
-		} else {
-			lines = append(lines, line)
-		}
-	}
-	if !found && add {
-		// Key doesn't exist yet — append it
-		lines = append(lines, fmt.Sprintf(`%s="%s"`, key, entry))
-	}
-	out := strings.Join(lines, "\n")
-	// Preserve the config's existing permissions — it holds ABUSEIPDB_API_KEY and
-	// is normally 0600; a plain WriteFile(...,0644) would make the key
-	// world-readable. Write a temp file in the same dir and rename it atomically,
-	// so a partial write can never corrupt or truncate the live config.
-	mode := os.FileMode(0600)
-	if fi, err := os.Stat(configFile); err == nil {
-		mode = fi.Mode().Perm()
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(configFile), ".config.*")
-	if err != nil {
-		return fmt.Errorf("cannot create temp config: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write([]byte(out)); err != nil {
-		tmp.Close()
-		return fmt.Errorf("cannot write temp config: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("cannot finalize temp config: %w", err)
-	}
-	if err := os.Chmod(tmpName, mode); err != nil {
-		return fmt.Errorf("cannot set config perms: %w", err)
-	}
-	return os.Rename(tmpName, configFile)
 }
 
 // hostInterfaces lists the machine's network interface names for the rule
@@ -1799,6 +1670,13 @@ var (
 	objLiveFile   = filepath.Join(groupsDir, "ui-objects.conf")
 	objDraftFile  = filepath.Join(draftDir, "objects")
 	objBackupFile = filepath.Join(backupDir, "objects")
+
+	// Whitelist staging: whitelist.conf + whitelist-hosts.conf get the same
+	// draft → commit → deadman pipeline as rules and objects.
+	wlDraftFile       = filepath.Join(draftDir, "whitelist")
+	wlBackupFile      = filepath.Join(backupDir, "whitelist")
+	wlHostsDraftFile  = filepath.Join(draftDir, "whitelist-hosts")
+	wlHostsBackupFile = filepath.Join(backupDir, "whitelist-hosts")
 )
 
 // A stage is one file the UI drafts and commits: the operator edits `draft`,
@@ -1864,7 +1742,9 @@ func stages() []stage {
 	for _, rf := range ruleFileList() {
 		s = append(s, stage{name: "rule:" + rf.rel, draft: rf.draft, live: rf.live, backup: rf.backup})
 	}
-	return append(s, stage{name: "objects", draft: objDraftFile, live: objLiveFile, backup: objBackupFile})
+	return append(s, stage{name: "objects", draft: objDraftFile, live: objLiveFile, backup: objBackupFile},
+		stage{name: "whitelist", draft: wlDraftFile, live: whitelistFile, backup: wlBackupFile},
+		stage{name: "whitelist-hosts", draft: wlHostsDraftFile, live: whitelistHostsFile, backup: wlHostsBackupFile})
 }
 
 func (s stage) hasDraft() bool { _, e := os.Stat(s.draft); return e == nil }
@@ -2301,6 +2181,123 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, `{"error":"method"}`, http.StatusMethodNotAllowed)
 	}
+}
+
+// ---- whitelist draft (issue #37) ----
+//
+// The whitelist lives in dedicated files (whitelist.conf / whitelist-hosts.conf)
+// and is edited through the same draft → commit → deadman pipeline as rules and
+// objects, so a whitelist change can no longer lock you out with no rollback.
+
+// parseList splits list-file content into entries, skipping blanks and #comments.
+func parseList(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// handleWhitelistDraft GETs the current whitelist (draft if present, else the
+// effective live entries) and POSTs a new draft. It never writes live files —
+// deploying is the operator's explicit Commit, which runs the deadman.
+func handleWhitelistDraft(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		wl, wlHasDraft := currentWhitelist(), false
+		if b, err := os.ReadFile(wlDraftFile); err == nil {
+			wl, wlHasDraft = parseList(string(b)), true
+		}
+		wlh, wlhHasDraft := currentWhitelistHosts(), false
+		if b, err := os.ReadFile(wlHostsDraftFile); err == nil {
+			wlh, wlhHasDraft = parseList(string(b)), true
+		}
+		writeJSON(w, map[string]interface{}{
+			"whitelist": wl, "whitelistHosts": wlh,
+			"hasDraft": wlHasDraft || wlhHasDraft,
+		})
+	case http.MethodPost:
+		var req struct {
+			Whitelist      []string `json:"whitelist"`
+			WhitelistHosts []string `json:"whitelistHosts"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+			return
+		}
+		for _, e := range req.Whitelist {
+			if e = strings.TrimSpace(e); e == "" || strings.HasPrefix(e, "#") {
+				continue
+			}
+			if !validWhitelistEntry(e) {
+				http.Error(w, `{"error":"invalid whitelist entry: `+strconv.Quote(e)+`"}`, http.StatusBadRequest)
+				return
+			}
+		}
+		for _, e := range req.WhitelistHosts {
+			if e = strings.TrimSpace(e); e == "" || strings.HasPrefix(e, "#") {
+				continue
+			}
+			if !validHostname(e) {
+				http.Error(w, `{"error":"invalid whitelist host: `+strconv.Quote(e)+`"}`, http.StatusBadRequest)
+				return
+			}
+		}
+		os.MkdirAll(filepath.Dir(wlDraftFile), 0755)
+		if err := os.WriteFile(wlDraftFile, []byte(serializeListFile(req.Whitelist)), 0644); err != nil {
+			http.Error(w, `{"error":"cannot write whitelist draft"}`, http.StatusInternalServerError)
+			return
+		}
+		if err := os.WriteFile(wlHostsDraftFile, []byte(serializeListFile(req.WhitelistHosts)), 0644); err != nil {
+			http.Error(w, `{"error":"cannot write whitelist-hosts draft"}`, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]interface{}{"saved": true})
+	default:
+		http.Error(w, `{"error":"method"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// validWhitelistEntry accepts an IP address or a CIDR range.
+func validWhitelistEntry(s string) bool {
+	if strings.Contains(s, "/") {
+		_, _, err := net.ParseCIDR(s)
+		return err == nil
+	}
+	return net.ParseIP(s) != nil
+}
+
+// validHostname does a basic DNS-name char-set check.
+func validHostname(s string) bool {
+	if len(s) == 0 || len(s) > 253 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+			c >= '0' && c <= '9' || c == '.' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// serializeListFile renders entries one-per-line under a managed-by header,
+// dropping blanks so a round-trip doesn't accumulate empty lines.
+func serializeListFile(entries []string) string {
+	var b strings.Builder
+	b.WriteString("# Managed by nftgeo-ui (Objects → Reference → Whitelist). One entry per line.\n")
+	for _, e := range entries {
+		if e = strings.TrimSpace(e); e == "" {
+			continue
+		}
+		b.WriteString(e)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // ---- structured rules draft (M6B.3) ----
@@ -2877,7 +2874,67 @@ func handleRulesImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]interface{}{"imported": true, "rules": len(tplItems)})
+	// Warn when a template references a group target that isn't defined yet
+	// (issue #38). Templates use uppercase placeholders like ADMINS/APPS.
+	defined := map[string]bool{}
+	for _, name := range definedGroupNames() {
+		defined[strings.ToUpper(name)] = true
+	}
+	var warnings []string
+	seen := map[string]bool{}
+	for _, line := range tpl.Lines {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		target := fields[4]
+		// Skip country codes, IP/CIDR, any/abuse/-, and lowercase (real) names.
+		if target == "" || len(target) == 2 || strings.Contains(target, ".") ||
+			target == "any" || target == "abuse" || target == "-" ||
+			strings.ToUpper(target) != target {
+			continue
+		}
+		if !defined[strings.ToUpper(target)] && !seen[target] {
+			seen[target] = true
+			warnings = append(warnings, "Template references undefined group '"+target+
+				"'. Create GROUP_"+strings.ToUpper(target)+" in Objects before committing.")
+		}
+	}
+	resp := map[string]interface{}{"imported": true, "rules": len(tplItems)}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	writeJSON(w, resp)
+}
+
+// definedGroupNames returns every GROUP_ name from config + the objects drop-in
+// (live and draft), so template import can flag references to groups that don't
+// exist yet.
+func definedGroupNames() []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, f := range []string{configFile, objLiveFile, objDraftFile} {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "GROUP_") {
+				continue
+			}
+			eq := strings.Index(line, "=")
+			if eq < 0 {
+				continue
+			}
+			name := strings.TrimSpace(line[6:eq])
+			if name != "" && !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	return names
 }
 
 // ---- rule add / edit / delete (M6B.4) ----
@@ -3524,7 +3581,7 @@ func main() {
 	api("/api/rule-stats", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, ruleStats())
 	})
-	api("/api/whitelist", handleWhitelist)
+	api("/api/whitelist/draft", handleWhitelistDraft)
 	api("/api/draft/discard", handleDraftDiscard)
 	api("/api/commit/preview", handleCommitPreview)
 	api("/api/commit/status", handleCommitStatus)
