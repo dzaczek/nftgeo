@@ -511,3 +511,52 @@ func TestShortFeedNaming(t *testing.T) {
 		t.Errorf("sanitizeFeedURL mismatch: %q", got)
 	}
 }
+
+func TestValidIPOrCIDR(t *testing.T) {
+	for _, s := range []string{"203.0.113.5", "10.0.0.0/8", "2001:db8::1", "2001:db8::/48"} {
+		if !validIPOrCIDR(s) {
+			t.Errorf("validIPOrCIDR(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "not-an-ip", "999.1.1.1", "10.0.0.0/33", "example.com"} {
+		if validIPOrCIDR(s) {
+			t.Errorf("validIPOrCIDR(%q) = true, want false", s)
+		}
+	}
+}
+
+// whitelistMutate must never widen the config's permissions (it holds the
+// AbuseIPDB key) and must preserve unrelated lines. Regression for the 0644 bug.
+func TestWhitelistMutatePreservesPermsAndKey(t *testing.T) {
+	dir := t.TempDir()
+	cf := filepath.Join(dir, "config")
+	if err := os.WriteFile(cf, []byte("ABUSEIPDB_API_KEY=\"secret\"\nWHITELIST=\"1.1.1.1\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := configFile
+	configFile = cf
+	defer func() { configFile = old }()
+
+	if err := whitelistMutate("2.2.2.2", "ip", true); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(cf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0600 {
+		t.Errorf("config perms widened to %v, want 0600", fi.Mode().Perm())
+	}
+	b, _ := os.ReadFile(cf)
+	s := string(b)
+	if !strings.Contains(s, "2.2.2.2") || !strings.Contains(s, "1.1.1.1") || !strings.Contains(s, "ABUSEIPDB_API_KEY") {
+		t.Errorf("add lost content: %q", s)
+	}
+	if err := whitelistMutate("1.1.1.1", "ip", false); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(cf)
+	if strings.Contains(string(b), "1.1.1.1") {
+		t.Errorf("delete did not remove entry: %q", b)
+	}
+}

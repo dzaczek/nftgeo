@@ -18,6 +18,55 @@ allowed, and the tool builds and maintains the `nftables` rules for you:
 - refreshes the rules twice a day through a `systemd` timer,
 - validates the `nftables` file before loading it and replaces it atomically.
 
+## How it works
+
+```
+ ┌──────────────────────────────────────────────────────────┐
+ │  You write rules.conf                                      │
+ │      allow in tcp 22 europe                                │
+ │      deny  in any -  abuse                                 │
+ └───────────────────────────┬──────────────────────────────┘
+                             ▼
+ ┌──────────────────────────────────────────────────────────┐
+ │  nftgeo-update engine                                     │
+ │   1. parse rules.conf + rules.d/*.conf                    │
+ │   2. resolve geo zones (ipdeny.com, cached)               │
+ │   3. fetch AbuseIPDB + feed blocklists (dedup + aggregate)│
+ │   4. render nftables ruleset                              │
+ │   5. validate (nft -c)                                    │
+ │   6. atomic load (nft -f)                                 │
+ └───────────────────────────┬──────────────────────────────┘
+                             ▼
+ ┌──────────────────────────────────────────────────────────┐
+ │  Kernel nftables table  inet/nftgeo  (loaded atomically)  │
+ └──────────────────────────────────────────────────────────┘
+```
+
+## Rule evaluation order
+
+Every managed chain evaluates in this fixed order, regardless of the order
+rules appear in your files:
+
+```
+ ┌──────────────────────────────────────────────────────────┐
+ │  CHAIN (input / output / forward)                         │
+ │   1. lo accept                    ← loopback always       │
+ │   2. ct state invalid   → drop    ← bad state             │
+ │   3. ct state established,related ← replies to your conns │
+ │   4. @whitelist         → accept  ← always-allow IPs      │
+ │   5. throttle / synproxy          ← rate-limit / SYN guard│
+ │   6. deny rules (incl. abuse)     ← explicit blocks       │
+ │   7. allow rules                  ← explicit opens        │
+ │   8. deny-by-default              ← a port with any allow │
+ │                                     rule is closed to all │
+ │                                     other sources         │
+ └──────────────────────────────────────────────────────────┘
+```
+
+Because the whitelist (step 4) and established/related (step 3) run before your
+`allow` rules (step 7), a whitelisted or already-connected source is accepted
+there — so that `allow` rule's own hit counter can legitimately stay at 0.
+
 ## The model
 
 You write rules like sentences in `/etc/nftgeo/rules.conf`:

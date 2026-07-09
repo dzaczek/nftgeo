@@ -1159,6 +1159,247 @@ func objects() map[string]interface{} {
 		"lists": []map[string]string{}}
 }
 
+// ruleStats counts rules by action and target type across all rule files,
+// and reports how many addresses are in the whitelist. This gives the operator
+// a quick breakdown of "how many rules hit the whitelist path vs deny vs allow"
+// without parsing nft output.
+func ruleStats() map[string]interface{} {
+	stats := map[string]interface{}{
+		"allow": 0, "deny": 0, "throttle": 0, "synproxy": 0,
+		"nat": 0, "zone": 0, "total": 0,
+		"denyAbuse": 0, "allowAny": 0,
+	}
+	for _, rf := range ruleFileList() {
+		items, _ := parseDraftRules(draftTextFor(rf))
+		for _, it := range items {
+			if it.Kind == "section" || it.Disabled {
+				continue
+			}
+			stats["total"] = stats["total"].(int) + 1
+			switch it.Kind {
+			case "nat":
+				stats["nat"] = stats["nat"].(int) + 1
+			case "zone":
+				stats["zone"] = stats["zone"].(int) + 1
+			case "synproxy":
+				stats["synproxy"] = stats["synproxy"].(int) + 1
+			case "throttle":
+				stats["throttle"] = stats["throttle"].(int) + 1
+			default:
+				switch it.Action {
+				case "allow":
+					stats["allow"] = stats["allow"].(int) + 1
+					if it.Target == "any" {
+						stats["allowAny"] = stats["allowAny"].(int) + 1
+					}
+				case "deny":
+					stats["deny"] = stats["deny"].(int) + 1
+					if it.Target == "abuse" {
+						stats["denyAbuse"] = stats["denyAbuse"].(int) + 1
+					}
+				}
+			}
+		}
+	}
+	// whitelist address counts from config
+	obj := objects()
+	wl, _ := obj["whitelist"].([]string)
+	wlh, _ := obj["whitelistHosts"].([]string)
+	stats["whitelistIPs"] = len(wl)
+	stats["whitelistHosts"] = len(wlh)
+	stats["whitelistTotal"] = len(wl) + len(wlh)
+	// live whitelist hit counters from baseline
+	bc := baselineCounters()
+	var wlHits int64
+	for _, c := range bc {
+		if n, ok := c["whitelist"]; ok {
+			wlHits += n
+		}
+	}
+	stats["whitelistHits"] = wlHits
+	return stats
+}
+
+// handleWhitelist manages the WHITELIST and WHITELIST_HOSTS entries in config.
+// GET returns the current lists; POST adds an entry; DELETE removes one.
+// Writes go through the same Commit pipeline as objects — the config file is
+// only touched on Deploy.
+func handleWhitelist(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		obj := objects()
+		wl, _ := obj["whitelist"].([]string)
+		wlh, _ := obj["whitelistHosts"].([]string)
+		writeJSON(w, map[string]interface{}{
+			"whitelist": wl, "whitelistHosts": wlh,
+		})
+	case http.MethodPost:
+		var req struct {
+			Entry string `json:"entry"`
+			Kind  string `json:"kind"` // "ip" or "host"
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+			return
+		}
+		entry := strings.TrimSpace(req.Entry)
+		if entry == "" {
+			http.Error(w, `{"error":"entry is required"}`, http.StatusBadRequest)
+			return
+		}
+		if req.Kind != "host" {
+			req.Kind = "ip"
+		}
+		// validate: "ip" must be an IP or CIDR; "host" must be a hostname
+		if req.Kind == "ip" {
+			if !validIPOrCIDR(entry) {
+				http.Error(w, `{"error":"invalid IP or CIDR"}`, http.StatusBadRequest)
+				return
+			}
+		} else {
+			// basic hostname check
+			if strings.ContainsAny(entry, " 	\"'`#;|<>(){}\n\r") {
+				http.Error(w, `{"error":"invalid hostname"}`, http.StatusBadRequest)
+				return
+			}
+		}
+		// read current config, modify the WHITELIST or WHITELIST_HOSTS line
+		if err := whitelistMutate(entry, req.Kind, true); err != nil {
+			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]interface{}{"saved": true})
+	case http.MethodDelete:
+		var req struct {
+			Entry string `json:"entry"`
+			Kind  string `json:"kind"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+			return
+		}
+		entry := strings.TrimSpace(req.Entry)
+		if entry == "" {
+			http.Error(w, `{"error":"entry is required"}`, http.StatusBadRequest)
+			return
+		}
+		if req.Kind != "host" {
+			req.Kind = "ip"
+		}
+		if err := whitelistMutate(entry, req.Kind, false); err != nil {
+			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]interface{}{"removed": true})
+	default:
+		http.Error(w, `{"error":"method"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// validIPOrCIDR checks if a string is a valid IP address or CIDR range.
+func validIPOrCIDR(s string) bool {
+	// Try as CIDR first
+	if _, _, err := net.ParseCIDR(s); err == nil {
+		return true
+	}
+	// Try as plain IP
+	if ip := net.ParseIP(s); ip != nil {
+		return true
+	}
+	return false
+}
+
+// whitelistMutate reads the config file, adds or removes an entry from
+// WHITELIST (kind=ip) or WHITELIST_HOSTS (kind=host), and writes it back.
+// This writes directly to the live config file — changes take effect on the
+// next nftgeo-update run (or Commit in the UI).
+var whitelistMu sync.Mutex
+
+func whitelistMutate(entry, kind string, add bool) error {
+	// Serialize the read-modify-write so two concurrent edits can't lose one.
+	whitelistMu.Lock()
+	defer whitelistMu.Unlock()
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return fmt.Errorf("cannot read config: %w", err)
+	}
+	key := "WHITELIST"
+	if kind == "host" {
+		key = "WHITELIST_HOSTS"
+	}
+	var lines []string
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, key+"=") || strings.HasPrefix(trimmed, key+" =") {
+			found = true
+			// extract current values
+			eq := strings.Index(line, "=")
+			if eq < 0 {
+				lines = append(lines, line)
+				continue
+			}
+			val := strings.Trim(strings.TrimSpace(line[eq+1:]), `"`)
+			fields := strings.Fields(val)
+			if add {
+				// check for duplicate
+				dup := false
+				for _, f := range fields {
+					if f == entry {
+						dup = true
+						break
+					}
+				}
+				if !dup {
+					fields = append(fields, entry)
+				}
+			} else {
+				var keep []string
+				for _, f := range fields {
+					if f != entry {
+						keep = append(keep, f)
+					}
+				}
+				fields = keep
+			}
+			newVal := strings.Join(fields, " ")
+			lines = append(lines, fmt.Sprintf(`%s="%s"`, key, newVal))
+		} else {
+			lines = append(lines, line)
+		}
+	}
+	if !found && add {
+		// Key doesn't exist yet — append it
+		lines = append(lines, fmt.Sprintf(`%s="%s"`, key, entry))
+	}
+	out := strings.Join(lines, "\n")
+	// Preserve the config's existing permissions — it holds ABUSEIPDB_API_KEY and
+	// is normally 0600; a plain WriteFile(...,0644) would make the key
+	// world-readable. Write a temp file in the same dir and rename it atomically,
+	// so a partial write can never corrupt or truncate the live config.
+	mode := os.FileMode(0600)
+	if fi, err := os.Stat(configFile); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(configFile), ".config.*")
+	if err != nil {
+		return fmt.Errorf("cannot create temp config: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write([]byte(out)); err != nil {
+		tmp.Close()
+		return fmt.Errorf("cannot write temp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("cannot finalize temp config: %w", err)
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return fmt.Errorf("cannot set config perms: %w", err)
+	}
+	return os.Rename(tmpName, configFile)
+}
+
 // hostInterfaces lists the machine's network interface names for the rule
 // drawers' interface picker. It backs a datalist, so free text is still allowed
 // for tunnel/VPN interfaces that only appear later. Loopback is listed last.
@@ -2464,6 +2705,48 @@ func builtinTemplates() []ruleTemplate {
 		{ID: "ssh-lockdown", Name: "SSH Lockdown", Builtin: true,
 			Description: "SSH only from a named admin group/object (create GROUP_ADMINS first).",
 			Lines:       []string{"## SSH lockdown", "allow in tcp 22 ADMINS # admin ssh", "deny in any - abuse # abuse in", "deny out any - abuse # abuse out"}},
+		{ID: "nginx", Name: "Nginx Web Server", Builtin: true,
+			Description: "Nginx HTTP/HTTPS with abuse filtering and SSH admin access.",
+			Lines:       []string{"## Nginx", "allow in tcp 80 any # http", "allow in tcp 443 any # https", "allow in tcp 22 ADMINS # admin ssh", "deny in any - abuse # abuse in", "deny out any - abuse # abuse out"}},
+		{ID: "kamailio", Name: "Kamailio SIP Server", Builtin: true,
+			Description: "Kamailio SIP/SIPS ports from a trusted region (edit geo). Includes RTP range.",
+			Lines:       []string{"## Kamailio SIP", "allow in udp 5060 europe # sip-udp", "allow in tcp 5060 europe # sip-tcp", "allow in tcp 5061 europe # sips-tls", "allow in udp 10000-20000 europe # rtp-range", "deny in any - abuse # abuse in"}},
+		{ID: "redis", Name: "Redis Server", Builtin: true,
+			Description: "Redis locked to an admin group (never expose to the world).",
+			Lines:       []string{"## Redis", "allow in tcp 6379 ADMINS # redis", "deny in any - abuse # abuse in"}},
+		{ID: "postgres", Name: "PostgreSQL Server", Builtin: true,
+			Description: "PostgreSQL from a named app/admin group only.",
+			Lines:       []string{"## PostgreSQL", "allow in tcp 5432 ADMINS # postgres", "deny in any - abuse # abuse in"}},
+		{ID: "mysql", Name: "MySQL/MariaDB Server", Builtin: true,
+			Description: "MySQL/MariaDB from a named admin group only.",
+			Lines:       []string{"## MySQL", "allow in tcp 3306 ADMINS # mysql", "deny in any - abuse # abuse in"}},
+		{ID: "gitlab", Name: "GitLab Server", Builtin: true,
+			Description: "GitLab HTTP/HTTPS/SSH with abuse filtering.",
+			Lines:       []string{"## GitLab", "allow in tcp 80 any # http", "allow in tcp 443 any # https", "allow in tcp 22 ADMINS # git-ssh", "deny in any - abuse # abuse in", "deny out any - abuse # abuse out"}},
+		{ID: "docker-registry", Name: "Docker Registry", Builtin: true,
+			Description: "Private Docker registry from admin group only.",
+			Lines:       []string{"## Docker Registry", "allow in tcp 5000 ADMINS # registry", "deny in any - abuse # abuse in"}},
+		{ID: "elasticsearch", Name: "Elasticsearch", Builtin: true,
+			Description: "Elasticsearch HTTP (9200) + transport (9300) from app group only.",
+			Lines:       []string{"## Elasticsearch", "allow in tcp 9200 APPS # es-http", "allow in tcp 9300 APPS # es-transport", "deny in any - abuse # abuse in"}},
+		{ID: "grafana", Name: "Grafana Dashboard", Builtin: true,
+			Description: "Grafana from a named admin group (edit target).",
+			Lines:       []string{"## Grafana", "allow in tcp 3000 ADMINS # grafana", "deny in any - abuse # abuse in"}},
+		{ID: "dns-server", Name: "DNS Server (BIND/unbound)", Builtin: true,
+			Description: "DNS TCP+UDP from anywhere (recursive) or edit target to restrict.",
+			Lines:       []string{"## DNS Server", "allow in tcp 53 any # dns-tcp", "allow in udp 53 any # dns-udp", "deny in any - abuse # abuse in"}},
+		{ID: "openvpn", Name: "OpenVPN Server", Builtin: true,
+			Description: "OpenVPN UDP 1194 + SSH admin from a trusted subnet.",
+			Lines:       []string{"## OpenVPN", "allow in udp 1194 any # openvpn", "allow in tcp 22 ADMINS # admin ssh", "deny in any - abuse # abuse in"}},
+		{ID: "minecraft", Name: "Minecraft Server", Builtin: true,
+			Description: "Minecraft Java port + RCON from admin group.",
+			Lines:       []string{"## Minecraft", "allow in tcp 25565 any # minecraft", "allow in tcp 25575 ADMINS # rcon", "deny in any - abuse # abuse in"}},
+		{ID: "mosh", Name: "Mosh Shell", Builtin: true,
+			Description: "Mosh UDP range 60000-61000 + SSH from admin group.",
+			Lines:       []string{"## Mosh", "allow in tcp 22 ADMINS # ssh", "allow in udp 60000-61000 ADMINS # mosh", "deny in any - abuse # abuse in"}},
+		{ID: "prometheus-stack", Name: "Prometheus + Grafana", Builtin: true,
+			Description: "Prometheus (9090) + Grafana (3000) from monitoring group only.",
+			Lines:       []string{"## Prometheus Stack", "allow in tcp 9090 MONITORING # prometheus", "allow in tcp 3000 MONITORING # grafana", "deny in any - abuse # abuse in"}},
 	}
 }
 
@@ -3238,6 +3521,10 @@ func main() {
 	api("/api/rules/draft/import", handleRulesImport)
 	api("/api/templates", handleTemplates)
 	api("/api/templates/delete", handleTemplateDelete)
+	api("/api/rule-stats", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, ruleStats())
+	})
+	api("/api/whitelist", handleWhitelist)
 	api("/api/draft/discard", handleDraftDiscard)
 	api("/api/commit/preview", handleCommitPreview)
 	api("/api/commit/status", handleCommitStatus)

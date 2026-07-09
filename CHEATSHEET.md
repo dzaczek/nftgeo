@@ -241,9 +241,19 @@ Alerts auto-dismiss when resolved.
 drop count (`/api/top-ips`, time-range filterable), backed by an
 in-memory stats store.
 
-**Templates:** the Templates drawer now ships 6 built-in presets
-(`mail-server`, `wireguard`, `ssh-lockdown`, plus the original 3) —
-import one to jump-start a common policy.
+**Templates:** the Templates drawer now ships 21 built-in presets
+(`nginx`, `kamailio`, `redis`, `postgres`, `mysql`, `gitlab`,
+`docker-registry`, `elasticsearch`, `grafana`, `dns-server`,
+`openvpn`, `minecraft`, `mosh`, `prometheus-stack`, plus the original
+`mail-server`, `wireguard`, `ssh-lockdown`, `safe-web`, `abuse-block`,
+`geo-drop`) — import one to jump-start a common policy.
+
+**Whitelist editor:** the Objects → Reference tab now has a **+ Add**
+button (IP/CIDR or hostname) and a **🗑** button per entry. Changes
+write to `/etc/nftgeo/config` and take effect on the next apply.
+
+**Rule stats:** `GET /api/rule-stats` returns a JSON breakdown of all
+rules by action and whitelist counts — useful for auditing your policy.
 
 ---
 
