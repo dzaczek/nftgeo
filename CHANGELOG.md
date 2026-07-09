@@ -8,6 +8,15 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.58.1] - 2026-07-09
+
+### Added
+- **Default policy shown per chain in the Policy view.** Each chain card now has
+  a footer stating the default policy for packets that match no rule — `✓ accept`
+  or `✗ drop` (input reflects `DEFAULT_INPUT`; output/forward are accept). Makes
+  it obvious that, in the sequential model, anything unmatched falls through to
+  this policy. `/api/baseline` now returns the policy alongside the counters.
+
 ## [1.58.0] - 2026-07-09
 
 Integrates PR #53 (cleaned up: dropped committed build artifacts, a stray

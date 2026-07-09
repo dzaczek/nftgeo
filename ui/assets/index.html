@@ -892,7 +892,18 @@ function renderPolicy(){
       if(r.kind!=='section')n++;
       html+=rowHTML(r,r.kind==='section'?'':n,ro,multi);
     }
-    html+=`</tbody></table></div></div>`;
+    html+=`</tbody></table></div>`;
+    // Footer: the chain's default policy — the verdict for a packet that matched
+    // no rule above (input follows DEFAULT_INPUT; output/forward are accept).
+    if(!isNat){
+      const pol=(BASELINE[ch]||{}).policy;
+      if(pol){
+        const drop=pol==='drop';
+        const tip=drop?'Default-deny: any inbound not matched above is dropped (DEFAULT_INPUT=drop).':'Anything not matched above is accepted — add a catch-all "deny … any" to close a port, or set DEFAULT_INPUT="drop".';
+        html+=`<div style="padding:5px 12px;font-size:11px;border-top:1px solid var(--line);display:flex;align-items:center;gap:6px" title="${tip}"><span class="muted">default policy for unmatched packets:</span> <b style="color:${drop?'var(--drop)':'var(--warnc)'}">${drop?'✗ drop':'✓ accept'}</b>${ch==='input'?' <span class="muted">(DEFAULT_INPUT)</span>':''}</div>`;
+      }
+    }
+    html+=`</div>`;
   }
   if(!html)html=`<div class="card" style="padding:20px;text-align:center"><span class="muted">No rules. Click + Add rule to create your first policy rule.</span></div>`;
   $('#polchains').innerHTML=html;
