@@ -83,6 +83,19 @@ allow in  tcp 22   europe on eth0      # SSH from EU only on the WAN interface
 allow in  tcp 22   any    on wg0       # ...and freely over a trusted VPN tunnel
 ```
 
+Rules match **top-to-bottom, first match wins** (after the fixed baseline:
+established, whitelist, throttle…). An `allow` on its own opens the port for the
+target but leaves it reachable by others via the chain policy — to close it,
+add a catch-all `deny` **below** the allow:
+
+```sh
+allow in tcp 22 pl                     # SSH from Poland
+deny  in tcp 22 any                    # ...closed to everyone else (order matters)
+```
+
+`validate` warns about a geo-`allow` with no catch-all deny. Upgrading an older
+config? `sudo nftgeo migrate-sequential` adds those denies for you.
+
 A pure client needs no rule — replies to its own connections are always allowed.
 See `examples/` for ready-to-copy per-service fragments.
 

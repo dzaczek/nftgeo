@@ -36,6 +36,14 @@ allow in tcp 22 pl
 deny  in tcp 22 any     # close the port to everyone else
 ```
 
+### Documentation
+
+- **Examples and docs rewritten for the sequential model (#44).** The
+  `examples/*.conf` fragments now show the `allow` … `deny … any` idiom (SSH,
+  mail, metrics, egress, gateway); README's "Rule evaluation order" and "The
+  model", the CHEATSHEET, and the man page describe first-match-wins and the
+  trailing-deny pattern instead of the old deny-by-default.
+
 ### Added
 
 - **`nftgeo migrate-sequential` (#43).** One-shot, idempotent migration for
