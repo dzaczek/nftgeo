@@ -14,6 +14,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
@@ -37,6 +38,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 //go:embed assets
@@ -920,12 +923,11 @@ func abuseLoadStatus() map[string]interface{} {
 	return map[string]interface{}{"active": true, "loaded": loaded, "total": total, "pct": pct}
 }
 
-// ---- in-memory stats store (M6C.4) -----------------------------------------
-// Keeps drop events in RAM for fast top-IP queries with time-range filtering.
-// Dumps to disk (JSON) only when new drops arrive, so stats survive restarts.
-// Capped at maxStatsEntries — oldest entries evicted first.
+// ---- SQLite stats store (M6C.4) --------------------------------------------
+// Keeps drop events in SQLite for fast top-IP queries with time-range filtering.
+// Up to ~500MB of logs for analytics.
 
-const maxStatsEntries = 500000 // ~40 MB of drop events; oldest evicted first
+const maxStatsEntries = 5000000 // ~500 MB of drop events; oldest evicted first
 
 type statsEntry struct {
 	Ts     int64  `json:"ts"` // unix timestamp
@@ -936,9 +938,9 @@ type statsEntry struct {
 }
 
 var (
-	statsMu   sync.Mutex
-	statsData []statsEntry
+	db        *sql.DB
 	statsFile = filepath.Join(stateDir, "ui-stats.json")
+	dbFile    = filepath.Join(stateDir, "ui-stats.db")
 	// High-water-mark of the newest drop ingested so far. ingestDropsLog polls
 	// the last hour every few minutes; without this it would re-ingest (and thus
 	// multiply-count) the same events on every tick. Written only by the single
@@ -946,102 +948,134 @@ var (
 	lastIngestTs int64
 )
 
-// recordStats appends new drops, keeping at most maxStatsEntries (newest wins).
-func recordStats(entries []statsEntry) {
-	if len(entries) == 0 {
+func initDB() {
+	os.MkdirAll(stateDir, 0755)
+	var err error
+	db, err = sql.Open("sqlite", dbFile)
+	if err != nil {
+		log.Printf("nftgeo-ui: initDB error: %v", err)
 		return
 	}
-	statsMu.Lock()
-	defer statsMu.Unlock()
-	statsData = append(statsData, entries...)
-	if n := len(statsData); n > maxStatsEntries {
-		// keep the newest maxStatsEntries in one slice op (copy so the evicted
-		// head's backing array can be freed instead of leaking behind the slice).
-		statsData = append([]statsEntry(nil), statsData[n-maxStatsEntries:]...)
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS drops (
+			ts INTEGER,
+			src TEXT,
+			cc TEXT,
+			port TEXT,
+			reason TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_ts ON drops(ts);
+		CREATE INDEX IF NOT EXISTS idx_src ON drops(src);
+	`)
+	if err != nil {
+		log.Printf("nftgeo-ui: initDB error creating table: %v", err)
+	}
+
+	// Read lastIngestTs from db
+	row := db.QueryRow("SELECT MAX(ts) FROM drops")
+	var maxTs sql.NullInt64
+	row.Scan(&maxTs)
+	if maxTs.Valid {
+		lastIngestTs = maxTs.Int64
 	}
 }
 
-// topIPs returns top source IPs by drop count within [from, to] unix timestamps.
+// recordStats appends new drops to SQLite, keeping at most maxStatsEntries (newest wins).
+func recordStats(entries []statsEntry) {
+	if len(entries) == 0 || db == nil {
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("recordStats error: %v", err)
+		return
+	}
+	stmt, err := tx.Prepare("INSERT INTO drops (ts, src, cc, port, reason) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	for _, e := range entries {
+		if _, err := stmt.Exec(e.Ts, e.Src, e.CC, e.Port, e.Reason); err != nil {
+			log.Printf("nftgeo-ui: recordStats insert error: %v", err)
+		}
+	}
+	stmt.Close()
+	if err := tx.Commit(); err != nil {
+		log.Printf("nftgeo-ui: recordStats commit error: %v", err)
+	}
+
+	// Prune older stats if we exceed maxStatsEntries
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM drops").Scan(&count)
+	if count > maxStatsEntries {
+		db.Exec("DELETE FROM drops WHERE rowid IN (SELECT rowid FROM drops ORDER BY ts ASC LIMIT ?)", count-maxStatsEntries)
+	}
+}
+
+// topIPs returns top source IPs by drop count within [from, to] unix timestamps from SQLite.
 func topIPs(from, to int64, limit int) []map[string]interface{} {
-	statsMu.Lock()
-	defer statsMu.Unlock()
+	if db == nil {
+		return nil
+	}
 	if limit <= 0 {
 		limit = 20
 	}
-	type cnt struct {
-		n    int
-		cc   string
-		last int64
+	query := "SELECT src, COUNT(*) as hits, MAX(cc), MAX(ts) FROM drops WHERE ts >= ?"
+	args := []interface{}{from}
+	if to > 0 {
+		query += " AND ts <= ?"
+		args = append(args, to)
 	}
-	m := map[string]*cnt{}
-	for _, e := range statsData {
-		if e.Ts < from || (to > 0 && e.Ts > to) {
-			continue
-		}
-		if c, ok := m[e.Src]; ok {
-			c.n++
-			if e.Ts > c.last {
-				c.last = e.Ts
-			}
-		} else {
-			m[e.Src] = &cnt{n: 1, cc: e.CC, last: e.Ts}
-		}
+	query += " GROUP BY src ORDER BY hits DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		log.Printf("topIPs error: %v", err)
+		return nil
 	}
-	type kv struct {
-		ip   string
-		n    int
-		cc   string
-		last int64
-	}
-	var all []kv
-	for ip, c := range m {
-		all = append(all, kv{ip, c.n, c.cc, c.last})
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].n > all[j].n })
-	if len(all) > limit {
-		all = all[:limit]
-	}
-	out := make([]map[string]interface{}, len(all))
-	for i, a := range all {
-		out[i] = map[string]interface{}{
-			"ip":   a.ip,
-			"hits": a.n,
-			"cc":   a.cc,
-			"last": a.last,
+	defer rows.Close()
+
+	var out []map[string]interface{}
+	for rows.Next() {
+		var src, cc string
+		var hits int
+		var last int64
+		if err := rows.Scan(&src, &hits, &cc, &last); err == nil {
+			out = append(out, map[string]interface{}{
+				"ip":   src,
+				"hits": hits,
+				"cc":   cc,
+				"last": last,
+			})
 		}
 	}
 	return out
 }
 
-// dumpStats writes the in-memory stats to disk.
 func dumpStats() {
-	statsMu.Lock()
-	defer statsMu.Unlock()
-	b, err := json.Marshal(statsData)
-	if err != nil {
-		return
-	}
-	os.WriteFile(statsFile, b, 0600)
+	// No-op for SQLite, handled automatically by commits
 }
 
-// loadStats reads persisted stats from disk on startup.
+// loadStats initializes the SQLite DB and migrates old JSON data if present.
 func loadStats() {
+	initDB()
+
+	// Migration from old JSON stats
 	b, err := os.ReadFile(statsFile)
 	if err != nil {
 		return
 	}
 	var entries []statsEntry
 	if json.Unmarshal(b, &entries) == nil {
-		statsMu.Lock()
-		statsData = entries
-		statsMu.Unlock()
-		// Resume the high-water-mark from the newest persisted drop, so a restart
-		// doesn't re-ingest (and double-count) the overlap window.
+		recordStats(entries)
 		for _, e := range entries {
 			if e.Ts > lastIngestTs {
 				lastIngestTs = e.Ts
 			}
 		}
+		os.Rename(statsFile, statsFile+".bak") // keep a backup
 	}
 }
 
