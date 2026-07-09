@@ -1264,18 +1264,29 @@ polBody.addEventListener('dragend',async e=>{
   await loadPolicy(); refreshCommitBar();
 });
 
-// Button-based reorder (↑ ↓ ⤒ ⤓): move a rule within its file, then persist the
-// new order the same way drag-and-drop does. Precise, especially at chain ends.
+// Button-based reorder (↑ ↓ ⤒ ⤓). The Policy view is grouped by chain, so we
+// reorder the rule among its VISIBLE same-chain neighbours (within the same
+// file — the backend stores one order per file), then translate that back into a
+// full file order (rules of other chains keep their slots) and persist it the
+// same way drag-and-drop does. That way the move matches what you see.
 async function moveRule(file,id,where){
-  const cur=(RULES||[]).filter(r=>r.file===file).map(r=>r.id);
-  const i=cur.indexOf(id); if(i<0)return;
-  const ids=cur.slice(); ids.splice(i,1);
-  if(where==='up')ids.splice(Math.max(0,i-1),0,id);
-  else if(where==='down')ids.splice(Math.min(ids.length,i+1),0,id);
-  else if(where==='top')ids.unshift(id);
-  else ids.push(id);
-  if(ids.length===cur.length&&ids.every((v,k)=>v===cur[k]))return; // already there
-  const res=await post('/api/rules/draft/reorder',{file,order:ids});
+  const fileRules=(RULES||[]).filter(r=>r.file===file);
+  const target=fileRules.find(r=>r.id===id); if(!target)return;
+  const ch=ruleChain(target);
+  const sameChain=fileRules.filter(r=>ruleChain(r)===ch);
+  const before=sameChain.map(r=>r.id);
+  const si=before.indexOf(id); if(si<0)return;
+  const seq=before.slice(); seq.splice(si,1);
+  if(where==='up')seq.splice(Math.max(0,si-1),0,id);
+  else if(where==='down')seq.splice(Math.min(seq.length,si+1),0,id);
+  else if(where==='top')seq.unshift(id);
+  else seq.push(id);
+  if(seq.every((v,k)=>v===before[k])){toast('Already at the '+(where==='up'||where==='top'?'top':'bottom')+' of this chain in this file.');return;}
+  // Rebuild the full file order: keep other-chain rules in place, drop the
+  // same-chain rules into their slots in the new sequence.
+  const inChain=new Set(before); let k=0;
+  const order=fileRules.map(r=>inChain.has(r.id)?seq[k++]:r.id);
+  const res=await post('/api/rules/draft/reorder',{file,order});
   if(res&&res.error){toast(res.error);loadPolicy();return;}
   window.HIGHLIGHT_RULE={file,id};
   setTimeout(()=>{window.HIGHLIGHT_RULE=null;renderPolicy();},2000);
