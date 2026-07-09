@@ -662,6 +662,8 @@ type PolicyRule struct {
 	File    string `json:"file"`
 	Hits    int64  `json:"hits"`
 	Matched bool   `json:"matched"`
+	Log     bool   `json:"log"`  // per-rule logging toggle
+	Color   string `json:"color"` // hex color for this rule's log prefix/badge
 }
 
 // ruleKind classifies a rules.conf line's fields into a policy-table row kind.
@@ -1040,6 +1042,36 @@ func ingestDropsLog() int {
 	return len(entries)
 }
 
+// ---- per-rule logging: color palette + assignment ----
+//
+// Each policy rule gets a stable color from a fixed palette so log entries
+// can be visually matched to the rule that produced them. The whitelist is
+// always green (index 0) and never changes.
+
+var ruleColors = []string{
+	"#38d996", // green (whitelist — always this)
+	"#3d8bfd", // blue
+	"#ff5568", // red
+	"#ffcf8a", // amber
+	"#c9a8f0", // purple
+	"#8fe0a0", // light green
+	"#f0bd84", // orange
+	"#7fd6e0", // cyan
+	"#e6a3d0", // pink
+	"#a8d4e6", // light blue
+}
+
+const whitelistColor = "#38d996" // green — always for whitelist
+
+// ruleColorFor assigns a color to a rule based on its sequential index in
+// the policy. Index 0 is green (reserved for whitelist), so rules start at 1.
+func ruleColorFor(idx int) string {
+	if idx < 0 {
+		idx = 0
+	}
+	return ruleColors[idx%len(ruleColors)]
+}
+
 func ruleFiles() []string {
 	files := []string{rulesFile}
 	if ents, err := os.ReadDir(rulesDir); err == nil {
@@ -1116,8 +1148,15 @@ func policy() []PolicyRule {
 			default: // throttle & unknown: not shown in the read-only policy list
 				continue
 			}
+			// Detect trailing "log" keyword for per-rule logging.
+			for _, f := range fields {
+				if f == "log" {
+					pr.Log = true
+				}
+			}
 			n++
 			pr.Num = n
+			pr.Color = ruleColorFor(n)
 			pr.Comment = comment
 			pr.File = base
 			out = append(out, pr)
@@ -2334,6 +2373,8 @@ type draftRule struct {
 	Trivia   []string `json:"-"`
 	Hits     int64    `json:"hits"`
 	Matched  bool     `json:"matched"`
+	Log      bool     `json:"log"`   // per-rule logging toggle
+	Color    string   `json:"color"`  // hex color assigned to this rule
 }
 
 var sectionRe = regexp.MustCompile(`^#{2,}\s*(.*?)\s*#*$`)
@@ -2371,6 +2412,13 @@ func ruleFields(s string) (fields []string, body, comment, kind string, ok bool)
 
 func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, trivia []string) *draftRule {
 	r := &draftRule{ID: id, Kind: kind, Disabled: disabled, Body: body, Name: comment, Trivia: trivia}
+	// Detect "log" keyword anywhere in the fields (per-rule logging toggle).
+	for _, tok := range f {
+		if tok == "log" {
+			r.Log = true
+		}
+	}
+	r.Color = ruleColorFor(id + 1)
 	switch kind {
 	case "throttle":
 		// throttle <dir> <proto> <port> <rate> [ban <dur>] [on <iface>]
@@ -2494,6 +2542,11 @@ func serializeDraftRules(rules []*draftRule, tail []string) string {
 			b.WriteString("# ")
 		}
 		b.WriteString(r.Body)
+		// Emit "log" keyword if per-rule logging is toggled on and not
+		// already present in the verbatim body.
+		if r.Log && !strings.Contains(r.Body, " log") {
+			b.WriteString(" log")
+		}
 		if r.Name != "" {
 			b.WriteString(" # " + r.Name)
 		}
@@ -2625,6 +2678,99 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"saved": true, "disabled": found.Disabled})
+}
+
+// handleRulesToggleLog toggles per-rule logging on/off for a draft rule.
+func handleRulesToggleLog(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		File string `json:"file"`
+		ID   int    `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	rf := reqRuleFile(w, req.File)
+	if rf == nil {
+		return
+	}
+	rules, tail := parseDraftRules(draftTextFor(*rf))
+	var found *draftRule
+	for _, rr := range rules {
+		if rr.ID == req.ID {
+			found = rr
+		}
+	}
+	if found == nil || found.Kind == "section" {
+		http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
+		return
+	}
+	found.Log = !found.Log
+	if err := writeDraftFor(*rf, rules, tail); err != nil {
+		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"saved": true, "log": found.Log, "color": found.Color})
+}
+
+// handleRuleLogs returns recent kernel log entries for a specific rule,
+// filtered by the rule's log prefix (color). Whitelist logs are always green.
+func handleRuleLogs(w http.ResponseWriter, r *http.Request) {
+	color := r.URL.Query().Get("color")
+	since := r.URL.Query().Get("since")
+	if since == "" {
+		since = "-1h"
+	}
+	// Build the journalctl grep pattern. Per-rule log prefix is
+	// "nftgeo-log-<color>" — e.g. "nftgeo-log-#3d8bfd".
+	pattern := "nftgeo-log"
+	if color != "" {
+		pattern = "nftgeo-log-" + color
+	}
+	out, err := run("journalctl", "-k", "-o", "json", "--no-pager", "--since", since)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"entries": []map[string]interface{}{}, "enabled": logDropsOn()})
+		return
+	}
+	type logEntry struct {
+		Time   string `json:"time"`
+		Msg    string `json:"msg"`
+		Src    string `json:"src"`
+		Dst    string `json:"dst"`
+		Port   string `json:"port"`
+		Proto  string `json:"proto"`
+	}
+	var entries []logEntry
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, pattern) {
+			continue
+		}
+		var rec struct {
+			Msg string `json:"MESSAGE"`
+			TS  string `json:"__REALTIME_TIMESTAMP"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || !strings.Contains(rec.Msg, pattern) {
+			continue
+		}
+		f := map[string]string{}
+		for _, m := range reKV.FindAllStringSubmatch(rec.Msg, -1) {
+			f[m[1]] = m[2]
+		}
+		e := logEntry{Src: f["SRC"], Dst: f["DST"], Port: f["DPT"], Proto: f["PROTO"], Msg: rec.Msg}
+		if us, err2 := strconv.ParseInt(rec.TS, 10, 64); err2 == nil {
+			e.Time = time.UnixMicro(us).UTC().Format(time.RFC3339)
+		}
+		entries = append(entries, e)
+	}
+	if entries == nil {
+		entries = []logEntry{}
+	}
+	// newest first, cap at 200
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Time > entries[j].Time })
+	if len(entries) > 200 {
+		entries = entries[:200]
+	}
+	writeJSON(w, map[string]interface{}{"entries": entries, "enabled": logDropsOn(), "color": color})
 }
 
 // handleRulesSection adds a new section header (no id) or renames one (with id).
@@ -3175,6 +3321,7 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		Src, Dst, Geo, NatType, Lan             string
 		Rate, Ban                               string
 		Name                                    string
+		Log                                     bool
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
@@ -3215,9 +3362,9 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
 			return
 		}
-		found.Body, found.Name = body, name
+		found.Body, found.Name, found.Log = body, name, req.Log
 	} else {
-		rules = append(rules, &draftRule{ID: -1, Body: body, Name: name})
+		rules = append(rules, &draftRule{ID: -1, Body: body, Name: name, Log: req.Log})
 	}
 	if err := writeDraftFor(*rf, rules, tail); err != nil {
 		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
@@ -3572,6 +3719,8 @@ func main() {
 	api("/api/rules/draft", handleRulesDraft)
 	api("/api/rules/draft/reorder", handleRulesReorder)
 	api("/api/rules/draft/toggle", handleRulesToggle)
+	api("/api/rules/draft/toggle-log", handleRulesToggleLog)
+	api("/api/rule-logs", handleRuleLogs)
 	api("/api/rules/draft/save", handleRulesSave)
 	api("/api/rules/draft/delete", handleRulesDelete)
 	api("/api/rules/draft/section", handleRulesSection)

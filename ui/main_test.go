@@ -569,3 +569,90 @@ func TestCurrentWhitelistFilePrecedence(t *testing.T) {
 		t.Errorf("empty file: got %v, want the 2 config entries", got)
 	}
 }
+
+// ---- per-rule logging tests ----
+
+func TestParseDraftRulesLogKeyword(t *testing.T) {
+	text := "allow in tcp 22 europe log\n" +
+		"allow in tcp 443 any\n" +
+		"deny in any - abuse log\n"
+	rules, _ := parseDraftRules(text)
+	if len(rules) != 3 {
+		t.Fatalf("expected 3 rules, got %d", len(rules))
+	}
+	if !rules[0].Log {
+		t.Error("rule 0 (allow in tcp 22 europe log): Log should be true")
+	}
+	if rules[1].Log {
+		t.Error("rule 1 (allow in tcp 443 any): Log should be false")
+	}
+	if !rules[2].Log {
+		t.Error("rule 2 (deny in any - abuse log): Log should be true")
+	}
+}
+
+func TestSerializeDraftRulesLogKeyword(t *testing.T) {
+	// A rule with Log=true should serialize with " log" appended.
+	rules := []*draftRule{
+		{ID: 0, Kind: "filter", Action: "allow", Dir: "in", Proto: "tcp", Port: "22", Target: "europe",
+			Body: "allow in tcp 22 europe", Log: true},
+		{ID: 1, Kind: "filter", Action: "deny", Dir: "in", Proto: "any", Port: "-", Target: "abuse",
+			Body: "deny in any - abuse", Log: false},
+	}
+	out := serializeDraftRules(rules, nil)
+	if !strings.Contains(out, "allow in tcp 22 europe log") {
+		t.Errorf("serialized output should contain 'log' keyword: %q", out)
+	}
+	if strings.Contains(out, "deny in any - abuse log") {
+		t.Errorf("rule with Log=false should NOT have 'log' keyword: %q", out)
+	}
+}
+
+func TestRuleColorFor(t *testing.T) {
+	// Index 0 = green (whitelist color)
+	if ruleColorFor(0) != "#38d996" {
+		t.Errorf("index 0 should be green (whitelist), got %s", ruleColorFor(0))
+	}
+	// Index 1 = blue
+	if ruleColorFor(1) != "#3d8bfd" {
+		t.Errorf("index 1 should be blue, got %s", ruleColorFor(1))
+	}
+	// Wraps around: index 10 should equal index 0
+	if ruleColorFor(10) != ruleColorFor(0) {
+		t.Errorf("index 10 should wrap to index 0 color")
+	}
+	// Negative index should not panic
+	_ = ruleColorFor(-1)
+}
+
+func TestPolicyParsesLogKeyword(t *testing.T) {
+	// Write a temp rules.conf and test that policy() picks up the log flag.
+	dir := t.TempDir()
+	rf := filepath.Join(dir, "rules.conf")
+	os.WriteFile(rf, []byte("allow in tcp 22 europe log\nallow in tcp 443 any\n"), 0644)
+
+	// Temporarily override rulesFile
+	oldRulesFile := rulesFile
+	rulesFile = rf
+	defer func() { rulesFile = oldRulesFile }()
+
+	prs := policy()
+	if len(prs) != 2 {
+		t.Fatalf("expected 2 policy rules, got %d", len(prs))
+	}
+	if !prs[0].Log {
+		t.Error("rule 0 should have Log=true")
+	}
+	if prs[1].Log {
+		t.Error("rule 1 should have Log=false")
+	}
+	if prs[0].Color == "" {
+		t.Error("rule 0 should have a color assigned")
+	}
+	if prs[1].Color == "" {
+		t.Error("rule 1 should have a color assigned")
+	}
+	if prs[0].Color == prs[1].Color {
+		t.Error("rules 0 and 1 should have different colors")
+	}
+}
