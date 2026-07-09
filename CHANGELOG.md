@@ -8,6 +8,23 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.63.0] - 2026-07-09
+
+### Changed
+- **`.deb` / `.rpm` packages are now the primary install path**, and all binaries
+  live in `/usr/sbin` (was `/usr/local/sbin`). The source systemd units, `bin/nftgeo`
+  lookup, `nftgeo-ui` defaults and `install.sh` all use `/usr/sbin` so the repo and
+  the packages agree; `bin/nftgeo` still falls back to `/usr/local/sbin` for older
+  installs. Build with `make package` (needs `nfpm`). `uninstall.sh` also removes a
+  leftover `/usr/local/sbin` layout.
+
+### Fixed
+- **`nftgeo-ui` under `ProtectSystem=full` could not commit.** The unit made `/etc`
+  read-only, so a dashboard Commit (which shells out to `nftgeo apply`, inheriting
+  the sandbox) failed writing rules/config and the generated ruleset. Added
+  `ReadWritePaths=/etc/nftgeo /etc/nftables.d` (the two dirs nftgeo writes) and
+  corrected the misleading "/etc stays writable" comment.
+
 ## [1.62.2] - 2026-07-09
 
 ### Fixed

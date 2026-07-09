@@ -9,9 +9,9 @@ Type=oneshot
 # (the nohup'd deadman process dies on reboot, but the sentinel file persists
 # and would block future applies until manually removed).
 ExecStartPre=-/bin/rm -f /var/lib/nftgeo/.pending-confirm
-ExecStart=/usr/local/sbin/nftgeo-update
+ExecStart=/usr/sbin/nftgeo-update
 # Restore dynamic "nftgeo block" entries (e.g. after a reboot); non-fatal.
-ExecStartPost=-/usr/local/sbin/nftgeo restore-dyn
+ExecStartPost=-/usr/sbin/nftgeo restore-dyn
 
 [Install]
 WantedBy=multi-user.target

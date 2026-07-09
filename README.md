@@ -384,10 +384,10 @@ sudo ./install.sh
 ```
 
 The installer installs `curl`/`nftables`/`ca-certificates`, copies the engine and
-CLI to `/usr/local/sbin`, creates `/etc/nftgeo/{config,rules.conf}` plus empty
+CLI to `/usr/sbin`, creates `/etc/nftgeo/{config,rules.conf}` plus empty
 `rules.d/` and `groups.d/`, installs `nftgeo.service` + `nftgeo.timer`, and enables
 the service at boot and the twice-daily timer. Build the dashboard binary with
-`make build` (or `go build -o /usr/local/sbin/nftgeo-ui ./ui`).
+`make build` (or `go build -o /usr/sbin/nftgeo-ui ./ui`).
 
 ### Web dashboard (optional)
 
@@ -402,7 +402,7 @@ sudo systemctl enable --now nftgeo-ui.service
 
 # If installed from source: build and install
 make build
-sudo install -m 0755 dist/nftgeo-ui-linux-amd64 /usr/local/sbin/nftgeo-ui
+sudo install -m 0755 dist/nftgeo-ui-linux-amd64 /usr/sbin/nftgeo-ui
 sudo install -m 0644 systemd/nftgeo-ui.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now nftgeo-ui
@@ -639,7 +639,7 @@ list is overridable via `ICMPV6_ESSENTIAL`.
 ## Manual run
 
 ```sh
-sudo /usr/local/sbin/nftgeo-update
+sudo /usr/sbin/nftgeo-update
 ```
 
 Runs are serialized by a lock (`/var/lib/nftgeo/.lock`), so a manual run and the
@@ -868,7 +868,7 @@ firewall's source of truth stays in `/etc/nftgeo` and the CLI.
 Build the single static binary (needs Go; no runtime dependencies) and run it:
 
 ```sh
-go build -o /usr/local/sbin/nftgeo-ui ./ui
+go build -o /usr/sbin/nftgeo-ui ./ui
 install -m 0644 systemd/nftgeo-ui.service /etc/systemd/system/
 systemctl enable --now nftgeo-ui.service      # serves http://127.0.0.1:8787
 ```

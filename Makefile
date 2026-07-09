@@ -27,7 +27,8 @@ lint:
 	shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh
 	@test -z "$$(gofmt -l ui/)" || { echo "gofmt needed:"; gofmt -l ui/; exit 1; }
 
-## units: package systemd units, rewritten to the /usr/sbin install prefix
+## units: stage systemd units for packaging (source already uses /usr/sbin; the
+## sed keeps any stray /usr/local/sbin reference correct for the package)
 units:
 	@mkdir -p $(DIST)/units
 	@for u in nftgeo.service nftgeo.timer nftgeo-ui.service; do \
