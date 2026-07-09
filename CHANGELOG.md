@@ -8,6 +8,30 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.56.0] - 2026-07-09
+
+Integrates PR #40 (chain-grouped Policy view) after fixing its correctness bugs.
+
+### Added
+- **Chain-grouped Policy view.** Rules are now grouped into per-chain cards
+  (INPUT / FORWARD / OUTPUT / NAT), each with a flow bar that shows the **actual
+  evaluation order** the engine emits — `invalid ✗ → ct est ✓ → @wl ✓ → deny →
+  allow → deny-by-default → policy` (with live baseline counters) — making it
+  clear that order is fixed by the engine, not by row order. A whitelist summary
+  card sits at the top of the view with a bulk editor that writes to the
+  whitelist draft (deployed via Commit under the deadman).
+
+### Fixed
+- Corrected the PR's flow diagram, which showed `established → whitelist →
+  invalid` — the real order is `invalid → established → whitelist`, with your
+  `deny` rules before `allow` and a per-port deny-by-default.
+- Renamed the drawer's save function to avoid a collision with the existing
+  `saveWhitelistDraft` (the whitelist editor from 1.55.0), which silently saved
+  the wrong data.
+- NAT rules now render in their own NAT group instead of being lumped into
+  FORWARD, and the flow uses the real theme CSS variables (the PR referenced
+  several undefined ones, leaving chips unstyled).
+
 ## [1.55.0] - 2026-07-09
 
 Integrates PR #39 and closes the two follow-ups from the PR #35 review.
