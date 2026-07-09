@@ -454,6 +454,7 @@ async function rawLoad(){const f=$('#raw-file')?$('#raw-file').value:firstFile()
 async function rawSave(){const f=$('#raw-file')?$('#raw-file').value:firstFile();
   const r=await fetch('/api/draft?file='+encodeURIComponent(f),{method:'PUT',headers:{'Content-Type':'text/plain'},body:$('#rawbox').value});
   if(r.status===401||r.status===403){showLock('Read-only session — cannot edit.');return;}
+  if(!r.ok){try{const d=await r.json();if(d.error)toast('Rejected: '+d.error);else toast('Error: '+r.status);}catch(e){toast('Error: '+r.status);}return;}
   closeModal(); await loadPolicy(); refreshCommitBar(); toast('Raw draft saved.');}
 async function discardDraft(){if(!confirm('Discard all draft changes? The live firewall is unaffected.'))return;
   await post('/api/draft/discard');await loadPolicy();refreshCommitBar();toast('Draft discarded.');}
