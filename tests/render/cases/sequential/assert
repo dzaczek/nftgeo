@@ -1,0 +1,4 @@
+# Sequential model: the geo allow and an explicit trailing deny on the same
+# port both render (evaluated in file order, first match wins).
++ tcp dport 22 ip saddr @g_pl4 counter accept
++ tcp dport 22 counter drop comment

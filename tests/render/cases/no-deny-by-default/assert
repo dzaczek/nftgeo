@@ -1,0 +1,4 @@
+# No automatic deny-by-default: a lone geo allow opens the port for the geo and
+# leaves everything else to the chain policy — there is no synthetic drop rule.
++ ip saddr @g_pl4 counter accept
+- dport 22 counter drop
