@@ -1587,6 +1587,21 @@ if [ "$DEFAULT_INPUT" = drop ] &&
 	echo "warning: DEFAULT_INPUT=drop but no WHITELIST and no inbound 'allow in' rule; new connections (incl. SSH) will be dropped. Add an allow/whitelist and deploy behind the deadman." >&2
 fi
 
+# Sequential model: a geo-restricted "allow in" no longer auto-closes its port
+# (deny-by-default was removed). With DEFAULT_INPUT=accept, such a port is open
+# to every other source unless a catch-all "deny in <proto> <port> any" follows.
+# Warn per port so it is not left open by accident.
+if [ "$DEFAULT_INPUT" != drop ]; then
+	awk '
+		$2=="input" && $1=="allow" && $6!="any" { a[$4" "$5]=1 }
+		$2=="input" && $1=="deny"  && $6=="any" { d[$4" "$5]=1 }
+		END { for (k in a) if (!(k in d)) print k }
+	' "$RULES_NORM" | while read -r _wp _wpt; do
+		[ -n "$_wp" ] || continue
+		echo "warning: '${_wp} ${_wpt}' has a geo-restricted 'allow in' but no catch-all 'deny in ${_wp} ${_wpt} any'; with DEFAULT_INPUT=accept the port stays open to all other sources. Add the deny, or set DEFAULT_INPUT=\"drop\"." >&2
+	done
+fi
+
 # NAT / forwarding needs IP forwarding enabled; warn (don't manage the sysctl).
 if { [ -s "$NAT_NORM" ] || [ -s "$ZONE_NORM" ] || awk '$2=="forward"{f=1} END{exit !f}' "$RULES_NORM" 2>/dev/null; } &&
 	[ -r /proc/sys/net/ipv4/ip_forward ] && [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = 0 ]; then

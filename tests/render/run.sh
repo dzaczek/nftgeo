@@ -4,6 +4,7 @@
 #   + <substr>   generated ruleset MUST contain <substr>
 #   - <substr>   generated ruleset MUST NOT contain <substr>
 #   ! <substr>   render is expected to FAIL, with <substr> in stderr
+#   ~ <substr>   render succeeds but <substr> MUST appear in stderr (a warning)
 # A case with any '!' line expects failure; otherwise it must render cleanly.
 #
 # Runs offline (NFTGEO_SKIP_NFT_CHECK=1), so no nft/kernel needed. For a real
@@ -64,6 +65,7 @@ for case_dir in "$here"/cases/*/; do
 				'+') grep -qF -- "$sub" "$out" || { ok=0; msg="missing: $sub"; break; } ;;
 				'-') grep -qF -- "$sub" "$out" && { ok=0; msg="unexpected: $sub"; break; } || true ;;
 				'!') grep -qF -- "$sub" "$err" || { ok=0; msg="error lacked: $sub (got: $(head -1 "$err"))"; break; } ;;
+				'~') grep -qF -- "$sub" "$err" || { ok=0; msg="stderr lacked warning: $sub"; break; } ;;
 				*) : ;;
 			esac
 		done < "$case_dir/assert"

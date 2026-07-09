@@ -2,3 +2,5 @@
 # leaves everything else to the chain policy — there is no synthetic drop rule.
 + ip saddr @g_pl4 counter accept
 - dport 22 counter drop
+# ...and validate warns that the port is left open to everyone else (#42).
+~ open to all other sources
