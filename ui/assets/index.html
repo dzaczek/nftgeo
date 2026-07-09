@@ -857,11 +857,10 @@ function renderPolicy(){
       <span class="muted" style="font-size:11px">${esc(desc)}</span>
       <span class="muted" style="font-size:11px;margin-left:auto">${rules.filter(r=>r.kind!=='section').length} rule${rules.filter(r=>r.kind!=='section').length!==1?'s':''}</span>
     </div>`;
-    // Flow bar: the FIXED evaluation order the engine emits (nftables matches
-    // top-down, first match wins). Baseline chips carry live counters; the
-    // rule-slot chips show where your rules run — deny before allow, then a
-    // per-port deny-by-default, then the chain policy. Order matches the engine
-    // (invalid drop → established → whitelist → … ), not the row order below.
+    // Flow bar: a fixed baseline runs first (with live counters), then YOUR
+    // rules are evaluated in the order shown in the table below — top-to-bottom,
+    // first match wins — then the chain policy. Order in the table IS the
+    // evaluation order (unlike before, when deny always preceded allow).
     if(!isNat){
       const bc=BASELINE[ch]||{};
       const step=(t,bg,fg,tip)=>`<span class="chip" style="font-size:11px;background:${bg};color:${fg}" title="${tip}">${t}</span>`;
@@ -869,12 +868,11 @@ function renderPolicy(){
       if(bc.invalid)parts.push(step(`invalid ✗ ${bc.invalid.toLocaleString()}`,'var(--drop)','#fff','invalid conntrack state — dropped first'));
       if('established' in bc)parts.push(step(`ct est ✓ ${(bc.established||0).toLocaleString()}`,'var(--card)','var(--mut)','replies to your own connections are accepted here'));
       if('whitelist' in bc)parts.push(step(`@wl ✓ ${(bc.whitelist||0).toLocaleString()}`,'var(--acc)','#fff','whitelisted sources — always allowed, before your rules'));
-      parts.push(step('deny','var(--card)','var(--mut)','your explicit deny rules (incl. abuse) run before allows'));
-      parts.push(step('allow','var(--card)','var(--mut)','your explicit allow rules'));
-      parts.push(step('deny-by-default','var(--card)','var(--mut)','a port with any allow rule is closed to all other sources'));
-      parts.push(step('policy','var(--card)','var(--mut)','the chain default policy (accept, or drop if DEFAULT_INPUT=drop)'));
-      html+=`<div style="padding:4px 12px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:11px;border-bottom:1px solid var(--line);background:var(--bg)" title="Fixed evaluation order — independent of the row order in the table below.">
+      parts.push(step('your rules ↓','var(--card)','var(--mut)','your allow/deny rules, evaluated top-to-bottom in the order below — first match wins'));
+      parts.push(step('policy','var(--card)','var(--mut)','the chain default policy for anything unmatched (accept, or drop if DEFAULT_INPUT=drop)'));
+      html+=`<div style="padding:4px 12px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:11px;border-bottom:1px solid var(--line);background:var(--bg)" title="A fixed baseline runs first; then your rules run in the order shown below (first match wins).">
         <span class="muted">order:</span> ${parts.join(' <span class="muted">→</span> ')}
+        <span class="muted" style="margin-left:auto">row order = match order · drag to reorder</span>
       </div>`;
     }
     // Rules table
