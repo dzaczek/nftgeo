@@ -44,8 +44,9 @@ allowed, and the tool builds and maintains the `nftables` rules for you:
 
 ## Rule evaluation order
 
-Every managed chain evaluates in this fixed order, regardless of the order
-rules appear in your files:
+A fixed baseline runs first; then **your `allow`/`deny` rules are evaluated in
+the order they appear in your files, first match wins** — like a classic
+firewall:
 
 ```
  ┌──────────────────────────────────────────────────────────┐
@@ -55,17 +56,21 @@ rules appear in your files:
  │   3. ct state established,related ← replies to your conns │
  │   4. @whitelist         → accept  ← always-allow IPs      │
  │   5. throttle / synproxy          ← rate-limit / SYN guard│
- │   6. deny rules (incl. abuse)     ← explicit blocks       │
- │   7. allow rules                  ← explicit opens        │
- │   8. deny-by-default              ← a port with any allow │
- │                                     rule is closed to all │
- │                                     other sources         │
+ │   6. your allow/deny rules        ← in FILE ORDER,        │
+ │                                     first match wins      │
+ │   7. chain policy (accept/drop)   ← DEFAULT_INPUT (input) │
  └──────────────────────────────────────────────────────────┘
 ```
 
-Because the whitelist (step 4) and established/related (step 3) run before your
-`allow` rules (step 7), a whitelisted or already-connected source is accepted
-there — so that `allow` rule's own hit counter can legitimately stay at 0.
+Steps 1–5 are the fixed baseline and do not depend on file order. Because the
+whitelist (step 4) and established/related (step 3) run before your rules
+(step 6), a whitelisted or already-connected source is accepted there — so an
+`allow` rule's own hit counter can legitimately stay at 0.
+
+There is **no automatic deny-by-default**: a port with an `allow` but no
+following catch-all `deny ... any` stays reachable via the chain policy
+(step 7), which is `accept` unless you set `DEFAULT_INPUT="drop"`. To close a
+port to everyone except a target, `allow` the target and then `deny ... any`.
 
 ## The model
 
@@ -73,41 +78,36 @@ You write rules like sentences in `/etc/nftgeo/rules.conf`:
 
 ```text
 # action  dir      proto  port   target
-allow      in       tcp    22     europe
-allow      in       tcp    22     203.0.113.5
-allow      in       icmp   -      any
-deny       in       tcp    22     ru
-deny       in       any    -      abuse
-allow      in       all    5060   de
-allow      out      udp    53     any
-allow      fwd-in   esp    -      europe
-deny       fwd-in   any    -      abuse
+deny       in       tcp    22     ru          # block a country first...
+allow      in       tcp    22     europe      # ...then allow a region
+allow      in       tcp    22     203.0.113.5 # ...and one admin IP
+deny       in       tcp    22     any         # ...close SSH to everyone else
+deny       in       any    -      abuse       # drop blocklisted IPs, every port
+allow      in       icmp   -      any         # ping (no port to close)
+allow      out      udp    53     any         # outbound DNS
 ```
 
-Two simple guarantees:
+The model in one line: **top-to-bottom, first match wins.**
 
-- A port that appears in any `allow` rule (for that direction) is **closed by
-  default**: only the listed geos get through, everyone else is dropped.
-- A port/direction you never mention is **left untouched**.
-
-> **The `any` protocol is the exception to "left untouched".** An
-> `allow <dir> any - <target>` rule matches *every* protocol and port in that
-> direction, so its deny-by-default closes the whole direction: everything that
-> is not established, not whitelisted, and not from `<target>` is dropped -
-> including ports you never named. Use `any` in an `allow` only when you mean
-> "default-deny this entire direction except `<target>`"; use per-port rules
-> otherwise. (In a `deny` rule, `any` just scopes the drop to every port and is
-> not affected by this.)
+- Rules are evaluated in the order you write them. To close a port to everyone
+  except a target, `allow` the target, then add a catch-all `deny ... any`
+  below it. A port you never mention is left at the chain policy (`accept` by
+  default; set `DEFAULT_INPUT="drop"` for a default-deny posture).
+- `validate` warns when a geo-restricted `allow in` has no catch-all `deny`, so
+  you don't leave a port open by accident.
+- Upgrading from a pre-1.57 config? Run `nftgeo migrate-sequential` — it adds
+  the catch-all denies that the old automatic deny-by-default used to imply.
 
 On top of every managed port, the whitelist always wins. The AbuseIPDB
 blacklist is opt-in: it is dropped only where you write a `deny ... abuse`
 rule, so you choose its exact scope (see below).
 
-> **Avoid locking yourself out.** The moment you add an `allow in tcp 22 ...`
-> rule, port 22 is closed to every source outside that target - including the
-> machine you are connected from. Put your own admin IP in `WHITELIST` (in
-> `config`) *before* you add such a rule; the whitelist is evaluated first and
-> bypasses both the geo deny-by-default and the AbuseIPDB blacklist.
+> **Avoid locking yourself out.** A catch-all `deny in tcp 22 any` closes port
+> 22 to every source not allowed above it - including the machine you are
+> connected from. Put your own admin IP in `WHITELIST` (in `config`) *before*
+> you deploy such a rule; the whitelist is evaluated first and bypasses your
+> rules and the AbuseIPDB blacklist. Deploy behind the deadman
+> (`nftgeo apply --confirm`).
 
 ### Fields
 
@@ -408,11 +408,12 @@ filename order - use numeric prefixes (`10-ssh.conf`, `20-web.conf`,
 sourced after `config`, in sorted order, so a later file can override a variable
 set by an earlier one (or by `config`).
 
-On file priority: within a chain the engine always evaluates in a fixed order -
-`whitelist -> deny -> allow -> deny-by-default` - regardless of which file a rule
-came from (`deny ... abuse` rules are part of the `deny` step). So `deny` always
-beats `allow`, and two `allow` rules never conflict; the file order only affects
-how the rules read in `nft list`, not the filtering decision.
+On order: after the fixed baseline (`lo`, `ct invalid`, established, whitelist,
+throttle/synproxy), your `allow`/`deny` rules are emitted **in file order**
+(`rules.conf` first, then `rules.d/*.conf` by sorted filename), and nftables
+takes the **first match**. So order matters: a `deny` above an `allow` for the
+same traffic wins, and vice-versa. Put specific rules before broader ones, and a
+catch-all `deny ... any` last to close a port.
 
 After editing any file, apply the changes:
 
@@ -705,7 +706,7 @@ chain input {
 
     tcp dport 22 ip saddr @g_europe4 counter accept        # geo allow (source)
     meta l4proto icmp counter accept                       # icmp "any"
-    tcp dport 22 counter drop                              # deny-by-default
+    tcp dport 22 counter drop                              # deny in tcp 22 any (catch-all)
 }
 
 chain forward {
@@ -718,14 +719,13 @@ chain forward {
     ip saddr @abuse4 counter drop                          # deny fwd-in any - abuse
 
     meta l4proto esp ip saddr @g_europe4 counter accept    # geo allow (source)
-    meta l4proto esp counter drop                          # deny-by-default
+    meta l4proto esp counter drop                          # deny fwd-in esp - any (catch-all)
 }
 ```
 
-The `allow in all 5060 de` and `allow out udp 53 any` rules add the rest (a udp
-output chain and tcp+udp entries for 5060); they are left out above for brevity.
-Note the per-rule `counter` and that deny-by-default emits one rule per protocol
-and port (so an overlapping single port and range never collide).
+Rules appear in the order you wrote them, and nftables takes the first match.
+Note the per-rule `counter`, and that a `deny ... any` catch-all emits one rule
+per protocol and port (so an overlapping single port and range never collide).
 
 Only chains for the directions you actually use are emitted. The table is
 replaced atomically: the generated file recreates the table in a single `nft -f`

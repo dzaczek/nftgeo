@@ -136,12 +136,21 @@ label, the word
 only) the AbuseIPDB blacklist keyword
 .BR abuse .
 .PP
-A port named by any
+Rules are evaluated top-to-bottom in file order, first match wins (after a fixed
+baseline: loopback, invalid-state drop, established/related, whitelist, throttle,
+synproxy). There is no automatic deny-by-default: to close a port to everyone
+except a target,
 .B allow
-rule becomes closed by default for that direction: only listed targets pass.
-.B deny
-is evaluated before
-.BR allow .
+the target and then add a catch-all
+.B "deny <dir> <proto> <port> any"
+below it (or set
+.BR DEFAULT_INPUT=drop ).
+.B validate
+warns about a geo-restricted
+.B allow
+left open this way;
+.B "nftgeo migrate-sequential"
+adds the catch-all denies when upgrading an older config.
 Replies to your own connections are always accepted.
 .SS Reactive throttle
 .nf
