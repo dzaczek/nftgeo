@@ -36,6 +36,15 @@ allow in tcp 22 pl
 deny  in tcp 22 any     # close the port to everyone else
 ```
 
+### Added
+
+- **Open-port warning (#42).** `validate` (and every render) now warns when a
+  port has a geo-restricted `allow in` but no catch-all `deny ... any` and
+  `DEFAULT_INPUT` is `accept` — i.e. the port is left open to all other sources.
+  The message names the port and the fix. `config.example` documents
+  `DEFAULT_INPUT="drop"` as the recommended posture when you geo-fence inbound
+  ports. New `~` assertion type in the render harness (stderr must contain).
+
 ## [1.56.0] - 2026-07-09
 
 Integrates PR #40 (chain-grouped Policy view) after fixing its correctness bugs.
