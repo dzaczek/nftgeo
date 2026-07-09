@@ -386,7 +386,9 @@
       </div>
       <div class="grid g2" style="margin-top:14px">
         <div class="card"><h3>nftables sets (live sizes)</h3><div id="o-sets"></div></div>
-        <div class="card"><h3>Abuse sources <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— what fills the abuse blocklist</span></h3><div id="o-feeds"></div></div>
+        <div class="card"><h3>Abuse sources <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— what fills the abuse blocklist</span></h3>
+<div id="o-abuseipdb-status" style="margin-bottom:12px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg2)"></div>
+<div id="o-feeds"></div></div>
       </div>
       <div class="card" style="margin-top:14px">
         <div class="filters" style="justify-content:space-between">
@@ -548,7 +550,22 @@ function renderHealth(h){h=h||{};
   $('#health').innerHTML=`<div class="row"><span class="muted">Next scheduled run</span><span>${esc(h.nextRun||'—')}</span></div>
     <div class="row"><span class="muted">Established (pkts)</span><span>${(h.established||0).toLocaleString()}</span></div>
     <div class="row"><span class="muted">Abuse feeds</span><span>${feeds}</span></div>
-    <div class="muted mono" style="font-size:11px;margin-top:8px">${esc(h.lastRun||'no run logged')}</div>`;}
+    <div class="row"><span class="muted">Geo data</span><span id="h-geo-status" class="muted">—</span></div>
+    <div class="muted mono" style="font-size:11px;margin-top:8px">${esc(h.lastRun||'no run logged')}</div>`;
+  // Update geo freshness from status.json
+  const st=h.status||{};
+  const geo=st.geo||{};
+  const gs=$('#h-geo-status');
+  if(gs){
+    if(geo.fetched_at){
+      const d=new Date(geo.fetched_at*1000);
+      const ageH=Math.floor((Date.now()-d.getTime())/3600000);
+      gs.innerHTML=`<span class="dot" style="background:${ageH<24?'var(--ok)':'var(--drop)'};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${d.toLocaleDateString()} <span class="muted">(${ageH}h ago)</span>`;
+    }else{
+      gs.innerHTML='<span class="muted">not yet fetched</span>';
+    }
+  }
+}
 function sparkline(el,data){data=data||[];const w=300,ht=52,max=Math.max(1,...data);
   const pts=data.map((v,i)=>`${(i/(Math.max(1,data.length-1)))*w},${ht-(v/max)*(ht-6)-3}`).join(' ');
   el.innerHTML=`<svg viewBox="0 0 ${w} ${ht}" width="100%" height="${ht}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="var(--drop)" stroke-width="2"/></svg>
@@ -584,6 +601,57 @@ function renderAbuseLoad(st){
   el.innerHTML=`<div class="alert warn"><span class="icon">⏳</span><span style="flex:1">
     Loading a large abuse blocklist in batches to keep the box responsive — <b>${(st.loaded||0).toLocaleString()}</b> / ${(st.total||0).toLocaleString()} (${pct}%). Protection ramps up as it fills.
     <span class="pbar"><span class="pbar-fill" style="width:${pct}%"></span></span></span></div>`;
+}
+// AbuseIPDB API key status card + input field in the Reference tab.
+let abuseIPDBStatus=null;
+async function renderAbuseIPDBStatus(){
+  const el=$('#o-abuseipdb-status');if(!el)return;
+  try{abuseIPDBStatus=await j('/api/abuseipdb-config');}catch(e){abuseIPDBStatus={};}
+  const st=abuseIPDBStatus;
+  const hasKey=st.api_key_present;
+  const abuse=st.abuse||{};
+  const ruleActive=abuse.rule_active;
+  const fetchedAt=abuse.fetched_at;
+  const warnings=st.warnings||[];
+  let fetchInfo='—';
+  if(fetchedAt){
+    const d=new Date(fetchedAt*1000);
+    const ageH=Math.floor((Date.now()-d.getTime())/3600000);
+    fetchInfo=`${d.toLocaleString()} <span class="muted">(${ageH}h ago)</span>`;
+  }
+  let html='<div class="row" style="margin-bottom:6px"><span><b>AbuseIPDB API key</b></span><span>';
+  html+=hasKey?'<span class="dot" style="background:var(--ok);display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>configured':'<span class="dot" style="background:var(--drop);display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>not set';
+  html+='</span></div>';
+  html+=`<div class="row" style="margin-bottom:6px"><span class="muted">AbuseIPDB last fetch</span><span>${fetchInfo}</span></div>`;
+  if(ruleActive&&!hasKey){
+    html+='<div class="alert warn" style="margin:6px 0"><span class="icon">⚠</span><span>A <code>deny … abuse</code> rule is active but no API key is set. The abuse set is empty — the rule matches nothing.</span></div>';
+  }
+  if(warnings.length){
+    html+='<div class="alert warn" style="margin:6px 0"><span class="icon">⚠</span><span>Engine warnings:<br>'+warnings.map(w=>esc(w)).join('<br>')+'</span></div>';
+  }
+  html+='<div style="margin-top:8px"><input id="abuseipdb-key-input" type="password" placeholder="AbuseIPDB API key" style="width:60%;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:13px" autocomplete="off">';
+  html+=' <button onclick="saveAbuseIPDBKey()" style="padding:4px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--fg);cursor:pointer;font-size:13px">Save</button>';
+  html+=' <button onclick="clearAbuseIPDBKey()" style="padding:4px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--fg);cursor:pointer;font-size:13px">Clear</button></div>';
+  html+='<div class="muted" style="font-size:11px;margin-top:4px">Get a free key at abuseipdb.com — saved to /etc/nftgeo/config. Apply to activate.</div>';
+  el.innerHTML=html;
+}
+async function saveAbuseIPDBKey(){
+  const input=$('#abuseipdb-key-input');if(!input)return;
+  const key=input.value.trim();if(!key)return;
+  try{
+    const r=await fetch('/api/abuseipdb-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:key})});
+    const d=await r.json();
+    if(d.ok){input.value='';await renderAbuseIPDBStatus();}
+    else{alert(d.error||'Failed to save');}
+  }catch(e){alert('Error: '+e.message);}
+}
+async function clearAbuseIPDBKey(){
+  try{
+    const r=await fetch('/api/abuseipdb-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:''})});
+    const d=await r.json();
+    if(d.ok){await renderAbuseIPDBStatus();}
+    else{alert(d.error||'Failed to clear');}
+  }catch(e){alert('Error: '+e.message);}
 }
 async function refresh(){
   try{
