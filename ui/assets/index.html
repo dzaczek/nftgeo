@@ -146,6 +146,8 @@
   .tlog{display:inline-block;margin-left:6px;padding:1px 5px;border-radius:5px;border:1px solid var(--bd);color:var(--mut);font-size:11px;line-height:1.4;cursor:pointer;vertical-align:middle;user-select:none}
   .tlog.on{background:#2b6cb0;border-color:#2b6cb0;color:#fff}
   .tlog:hover{border-color:#2b6cb0}
+  .tlog.glob{cursor:default;opacity:.6;border-style:dashed}
+  .tlog.glob:hover{border-color:var(--bd)}
   .filecol{white-space:nowrap}
   .filebadge{font-size:11px;color:var(--mut);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-family:ui-monospace,monospace}
   .secrow td{background:var(--bg);cursor:pointer;border-top:1px solid var(--line)}
@@ -639,6 +641,7 @@ function renderLogs(){
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
 let OBJMAP={}, SVCS=[], ZONES=[], IFACES=[], FILES=[]; // tooltips; service/zone/iface autocomplete; rule files
 let BASELINE={}; // per-chain baseline accept counters, so a 0-hit allow rule can flag when the whitelist/established rules shadow it
+let LOG_DROPS_ON=false; // global LOG_DROPS: when on, every deny is logged regardless of its per-rule flag
 // Total traffic accepted by the implicit rules (established/related + whitelist)
 // ahead of a rule's chain — if > 0, a matched allow rule with 0 own hits is
 // likely shadowed there (e.g. your whitelisted SSH), not simply unused.
@@ -658,6 +661,7 @@ async function loadPolicy(){
   await loadIfaces();
   fillTargets(); fillServices(); fillZones();
   try{BASELINE=await j('/api/baseline')||{};}catch(e){BASELINE={};}
+  LOG_DROPS_ON=!!(BASELINE._meta&&BASELINE._meta.logDrops);
   renderBaseline(BASELINE);
   // Load whitelist summary for the card at the top of the policy view.
   try{WL_DATA=await j('/api/whitelist/draft');}catch(e){WL_DATA=null;}
@@ -850,9 +854,14 @@ function rowHTML(r,n,ro,multi){
     svcc=svc(r)+ifchip;
     hits=r.disabled?'<span class="muted">—</span>':(!r.matched?'<span class="muted">—</span>':(r.hits===0&&r.action!=='deny'&&baselineAcceptsFor(r.dir)>0?`<b>0</b><span class="hint" title="0 new, non-whitelisted hits. Matching traffic from established connections or whitelisted sources — e.g. your own SSH — is accepted by the baseline rules above this policy, so it never reaches this rule.">*</span>`:`<b>${r.hits.toLocaleString()}</b>`));
   }
-  const logchip=r.action!=='throttle'
-    ? `<span class="tlog${r.log?' on':''}" ${ro?'':'data-togglelog="1"'} title="${r.log?'per-rule connection logging is ON — click to disable':'log connections matching this rule (click to enable)'}">log</span>`
-    : '';
+  // LOG_DROPS logs every deny globally, so a deny is effectively logged even with
+  // its per-rule flag off: show a locked "global" chip instead of a toggle.
+  let logchip='';
+  if(r.action==='deny'&&LOG_DROPS_ON){
+    logchip=`<span class="tlog glob" onclick="event.stopPropagation()" title="logged globally by LOG_DROPS — the per-rule toggle only matters for allows, or when LOG_DROPS is off">log ᴳ</span>`;
+  }else if(r.action!=='throttle'){
+    logchip=`<span class="tlog${r.log?' on':''}" ${ro?'':'data-togglelog="1"'} title="${r.log?'per-rule connection logging is ON — click to disable':'log connections matching this rule (click to enable)'}">log</span>`;
+  }
   return `<tr class="prow${r.disabled?' rdis':''}${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
     <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}${mv}<span class="muted">${n}</span></td>
     <td>${tog}</td>

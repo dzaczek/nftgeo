@@ -154,6 +154,12 @@ The dashboard exposes the same switch: a **log** chip on each rule row, and a "L
 connections" checkbox in the rule editor. Accept lines then appear in the log view
 with an `ACCEPT`/`DROP` badge, coloured by the matching rule.
 
+Note the interplay with `LOG_DROPS`: that global setting already logs *every* drop
+as `nftgeo-drop:<name>`, so with it on a deny rule is logged regardless of its
+per-rule flag (the dashboard shows such rows with a locked `log ᴳ` chip). The
+per-rule `log` toggle is what adds logging that `LOG_DROPS` never provides -
+accepted connections, and drops when `LOG_DROPS` is off.
+
 Define reusable address groups in `config` as `GROUP_<NAME>` variables;
 a group may itself mix IPs, subnets, country codes, and region names:
 

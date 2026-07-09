@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.60.1] - 2026-07-09
+
+### Fixed
+- **Per-rule log chip now reflects `LOG_DROPS`.** With `LOG_DROPS` enabled every
+  deny is logged globally, regardless of its per-rule `log` flag — so a deny rule
+  logged even with its chip off, which looked inconsistent. Deny rows now show a
+  dashed, locked `log ᴳ` chip (with a tooltip) when `LOG_DROPS` is on, making clear
+  the logging comes from the global setting; the per-rule toggle stays live for
+  allows (and for denies once `LOG_DROPS` is off). The dashboard learns the
+  `LOG_DROPS` state from `/api/baseline`.
+
 ## [1.60.0] - 2026-07-09
 
 ### Added

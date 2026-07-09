@@ -18,6 +18,8 @@ Rule line: `<action> <dir> <proto> <port> <target> [on <iface>] [log]`
   `LOG_DROPS`: allows as `nftgeo-accept:<name>`, denies as `nftgeo-drop:<name>`
   (`<name>` = the rule's `# comment`). Toggle per rule in the dashboard.
   `allow in tcp 22 pl log # ssh` → `journalctl -k | grep nftgeo-accept:ssh`
+  (with `LOG_DROPS=1` every deny is logged anyway — the flag then only adds
+  logging for allows; the dashboard marks such denies with a locked `log ᴳ`)
 
 Reactive throttle (auto-ban brute force):
 `throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]`

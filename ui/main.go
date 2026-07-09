@@ -3846,6 +3846,9 @@ func main() {
 			}
 			out[hook]["policy"] = p
 		}
+		// LOG_DROPS logs every drop globally, so the Policy view can show a deny
+		// rule as effectively logged even when its per-rule flag is off.
+		out["_meta"] = map[string]interface{}{"logDrops": logDropsOn()}
 		writeJSON(w, out)
 	})
 	api("/api/alerts", func(w http.ResponseWriter, r *http.Request) {
