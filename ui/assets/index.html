@@ -269,6 +269,8 @@
 
     <!-- POLICY -->
     <section class="view" id="v-policy">
+      <!-- Whitelist summary card -->
+      <div id="wl-card" class="card" style="padding:10px 14px;margin-bottom:10px;display:none"></div>
       <div class="filters" style="justify-content:space-between">
         <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
         <span style="display:flex;gap:10px;align-items:center">
@@ -288,7 +290,9 @@
       <datalist id="zonelist"></datalist>
       <datalist id="iflist"></datalist>
       <div id="polbaseline"></div>
-      <div class="card"><div class="tablewrap"><table class="poltable">
+      <div id="polchains"></div>
+      <!-- hidden: old flat table kept for reference but replaced by chain-grouped rendering -->
+      <div class="card" style="display:none"><div class="tablewrap"><table class="poltable">
         <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th><th id="th-file" style="width:130px">File</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
     </section>
@@ -596,6 +600,7 @@ function baselineAcceptsFor(dir){
   const c=BASELINE[ch]||{};
   return (c.whitelist||0)+(c.established||0);
 }
+let WL_DATA=null; // cached whitelist summary for the policy-top card
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};ZONES=o.zones||[];
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
@@ -607,6 +612,9 @@ async function loadPolicy(){
   fillTargets(); fillServices(); fillZones();
   try{BASELINE=await j('/api/baseline')||{};}catch(e){BASELINE={};}
   renderBaseline(BASELINE);
+  // Load whitelist summary for the card at the top of the policy view.
+  try{WL_DATA=await j('/api/whitelist/draft');}catch(e){WL_DATA=null;}
+  renderWhitelistCard();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
 }
 // Implicit accepts that run before your policy (no editable row of their own):
@@ -624,6 +632,63 @@ function renderBaseline(b){
   }
   el.innerHTML=parts.length?`<div class="card" style="padding:8px 12px;font-size:12px;margin-bottom:10px" title="These implicit rules run before your policy. Existing connections (established/related) and whitelisted sources are accepted here — including your own SSH — so an 'allow' rule's Hits count only NEW, non-whitelisted connections.">
     <span class="muted">ℹ Accepted before your rules — </span>${parts.join(' &nbsp; ')}</div>`:'';
+}
+// Whitelist summary card at the top of the policy view. Shows IP/CIDR entries
+// and hostnames, with a link to the whitelist editor drawer.
+function renderWhitelistCard(){
+  const el=$('#wl-card');if(!el)return;
+  if(!WL_DATA){el.style.display='none';return;}
+  const wl=WL_DATA.whitelist||[], wlh=WL_DATA.whitelistHosts||[];
+  const ipCount=wl.filter(x=>x&&!x.startsWith('#')).length;
+  const hostCount=wlh.filter(x=>x&&!x.startsWith('#')).length;
+  if(ipCount===0&&hostCount===0){el.style.display='none';return;}
+  el.style.display='';
+  // Preview up to 8 entries, then "+N more"
+  const ips=wl.filter(x=>x&&!x.startsWith('#')).slice(0,8);
+  const hosts=wlh.filter(x=>x&&!x.startsWith('#')).slice(0,4);
+  const ipMore=ipCount>ips.length?` <span class="muted">+${ipCount-ips.length} more</span>`:'';
+  const hostMore=hostCount>hosts.length?` <span class="muted">+${hostCount-hosts.length} more</span>`:'';
+  // Whitelist hit counter from baseline data
+  let wlHits=0;
+  for(const ch of ['input','forward','output']){wlHits+=(BASELINE[ch]&&BASELINE[ch].whitelist)||0;}
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span class="chip" style="background:var(--accent);color:#fff;font-weight:600">⊕ Whitelist</span>
+    <span class="muted" style="font-size:12px">${ipCount} IP${ipCount!==1?'s':''}${hostCount?` · ${hostCount} host${hostCount!==1?'s':''}`:''}${wlHits?` · ${wlHits.toLocaleString()} hits`:''}</span>
+    <span style="display:flex;gap:4px;flex-wrap:wrap;flex:1;min-width:200px">
+      ${ips.map(ip=>`<span class="chip obj" title="${esc(ip)}">${esc(ip)}</span>`).join('')}
+      ${ipMore}
+      ${hosts.map(h=>`<span class="chip obj" title="${esc(h)} (resolved at apply time)">⌖ ${esc(h)}</span>`).join('')}
+      ${hostMore}
+    </span>
+    <button class="btn-ghost" id="wl-edit" style="color:var(--fg);white-space:nowrap">✎ Edit</button>
+  </div>`;
+  const editBtn=$('#wl-edit');
+  if(editBtn)editBtn.addEventListener('click',whitelistDrawer);
+}
+// Whitelist editor drawer: GET drafts, POST saves draft, deploy via Commit.
+async function whitelistDrawer(){
+  if(MODE==='ro')return;
+  let d=WL_DATA;
+  if(!d){try{d=await j('/api/whitelist/draft');}catch(e){toast('Cannot load whitelist');return;}}
+  const wl=(d.whitelist||[]).join('\n');
+  const wlh=(d.whitelistHosts||[]).join('\n');
+  $('#drawertitle').textContent='Edit whitelist';
+  $('#drawerbody').innerHTML=`
+    <p class="muted" style="font-size:12px">One entry per line. IP addresses or CIDR ranges for the whitelist; DNS hostnames are resolved at apply time. Lines starting with # are comments. Changes go to a draft — deploy via Commit to take effect (with deadman safety).</p>
+    <label class="fld"><span>IP / CIDR addresses (one per line)</span>
+      <textarea id="wl-ips" rows="8" style="font-family:monospace;font-size:13px;resize:vertical" placeholder="10.0.0.0/8&#10;203.0.113.5&#10;2001:db8::/48">${esc(wl)}</textarea></label>
+    <label class="fld"><span>Hostnames (one per line, resolved at apply time)</span>
+      <textarea id="wl-hosts" rows="4" style="font-family:monospace;font-size:13px;resize:vertical" placeholder="vpn.example.net&#10;wireguard.example.ch">${esc(wlh)}</textarea></label>
+    <p class="muted" style="font-size:11px">⚠ Removing your own IP can lock you out. The draft → commit pipeline with deadman provides a safety net — if you lose access, the ruleset auto-rolls-back after the timer expires.</p>`;
+  $('#drawerfoot').innerHTML=`<button class="btn-ghost" onclick="closeDrawer()">Cancel</button><button class="btn-go" onclick="saveWhitelistDraft()">Save to draft</button>`;
+  openDrawer();
+}
+async function saveWhitelistDraft(){
+  const ips=$('#wl-ips').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const hosts=$('#wl-hosts').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const r=await post('/api/whitelist/draft',{whitelist:ips,whitelistHosts:hosts});
+  if(r&&r.error){toast(r.error);return;}
+  closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Whitelist saved to draft.');
 }
 function findRule(file,id){return (RULES||[]).find(r=>r.file===file&&r.id===id);}
 function fileSelectHTML(selId,sel){
@@ -728,19 +793,93 @@ function rowHTML(r,n,ro,multi){
     <td>${s}</td><td>${d}</td><td>${svcc}</td>
     <td>${act}</td><td style="text-align:right">${hits}</td>${fcell}</tr>`;
 }
+// Map a rule's dir field to the nft chain it lives in.
+function ruleChain(r){
+  if(r.kind==='zone'||r.kind==='nat')return 'forward'; // zone rules live in forward; NAT in postrouting/prerouting but group with forward
+  const d=r.dir||'in';
+  if(d==='out')return 'output';
+  if(d.indexOf('fwd')===0)return 'forward';
+  return 'input';
+}
+// Chain display metadata: name, hook, description, color.
+const CHAIN_INFO={
+  input:   {label:'INPUT',   hook:'prerouting→input',    desc:'Traffic TO this host',           icon:'⬇'},
+  forward: {label:'FORWARD', hook:'forward',             desc:'Traffic ROUTED through (zones/NAT)', icon:'↔'},
+  output:  {label:'OUTPUT',  hook:'output→postrouting',  desc:'Traffic FROM this host',         icon:'⬆'},
+};
 function renderPolicy(){
   const f=$('#pf').value.toLowerCase();
   const ro=MODE==='ro', multi=FILES.length>1;
   $('#th-file').style.display=multi?'':'none';
-  // RULES already arrive in engine order (rules.conf, then rules.d/* by name),
-  // so render a single flat list; sections do the grouping, file is just a badge.
-  const rows=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
-  let n=0, html='';
-  rows.forEach(r=>{if(r.kind!=='section')n++; html+=rowHTML(r,r.kind==='section'?'':n,ro,multi);});
-  $('#policy').innerHTML=html||`<tr><td colspan="${multi?9:8}" class="muted">no rules</td></tr>`;
+  // Group rules by chain. Sections attach to whichever chain the rules below
+  // them belong to. NAT rules go to a separate NAT group.
+  const filtered=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
+  const chains={input:[],forward:[],output:[],nat:[]};
+  let lastChain='input';
+  for(const r of filtered){
+    if(r.kind==='section'){
+      // A section header renders inside whichever chain it appears; sections
+      // are not chain-specific, they just organize rules within a file.
+      // Attach to the current chain context.
+      chains[lastChain].push(r);
+      continue;
+    }
+    const ch=ruleChain(r);
+    lastChain=ch;
+    chains[ch].push(r);
+  }
+  // Render each chain that has rules, with a chain header card and flow diagram.
+  const order=['input','forward','output','nat'];
+  let html='';
+  let n=0;
+  for(const ch of order){
+    const rules=chains[ch];
+    if(!rules||rules.length===0)continue;
+    const info=CHAIN_INFO[ch]||CHAIN_INFO.input;
+    const isNat=ch==='nat';
+    const label=isNat?'NAT':info.label;
+    const desc=isNat?'Network address translation (masquerade/snat/dnat)':info.desc;
+    const icon=isNat?'🔀':info.icon;
+    // Chain header with flow visualization
+    html+=`<div class="card" style="margin-bottom:12px">`;
+    html+=`<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px">
+      <span style="font-size:16px">${icon}</span>
+      <b>${label}</b>
+      <span class="muted" style="font-size:11px">${esc(desc)}</span>
+      <span class="muted" style="font-size:11px;margin-left:auto">${rules.filter(r=>r.kind!=='section').length} rule${rules.filter(r=>r.kind!=='section').length!==1?'s':''}</span>
+    </div>`;
+    // Flow visualization: baseline → user rules → default policy
+    if(!isNat){
+      const bc=BASELINE[ch]||{};
+      const flowParts=[];
+      if('established' in bc)flowParts.push(`<span class="chip" style="font-size:11px;background:var(--card2);color:var(--mut)" title="established/related connections">ct est ✓ ${bc.established?(bc.established).toLocaleString():0}</span>`);
+      if('whitelist' in bc)flowParts.push(`<span class="chip" style="font-size:11px;background:var(--accent);color:#fff" title="whitelisted sources">@wl ✓ ${bc.whitelist?(bc.whitelist).toLocaleString():0}</span>`);
+      if(bc.invalid)flowParts.push(`<span class="chip" style="font-size:11px;background:var(--danger);color:#fff" title="invalid conntrack state">invalid ✗ ${bc.invalid.toLocaleString()}</span>`);
+      if(flowParts.length){
+        html+=`<div style="padding:4px 12px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:11px;border-bottom:1px solid var(--border);background:var(--bg2)">
+          <span class="muted">flow:</span> ${flowParts.join(' <span class="muted">→</span> ')}
+          <span class="muted">→</span> <span class="chip" style="font-size:11px;background:var(--card2);color:var(--mut)">your rules below</span>
+          <span class="muted">→</span> <span class="chip" style="font-size:11px;background:var(--card2);color:var(--mut)">default policy</span>
+        </div>`;
+      }
+    }
+    // Rules table
+    html+=`<div class="tablewrap"><table class="poltable"><tbody>`;
+    for(const r of rules){
+      if(r.kind!=='section')n++;
+      html+=rowHTML(r,r.kind==='section'?'':n,ro,multi);
+    }
+    html+=`</tbody></table></div></div>`;
+  }
+  if(!html)html=`<div class="card" style="padding:20px;text-align:center"><span class="muted">No rules. Click + Add rule to create your first policy rule.</span></div>`;
+  $('#polchains').innerHTML=html;
+  // Also update the hidden old table for backward compat with any code
+  // that references $('#policy') directly.
+  $('#policy').innerHTML='';
 }
 // row interactions: toggle · inline target edit · open editor
-$('#policy').addEventListener('click',async e=>{
+// Works on both the old #policy table and the new #polchains container.
+async function policyClickHandler(e){
   const row=e.target.closest('.prow'); if(!row)return;
   const file=row.dataset.file, id=+row.dataset.id;
   const t=e.target.closest('[data-toggle]');
@@ -755,6 +894,13 @@ $('#policy').addEventListener('click',async e=>{
   const chip=e.target.closest('.chip.obj,.chip.any,.chip.abuse');
   if(chip){inlineTarget(row,chip);return;}
   ruleDrawer(file,id);
+}
+// Attach to whichever container exists. #polchains is the new chain-grouped
+// view; #policy is the hidden legacy table. Both use .prow rows.
+document.addEventListener('click',function(e){
+  const target=e.target.closest('#polchains .prow, #policy .prow');
+  if(!target)return;
+  policyClickHandler(e);
 });
 const firstFile=()=>FILES[0]?FILES[0].name:'rules.conf';
 $('#addrule').addEventListener('click',()=>ruleDrawer(firstFile(),null));
@@ -1034,8 +1180,9 @@ function inlineTarget(row,chip){
   inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();inp.blur();}else if(e.key==='Escape'){done=true;loadPolicy();}});
   inp.addEventListener('blur',commit,{once:true});
 }
-// drag-and-drop reorder (scoped within a file)
-const polBody=$('#policy');
+// drag-and-drop reorder (scoped within a file). Uses #polchains (the new
+// chain-grouped view) with fallback to #policy for legacy.
+const polBody=$('#polchains')||$('#policy');
 polBody.addEventListener('dragstart',e=>{const row=e.target.closest('.prow');if(row){row.classList.add('dragging');}});
 polBody.addEventListener('dragover',e=>{
   e.preventDefault();const dragging=polBody.querySelector('.dragging');if(!dragging)return;
