@@ -8,6 +8,15 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.62.2] - 2026-07-09
+
+### Fixed
+- **Clearer "session pending" state.** When a new session opens while another is
+  active, the pending screen now explains what is happening in English — that it
+  will start automatically in ~30s unless the active session rejects it, and to
+  wait rather than refresh (refreshing invalidates the single-use token). The
+  pending message is also no longer styled red like an error.
+
 ## [1.62.1] - 2026-07-09
 
 ### Fixed
