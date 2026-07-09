@@ -20,10 +20,11 @@ test:
 	$(GO) vet ./ui/
 	$(GO) test ./ui/
 	sh tests/render/run.sh
+	sh tests/migrate/run.sh
 
 ## lint: shellcheck the shell tools and check gofmt
 lint:
-	shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh
+	shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh
 	@test -z "$$(gofmt -l ui/)" || { echo "gofmt needed:"; gofmt -l ui/; exit 1; }
 
 ## units: package systemd units, rewritten to the /usr/sbin install prefix

@@ -38,6 +38,13 @@ deny  in tcp 22 any     # close the port to everyone else
 
 ### Added
 
+- **`nftgeo migrate-sequential` (#43).** One-shot, idempotent migration for
+  configs written for the old model: for every geo-restricted `allow <dir>
+  <proto> <port> <target>` with no catch-all `deny ... any`, it generates that
+  deny into a sorted-last `rules.d/zz-sequential-migration.conf`, reproducing the
+  pre-1.57 per-port deny-by-default so upgrading does not silently open ports.
+  `--dry-run` previews; deploy behind the deadman. Covered by
+  `tests/migrate/run.sh`.
 - **Open-port warning (#42).** `validate` (and every render) now warns when a
   port has a geo-restricted `allow in` but no catch-all `deny ... any` and
   `DEFAULT_INPUT` is `accept` — i.e. the port is left open to all other sources.

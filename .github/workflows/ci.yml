@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
       # SC1090: the engine sources $CONFIG_FILE / groups.d drop-ins by design.
-      - run: shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh packaging/*.sh install.sh uninstall.sh
+      - run: shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh packaging/*.sh install.sh uninstall.sh
 
   go:
     runs-on: ubuntu-latest
@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: offline render/snippet tests
         run: sh tests/render/run.sh
+      - name: migrate-sequential tests
+        run: sh tests/migrate/run.sh
       - name: real nft -c over the fixtures
         run: |
           sudo apt-get update && sudo apt-get install -y nftables
