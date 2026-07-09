@@ -8,6 +8,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.58.4] - 2026-07-09
+
+### Fixed
+- **Reorder buttons (and drag) appeared to do nothing in the chain-grouped view.**
+  Reordering operated on raw file order, but the view groups rules by chain — so
+  moving a rule one step often swapped it with a rule shown in a *different* chain
+  card, an invisible change. The ↑/↓/⤒/⤓ buttons now move a rule among its
+  visible same-chain neighbours (within its file) and translate that to a valid
+  file order; a boundary move shows a toast instead of silently doing nothing.
+
 ## [1.58.3] - 2026-07-09
 
 ### Added
