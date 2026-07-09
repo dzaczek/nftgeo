@@ -13,6 +13,8 @@ allow in tcp 443 europe
 deny in tcp 443 any
 allow in tcp 80 any
 allow out tcp 53 de
+allow in any HERMES VPN on eth0
+allow in icmp - pl
 EOF
 printf 'allow in tcp 8080 office\n' > "$d/rules.d/10-x.conf"
 
@@ -26,5 +28,7 @@ check_has  "deny in tcp 8080 any"
 check_has  "deny out tcp 53 any"
 check_lacks "deny in tcp 443 any"   # already had a catch-all deny
 check_lacks "deny in tcp 80 any"    # allow target is "any" (intentionally open)
+check_lacks "HERMES"                # non-port proto "any" — skipped, not garbage-migrated
+check_lacks "deny in icmp"          # portless rule — nothing to close per-port
 
 if [ "$fail" = 0 ]; then echo "migrate tests: PASS"; else echo "migrate tests: FAILED"; exit 1; fi
