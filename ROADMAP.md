@@ -27,6 +27,8 @@ nftgeo warns about (but does not flip) `ip_forward`/`forwarding` sysctls.
 - Built-in well-known service catalog (name → port, e.g. `https`), overridable by
   `SERVICE_<NAME>`; empty/`-` port = every port of a proto (`tcp -`, `meta l4proto`);
   create `rules.d/*.conf` files from the dashboard *(1.62.0)*.
+- Ingress hook — early stateless drop via `ingress.conf`/`ingress.d/` (`<accept|drop>
+  <target> [proto] [port] [log]`), whitelist auto-first; opt-in *(1.64.0)*.
 - **P1 — HARDEN**: loopback accept, `ct state invalid` drop, essential ICMPv6.
 - **P2 — Interfaces**: `on <iface>` on any rule, arbitrary interface names
   (VLANs, tunnels, bridges) with an unknown-interface warning.

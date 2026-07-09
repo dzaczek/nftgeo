@@ -30,6 +30,18 @@ throttle in tcp 3389 3/minute ban 2h   # custom ban length (default THROTTLE_BAN
 ```
 Whitelisted sources are never throttled. Bans live in `throttle_block{4,6}` and expire.
 
+Ingress hook — early **stateless** drop, before prerouting/conntrack
+(`/etc/nftgeo/ingress.conf` + `ingress.d/*.conf`; needs Linux ≥5.10):
+`<accept|drop> <target> [proto] [port] [log]`  (source-based, no `dir`)
+```
+drop  abuse                  # shed the AbuseIPDB set the moment it hits the NIC
+drop  cn,ru                  # geo early-drop under DDoS
+accept 203.0.113.0/24        # explicit early accept (whitelist is auto-first)
+drop  any tcp 22 log         # drop SSH at ingress except whitelisted
+```
+Opt-in (no file = no ingress chain); an extra layer, not a replacement for
+`deny … abuse`. Whitelist is always accepted first and can't be dropped here.
+
 SYN-flood protection (kernel synproxy) and anti-spoofing (reverse-path filter):
 ```
 synproxy in tcp 22            # offload the SSH handshake; drop spoofed SYNs

@@ -1,5 +1,5 @@
 .\" nftgeo(8) manual page
-.TH NFTGEO 8 "2026-07-09" "nftgeo 1.62.0" "System Administration"
+.TH NFTGEO 8 "2026-07-09" "nftgeo 1.64.0" "System Administration"
 .SH NAME
 nftgeo \- declarative geo / abuse / segmentation firewall for nftables
 .SH SYNOPSIS
@@ -179,6 +179,29 @@ is the rule's trailing
 (view with
 .BR "journalctl -k | grep nftgeo-" ).
 The dashboard exposes the same toggle per rule.
+.SS Ingress (early stateless drop)
+.nf
+.B "<accept|drop> <target> [proto] [port] [log]"
+.fi
+.PP
+Rules in
+.I /etc/nftgeo/ingress.conf
+and
+.IR /etc/nftgeo/ingress.d/*.conf
+run in the nftables
+.B ingress
+hook \(em before prerouting and conntrack \(em matched on the source only (no
+.BR dir ,
+no connection state). Use it to shed the
+.B abuse
+set or bad geos very early under DDoS, before routing/conntrack cost. The
+whitelist is always accepted first and can never be dropped here. Opt-in: with no
+.I ingress.conf
+no ingress chain is emitted. It is an extra layer, not a replacement for
+.B "deny \(rs... abuse"
+filter rules; being stateless it drops matching packets regardless of state.
+Requires Linux \(>= 5.10 (inet ingress). Targets are the same as filter rules
+(country/region/IP/CIDR/group/host/\fBany\fR/\fBabuse\fR).
 .SS Reactive throttle
 .nf
 .B "throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]"
@@ -317,6 +340,9 @@ Main rule set.
 .TP
 .I /etc/nftgeo/rules.d/*.conf
 Additional rule fragments, loaded in sorted filename order.
+.TP
+.I /etc/nftgeo/ingress.conf ", " /etc/nftgeo/ingress.d/*.conf
+Ingress-hook rules (early stateless drop).
 .TP
 .I /etc/nftgeo/groups.d/*.conf
 GROUP_ / REGION_ / SERVICE_ / HOST_ / ZONE_ object definitions.

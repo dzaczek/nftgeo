@@ -32,6 +32,10 @@ for case_dir in "$here"/cases/*/; do
 	# a case may ship a whitelist.conf / whitelist-hosts.conf
 	[ -f "$case_dir/whitelist.conf" ] && cp "$case_dir/whitelist.conf" "$tmp/whitelist.conf"
 	[ -f "$case_dir/whitelist-hosts.conf" ] && cp "$case_dir/whitelist-hosts.conf" "$tmp/whitelist-hosts.conf"
+	# a case may ship ingress.conf / ingress.d for the ingress hook
+	mkdir -p "$tmp/ingress.d"
+	[ -f "$case_dir/ingress.conf" ] && cp "$case_dir/ingress.conf" "$tmp/ingress.conf"
+	[ -d "$case_dir/ingress.d" ] && cp "$case_dir"/ingress.d/*.conf "$tmp/ingress.d/" 2>/dev/null || true
 
 	out="$tmp/out.nft"
 	err="$tmp/err.txt"
@@ -40,6 +44,7 @@ for case_dir in "$here"/cases/*/; do
 		CONFIG_FILE="$cfg" RULES_FILE="$case_dir/rules.conf" RULES_DIR="$tmp/rules.d" \
 		GROUPS_DIR="$tmp/groups.d" ZONE_DIR="$tmp/zones" STATE_DIR="$tmp/state" \
 		WHITELIST_FILE="$tmp/whitelist.conf" WHITELIST_HOSTS_FILE="$tmp/whitelist-hosts.conf" \
+		INGRESS_FILE="$tmp/ingress.conf" INGRESS_DIR="$tmp/ingress.d" \
 		"$engine" >/dev/null 2>"$err"
 	rc=$?
 	set -e

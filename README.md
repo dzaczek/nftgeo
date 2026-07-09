@@ -274,6 +274,28 @@ own with `SERVICE_<NAME>` in config.
 | **DNAT** | `dnat <proto> <port> to <ip>[:<port>] [from <geo>] [on <iface>]` | `dnat tcp 8080 to 10.0.0.5:80 on eth0` |
 | **Inter-zone** | `allow\|deny <zone> -> <zone> <proto> <port> [from <geo>]` | `allow lan -> dmz tcp 80` |
 
+### Ingress (early stateless drop)
+
+For DDoS-grade early filtering, put `<accept|drop> <target> [proto] [port] [log]`
+rules in `/etc/nftgeo/ingress.conf` (and `ingress.d/*.conf`). They run in the
+nftables **ingress** hook — before prerouting and conntrack — so you can shed the
+`abuse` set or bad geos the moment packets hit the NIC, before they cost routing
+or conntrack CPU:
+
+```text
+drop  abuse                # drop the AbuseIPDB set at ingress
+drop  cn,ru                # geo early-drop
+accept 203.0.113.0/24      # explicit early accept (whitelist is auto-accepted first)
+drop  any tcp 22 log       # drop SSH at ingress except whitelisted sources
+```
+
+It is **source-based** (no `dir`) and **stateless** (no `ct state`), so it drops
+matching packets regardless of connection state — an extra early layer, not a
+replacement for `deny … abuse` filter rules. The whitelist is always accepted
+first and can never be dropped here. Opt-in: no `ingress.conf` means no ingress
+chain at all. Requires Linux ≥ 5.10 (inet ingress); `validate` + the deadman catch
+an unsupported kernel safely.
+
 ### Config objects
 
 Define reusable objects in `/etc/nftgeo/config` (or `groups.d/*.conf`):

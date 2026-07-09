@@ -8,6 +8,22 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.64.0] - 2026-07-09
+
+### Added
+- **Ingress hook — early, stateless drop (`ingress.conf` / `ingress.d/`).** A new
+  declarative file set drops or accepts traffic in the nftables `ingress` hook,
+  *before* prerouting and conntrack — ideal for shedding the AbuseIPDB set or bad
+  geos under DDoS before they cost routing/conntrack CPU. Grammar (source-based,
+  no direction/state): `<accept|drop> <target> [proto] [port] [log]`, e.g.
+  `drop abuse`, `drop cn,ru`, `accept 203.0.113.0/24`, `drop any tcp 22 log`.
+  The whitelist is always accepted first, so it can never be dropped here. Opt-in:
+  no `ingress.conf` = no ingress chain (zero change). It is an extra early layer,
+  not a replacement for the `deny … abuse` filter rules. Because ingress is
+  stateless it drops matching packets regardless of connection state. Requires
+  Linux ≥ 5.10 for `inet` ingress; `validate`/deadman catch an unsupported kernel
+  safely.
+
 ## [1.63.0] - 2026-07-09
 
 ### Changed

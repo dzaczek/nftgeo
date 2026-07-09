@@ -1,0 +1,6 @@
+# Ingress hook: stateless early drop, whitelist auto-first, source-based.
++ type filter hook ingress priority -300; policy accept;
++ ip saddr @whitelist4 counter accept
++ ip saddr @abuse4 counter drop
++ tcp dport 22 limit rate 10/second log prefix "nftgeo-drop:drop SSH at ingress
++ tcp dport 22 counter drop

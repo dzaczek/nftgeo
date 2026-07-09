@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.63.0"
+NFTGEO_VERSION="1.64.0"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -19,6 +19,9 @@ esac
 CONFIG_FILE="${CONFIG_FILE:-/etc/nftgeo/config}"
 RULES_FILE="${RULES_FILE:-/etc/nftgeo/rules.conf}"
 RULES_DIR="${RULES_DIR:-/etc/nftgeo/rules.d}"
+# Ingress hook (stateless, pre-routing early drop). Source-based accept/drop.
+INGRESS_FILE="${INGRESS_FILE:-/etc/nftgeo/ingress.conf}"
+INGRESS_DIR="${INGRESS_DIR:-/etc/nftgeo/ingress.d}"
 GROUPS_DIR="${GROUPS_DIR:-/etc/nftgeo/groups.d}"
 STATE_DIR="${STATE_DIR:-/var/lib/nftgeo}"
 ZONE_DIR="${ZONE_DIR:-${STATE_DIR}/zones}"
@@ -180,6 +183,7 @@ IPV6_RE='^[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{0,4})*(/[0-9]{1,3})?$|^::([0-9a-fA-F]{1,
 TAB="$(printf '\t')"
 
 RULES_NORM="${TMP_DIR}/rules.norm"
+INGRESS_NORM="${TMP_DIR}/ingress.norm"
 THROTTLE_NORM="${TMP_DIR}/throttle.norm"
 SYNPROXY_NORM="${TMP_DIR}/synproxy.norm"
 NAT_NORM="${TMP_DIR}/nat.norm"
@@ -861,8 +865,68 @@ parse_rules_file() {
 	done < "$rf"
 }
 
+# parse_ingress_file: ingress hook rules (stateless, source-based, pre-routing).
+# Grammar: "<accept|drop> <target> [proto] [port] [log] [# name]". No dir (always
+# source), no ct state. Emits INGRESS_NORM lines "action geosan proto port log meta".
+parse_ingress_file() {
+	rf="$1"; lineno=0
+	while IFS= read -r line || [ -n "$line" ]; do
+		lineno=$((lineno + 1))
+		_body="${line%%#*}"
+		case "$_body" in *[!\ ]*) : ;; *) continue ;; esac # blank / comment-only
+		_iname=""
+		case "$line" in *"#"*) _iname="$(printf '%s' "${line#*#}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/|//g')" ;; esac
+		# shellcheck disable=SC2086
+		set -- $_body
+		iact="$1"; itgt="${2:-}"
+		case "$iact" in
+			accept|drop) : ;;
+			*) echo "${rf}:${lineno}: ingress rule must start with 'accept' or 'drop'" >&2; exit 1 ;;
+		esac
+		[ -n "$itgt" ] || { echo "${rf}:${lineno}: missing target" >&2; exit 1; }
+		shift 2 2>/dev/null || shift $#
+		# Optional [proto [port]] [log], in that order.
+		iproto="any"; iport="-"; ilog=0
+		case "${1:-}" in
+			tcp|udp|sctp|all|any|icmp|icmpv6|esp|ah|gre)
+				iproto="$1"; shift
+				case "${1:-}" in ''|log) : ;; *) iport="$1"; shift ;; esac ;;
+		esac
+		[ "${1:-}" = log ] && { ilog=1; shift; }
+		[ -n "${1:-}" ] && { echo "${rf}:${lineno}: unexpected '${1}' (grammar: <accept|drop> <target> [proto] [port] [log])" >&2; exit 1; }
+		# Resolve the source target into a set name (or the reserved any/abuse).
+		if [ "$itgt" = any ]; then
+			igeo="any"
+		elif [ "$itgt" = abuse ]; then
+			[ "$iact" = drop ] || { echo "${rf}:${lineno}: target 'abuse' only valid with 'drop'" >&2; exit 1; }
+			igeo="abuse"
+		else
+			igeo="$(sanitize_lower "$itgt")"
+			add_geo_members "$igeo" "$itgt" || { echo "${rf}:${lineno}: bad target '${itgt}'" >&2; exit 1; }
+		fi
+		_isrc="$(rule_comment "$iact" ingress "$iproto" "$iport" "$itgt" -)"
+		_imeta="${_iname}|${_isrc}"
+		# Resolve proto/port into buckets (or a portless line), reusing the filter path.
+		case "$iproto" in
+			tcp|udp|sctp|all)
+				case "$iport" in
+					-|any) printf '%s %s %s - %s %s\n' "$iact" "$igeo" "$iproto" "$ilog" "$_imeta" >> "$INGRESS_NORM" ;;
+					*)
+						_ib="$(resolve_service_field "$iproto" "$iport")" || { echo "${rf}:${lineno}: bad port/service '${iport}'" >&2; exit 1; }
+						printf '%s\n' "$_ib" | while IFS=' ' read -r _bp _bports; do
+							[ -n "$_bp" ] || continue
+							printf '%s %s %s %s %s %s\n' "$iact" "$igeo" "$_bp" "$_bports" "$ilog" "$_imeta" >> "$INGRESS_NORM"
+						done ;;
+				esac ;;
+			*) # any/icmp/icmpv6/esp/ah/gre: portless
+				printf '%s %s %s - %s %s\n' "$iact" "$igeo" "$iproto" "$ilog" "$_imeta" >> "$INGRESS_NORM" ;;
+		esac
+	done < "$rf"
+}
+
 parse_rules() {
 	: > "$RULES_NORM"
+	: > "$INGRESS_NORM"
 	: > "$THROTTLE_NORM"
 	: > "$SYNPROXY_NORM"
 	: > "$NAT_NORM"
@@ -882,7 +946,18 @@ parse_rules() {
 		done
 	fi
 
-	if [ ! -s "$RULES_NORM" ] && [ ! -s "$THROTTLE_NORM" ] && [ ! -s "$SYNPROXY_NORM" ] && [ ! -s "$NAT_NORM" ] && [ ! -s "$ZONE_NORM" ]; then
+	# Ingress hook rules: ingress.conf first, then ingress.d/*.conf in name order.
+	if [ -r "$INGRESS_FILE" ]; then
+		parse_ingress_file "$INGRESS_FILE"
+	fi
+	if [ -d "$INGRESS_DIR" ]; then
+		for rf in "$INGRESS_DIR"/*.conf; do
+			[ -r "$rf" ] || continue
+			parse_ingress_file "$rf"
+		done
+	fi
+
+	if [ ! -s "$RULES_NORM" ] && [ ! -s "$INGRESS_NORM" ] && [ ! -s "$THROTTLE_NORM" ] && [ ! -s "$SYNPROXY_NORM" ] && [ ! -s "$NAT_NORM" ] && [ ! -s "$ZONE_NORM" ]; then
 		echo "No rules found in ${RULES_FILE} or ${RULES_DIR}/*.conf" >&2
 		exit 1
 	fi
@@ -1532,6 +1607,40 @@ emit_chain() {
 	printf '\t}\n'
 }
 
+# emit_ingress: the ingress hook chain (stateless early drop, before prerouting/
+# conntrack). Whitelist wins first; then the ingress.conf rules, source-based.
+# Only emitted when there are ingress rules (inet ingress needs kernel >= 5.10).
+emit_ingress() {
+	[ -s "$INGRESS_NORM" ] || return 0
+	printf '\tchain ingress {\n'
+	printf '\t\ttype filter hook ingress priority -300; policy accept;\n'
+	[ -s "${TMP_DIR}/whitelist4.set" ] && printf '\t\tip saddr @whitelist4 counter accept\n'
+	[ -s "${TMP_DIR}/whitelist6.set" ] && printf '\t\tip6 saddr @whitelist6 counter accept\n'
+	while read -r _act geosan proto port _ilog meta; do
+		lname="${meta%%|*}"; src="${meta#*|}"
+		m4="$(l4_match "$proto" "$port" 4)"
+		m6="$(l4_match "$proto" "$port" 6)"
+		if [ "$geosan" = any ]; then
+			printed=""
+			for m in "$m4" "$m6"; do
+				[ -n "$m" ] || continue
+				case "$printed" in *"|${m}|"*) continue ;; esac
+				printed="${printed}|${m}|"
+				mm=""; [ "$m" != any ] && mm="$m "
+				_dolog=0; { [ "$_ilog" = 1 ] || { [ "$_act" = drop ] && [ -n "$LOG_DROPS" ]; }; } && _dolog=1
+				_pfx="$LOG_PREFIX_BASE"; [ "$_act" = accept ] && _pfx="nftgeo-accept"
+				_lr="$lname"; [ -z "$_lr" ] && _lr="$_act"
+				[ "$_dolog" = 1 ] && printf '\t\t%s%s log prefix "%s:%s "\n' "$mm" "$LOG_LIMIT" "$_pfx" "$_lr"
+				printf '\t\t%scounter %s comment "%s"\n' "$mm" "$_act" "$src"
+			done
+		else
+			emit_set_match "$m4" ip  saddr "$(set_name "$geosan" 4)" "$_act" "" "$src" "$lname" "$_ilog"
+			emit_set_match "$m6" ip6 saddr "$(set_name "$geosan" 6)" "$_act" "" "$src" "$lname" "$_ilog"
+		fi
+	done < "$INGRESS_NORM"
+	printf '\t}\n'
+}
+
 generate() {
 	{
 		# Atomic replace: create the table if missing, delete it, then rebuild it
@@ -1562,6 +1671,7 @@ generate() {
 			done
 		fi
 
+		emit_ingress
 		emit_chain "input" "saddr"
 		emit_chain "output" "daddr"
 		emit_chain "forward" "saddr daddr"
