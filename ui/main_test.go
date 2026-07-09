@@ -46,7 +46,7 @@ func TestBuildRuleBody(t *testing.T) {
 		{"inject_iface", "allow", "in", "tcp", "22", "any", "eth0;x", "", true},
 	}
 	for _, c := range cases {
-		got, err := buildRuleBody(c.action, c.dir, c.proto, c.port, c.target, c.iface)
+		got, err := buildRuleBody(c.action, c.dir, c.proto, c.port, c.target, c.iface, false)
 		if c.wantErr {
 			if err == nil {
 				t.Errorf("%s: expected error, got %q", c.name, got)
@@ -69,12 +69,13 @@ func TestDropReasonRegex(t *testing.T) {
 		"nftgeo-drop:block others IN=eth0 SRC=1.2.3.4": "block others",
 		"nftgeo-drop:default-deny IN=eth0 SRC=9.9.9.9": "default-deny",
 		"nftgeo-drop:geo IN=eth0 SRC=1.2.3.4":          "geo",
+		"nftgeo-accept:whitelist IN=eth0 SRC=1.2.3.4":  "whitelist",
 		"nftgeo-drop IN=eth0 SRC=1.2.3.4":              "", // old prefix, no reason
 	}
 	for msg, want := range cases {
 		got := ""
 		if m := reReason.FindStringSubmatch(msg); m != nil {
-			got = m[1]
+			got = m[2]
 		}
 		if got != want {
 			t.Errorf("%q: got %q, want %q", msg, got, want)
@@ -98,7 +99,7 @@ func TestBuildThrottleBody(t *testing.T) {
 		{"service_port", "in", "tcp", "web", "5/minute", "", "", "", true},
 	}
 	for _, c := range cases {
-		got, err := buildThrottleBody(c.dir, c.proto, c.port, c.rate, c.ban, c.iface)
+		got, err := buildThrottleBody(c.dir, c.proto, c.port, c.rate, c.ban, c.iface, false)
 		if c.wantErr {
 			if err == nil {
 				t.Errorf("%s: expected error, got %q", c.name, got)
@@ -134,12 +135,12 @@ func TestParseDraftRulesRoundTrip(t *testing.T) {
 }
 
 func TestParseDraftRulesFields(t *testing.T) {
-	items, _ := parseDraftRules("allow in tcp 22 any # ssh\n## Web\n# deny in udp 53 any\nallow out tcp 443 europe on eth0\n")
+	items, _ := parseDraftRules("allow in tcp 22 any log # ssh\n## Web\n# deny in udp 53 any\nallow out tcp 443 europe on eth0\n")
 	if len(items) != 4 {
 		t.Fatalf("got %d items, want 4", len(items))
 	}
 	r := items[0]
-	if r.Kind != "filter" || r.Action != "allow" || r.Dir != "in" || r.Port != "22" || r.Name != "ssh" {
+	if r.Kind != "filter" || r.Action != "allow" || r.Dir != "in" || r.Port != "22" || r.Name != "ssh" || !r.Log {
 		t.Errorf("rule0 parsed wrong: %+v", r)
 	}
 	if items[1].Kind != "section" || items[1].Title != "Web" {
@@ -168,7 +169,7 @@ func TestBuildZoneBody(t *testing.T) {
 		{"allow", "lan", "dmz", "tcp", "80", "a b", "", false}, // bad geo
 	}
 	for _, c := range cases {
-		got, err := buildZoneBody(c.a, c.s, c.d, c.p, c.port, c.geo)
+		got, err := buildZoneBody(c.a, c.s, c.d, c.p, c.port, c.geo, false)
 		if c.ok && (err != nil || got != c.want) {
 			t.Errorf("buildZoneBody(%q..)=%q,%v want %q", c.a, got, err, c.want)
 		}
@@ -198,7 +199,7 @@ func TestBuildNatBody(t *testing.T) {
 		{"bogus", "", "", "", "", "eth0", "", "", false},            // bad type
 	}
 	for _, c := range cases {
-		got, err := buildNatBody(c.nt, c.proto, c.port, c.target, c.geo, c.iface, c.lan)
+		got, err := buildNatBody(c.nt, c.proto, c.port, c.target, c.geo, c.iface, c.lan, false)
 		if c.ok && (err != nil || got != c.want) {
 			t.Errorf("buildNatBody(%q..)=%q,%v want %q", c.nt, got, err, c.want)
 		}
@@ -245,7 +246,7 @@ func TestBuildSynproxyBody(t *testing.T) {
 		{"in", "22", "e th0", "", false}, // bad iface
 	}
 	for _, c := range cases {
-		got, err := buildSynproxyBody(c.dir, c.port, c.iface)
+		got, err := buildSynproxyBody(c.dir, c.port, c.iface, false)
 		if c.ok && (err != nil || got != c.want) {
 			t.Errorf("buildSynproxyBody(%q,%q,%q)=%q,%v want %q", c.dir, c.port, c.iface, got, err, c.want)
 		}

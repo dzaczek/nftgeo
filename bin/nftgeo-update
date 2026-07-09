@@ -451,8 +451,8 @@ thr_key() {
 emit_set_match() {
 	# $1 l4 match (from l4_match: a clause, "any", or empty), $2 ipver (ip|ip6),
 	# $3 address side (saddr|daddr), $4 set name, $5 verdict (accept|drop),
-	# $6 iface clause, $7 source comment, $8 rule name (for the drop log). Emits
-	# nothing when the l4 match is empty.
+	# $6 iface clause, $7 source comment, $8 rule name (for the drop log),
+	# $9 explicit log flag (1|0). Emits nothing when the l4 match is empty.
 	[ -n "$1" ] || return 0
 	ifc="${6:-}"; [ -n "$ifc" ] && ifc="${ifc} "
 	if [ "$1" = any ]; then
@@ -460,7 +460,8 @@ emit_set_match() {
 	else
 		mpfx="${ifc}$1 $2 $3 @$4"
 	fi
-	if [ "$5" = drop ] && [ -n "$LOG_DROPS" ]; then
+	_log="${9:-0}"
+	if { [ "$5" = drop ] && [ -n "$LOG_DROPS" ]; } || [ "$_log" = 1 ]; then
 		# Log label: the rule's name if it has one, else the policy category
 		# (abuse blocklist vs a geo set).
 		if [ -n "${8:-}" ]; then
@@ -468,7 +469,9 @@ emit_set_match() {
 		else
 			case "$4" in abuse*) _lr=abuse ;; g_*) _lr=geo ;; *) _lr=drop ;; esac
 		fi
-		printf '\t\t%s %s log prefix "%s:%s "\n' "$mpfx" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$_lr"
+		_pfx="nftgeo-drop"
+		if [ "$5" = accept ]; then _pfx="nftgeo-accept"; [ "$_lr" = drop ] && _lr=whitelist; fi
+		printf '\t\t%s %s log prefix "%s:%s "\n' "$mpfx" "$LOG_LIMIT" "$_pfx" "$_lr"
 	fi
 	if [ -n "${7:-}" ]; then
 		printf '\t\t%s counter %s comment "%s"\n' "$mpfx" "$5" "$7"
@@ -1393,11 +1396,15 @@ emit_chain() {
 	# in-kernel; spoofed SYNs that never reply are dropped automatically.
 	if [ -s "$SYNPROXY_NORM" ] && awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$SYNPROXY_NORM"; then
 		awk -v h="$hook" '$1==h' "$SYNPROXY_NORM" | while read -r _sh _port _siface; do
+			_log=0
+			if [ "$_siface" = "log" ]; then _log=1; _siface="-"; fi
+			case "$_siface" in *\ log) _log=1; _siface="${_siface% log}" ;; esac
 			ifc=""
 			[ "$_siface" != "-" ] && ifc="iifname \"${_siface}\" "
+			_lg=""; [ "$_log" = 1 ] && _lg="${LOG_LIMIT} log prefix \"nftgeo-accept:synproxy \" "
 			case "$_port" in
-				*,*) printf '\t\t%stcp dport { %s } ct state new synproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" ;;
-				*)   printf '\t\t%stcp dport %s ct state new synproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" ;;
+				*,*) printf '\t\t%stcp dport { %s } ct state new %ssynproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" "$_lg" ;;
+				*)   printf '\t\t%stcp dport %s ct state new %ssynproxy mss 1460 wscale 7 counter\n' "$ifc" "$_port" "$_lg" ;;
 			esac
 		done
 	fi
@@ -1409,12 +1416,20 @@ emit_chain() {
 		printf '\t\tip saddr @throttle_block4 counter drop\n'
 		printf '\t\tip6 saddr @throttle_block6 counter drop\n'
 		awk -v h="$hook" '$1==h' "$THROTTLE_NORM" | while read -r _h side proto port rate ban iface; do
+			_log=0
+			if [ "$iface" = "log" ]; then _log=1; iface=""; fi
+			case "$iface" in *\ log) _log=1; iface="${iface% log}" ;; esac
 			ifc="$(if_match "$side" "$iface")"; pre=""; [ -n "$ifc" ] && pre="${ifc} "
 			k="$(thr_key "$proto" "$port")"
 			m4="$(l4_match "$proto" "$port" 4)"
 			m6="$(l4_match "$proto" "$port" 6)"
-			printf '\t\t%s%s ct state new add @%s4 { ip saddr limit rate over %s } add @throttle_block4 { ip saddr timeout %s } counter drop\n' "$pre" "$m4" "$k" "$rate" "$ban"
-			printf '\t\t%s%s ct state new add @%s6 { ip6 saddr limit rate over %s } add @throttle_block6 { ip6 saddr timeout %s } counter drop\n' "$pre" "$m6" "$k" "$rate" "$ban"
+			if [ "$_log" = 1 ]; then
+				printf '\t\t%s%s ct state new add @%s4 { ip saddr limit rate over %s } add @throttle_block4 { ip saddr timeout %s } %s log prefix "nftgeo-drop:throttle " counter drop\n' "$pre" "$m4" "$k" "$rate" "$ban" "$LOG_LIMIT"
+				printf '\t\t%s%s ct state new add @%s6 { ip6 saddr limit rate over %s } add @throttle_block6 { ip6 saddr timeout %s } %s log prefix "nftgeo-drop:throttle " counter drop\n' "$pre" "$m6" "$k" "$rate" "$ban" "$LOG_LIMIT"
+			else
+				printf '\t\t%s%s ct state new add @%s4 { ip saddr limit rate over %s } add @throttle_block4 { ip saddr timeout %s } counter drop\n' "$pre" "$m4" "$k" "$rate" "$ban"
+				printf '\t\t%s%s ct state new add @%s6 { ip6 saddr limit rate over %s } add @throttle_block6 { ip6 saddr timeout %s } counter drop\n' "$pre" "$m6" "$k" "$rate" "$ban"
+			fi
 		done
 	fi
 
@@ -1425,6 +1440,10 @@ emit_chain() {
 	# DEFAULT_INPUT="drop".
 	awk -v h="$hook" '($1=="allow" || $1=="deny") && $2==h' "$RULES_NORM" | while read -r _act _h side proto port geosan iface meta; do
 		lname="${meta%%|*}"; src="${meta#*|}"
+		_log=0
+		case "$src" in
+			*\ log) _log=1; src="${src% log}" ;;
+		esac
 		ifc="$(if_match "$side" "$iface")"
 		m4="$(l4_match "$proto" "$port" 4)"
 		m6="$(l4_match "$proto" "$port" 6)"
@@ -1433,20 +1452,22 @@ emit_chain() {
 			# No address set: match on the proto/port alone (both families).
 			pre=""; [ -n "$ifc" ] && pre="${ifc} "
 			_lr="$lname"; [ -z "$_lr" ] && _lr=deny
+			_pfx="nftgeo-drop"
+			if [ "$_vd" = accept ]; then _pfx="nftgeo-accept"; [ "$_lr" = deny ] && _lr=whitelist; fi
 			printed=""
 			for m in "$m4" "$m6"; do
 				[ -n "$m" ] || continue
 				case "$printed" in *"|${m}|"*) continue ;; esac
 				printed="${printed}|${m}|"
 				mm=""; [ "$m" != any ] && mm="$m "
-				if [ "$_act" = deny ] && [ -n "$LOG_DROPS" ]; then
-					printf '\t\t%s%s%s log prefix "%s:%s "\n' "$pre" "$mm" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$_lr"
+				if { [ "$_vd" = drop ] && [ -n "$LOG_DROPS" ]; } || [ "$_log" = 1 ]; then
+					printf '\t\t%s%s%s log prefix "%s:%s "\n' "$pre" "$mm" "$LOG_LIMIT" "$_pfx" "$_lr"
 				fi
 				printf '\t\t%s%scounter %s comment "%s"\n' "$pre" "$mm" "$_vd" "$src"
 			done
 		else
-			emit_set_match "$m4" ip  "$side" "$(set_name "$geosan" 4)" "$_vd" "$ifc" "$src" "$lname"
-			emit_set_match "$m6" ip6 "$side" "$(set_name "$geosan" 6)" "$_vd" "$ifc" "$src" "$lname"
+			emit_set_match "$m4" ip  "$side" "$(set_name "$geosan" 4)" "$_vd" "$ifc" "$src" "$lname" "$_log"
+			emit_set_match "$m6" ip6 "$side" "$(set_name "$geosan" 6)" "$_vd" "$ifc" "$src" "$lname" "$_log"
 		fi
 	done
 
@@ -1460,9 +1481,15 @@ emit_chain() {
 				[ "$_zs" != "-" ] && pre="iifname $(iface_set "$(echo "$_zs" | tr ',' ' ')") "
 				[ "$_zd" != "-" ] && pre="${pre}oifname $(iface_set "$(echo "$_zd" | tr ',' ' ')") "
 				_vd=accept; [ "$_za" = deny ] && _vd=drop
+				_log=0
+				if [ "$_zg" = "log" ]; then _log=1; _zg="-"; fi
+				case "$_zg" in *\ log) _log=1; _zg="${_zg% log}" ;; esac
+				_pfx="nftgeo-drop"; [ "$_vd" = accept ] && _pfx="nftgeo-accept"
 				if [ "$_zg" = "-" ]; then
 					_m="$(zone_l4 "$_zp" "$_zport")"; _mm=""; [ -n "$_m" ] && _mm="${_m} "
-					[ "$_vd" = drop ] && [ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s log prefix "%s:zone "\n' "$pre" "$_mm" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+					if { [ "$_vd" = drop ] && [ -n "$LOG_DROPS" ]; } || [ "$_log" = 1 ]; then
+						printf '\t\t%s%s%s log prefix "%s:zone "\n' "$pre" "$_mm" "$LOG_LIMIT" "$_pfx"
+					fi
 					printf '\t\t%s%scounter %s\n' "$pre" "$_mm" "$_vd"
 				else
 					for _fam in 4 6; do
@@ -1470,7 +1497,9 @@ emit_chain() {
 						_ipv=ip; [ "$_fam" = 6 ] && _ipv=ip6
 						_mm=""; [ "$_m" != any ] && _mm="${_m} "
 						_gm="${_ipv} saddr @$(set_name "$_zg" "$_fam")"
-						[ "$_vd" = drop ] && [ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s %s log prefix "%s:zone "\n' "$pre" "$_mm" "$_gm" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+						if { [ "$_vd" = drop ] && [ -n "$LOG_DROPS" ]; } || [ "$_log" = 1 ]; then
+							printf '\t\t%s%s%s %s log prefix "%s:zone "\n' "$pre" "$_mm" "$_gm" "$LOG_LIMIT" "$_pfx"
+						fi
 						printf '\t\t%s%s%s counter %s\n' "$pre" "$_mm" "$_gm" "$_vd"
 					done
 				fi

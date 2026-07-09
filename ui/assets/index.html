@@ -597,7 +597,7 @@ function renderLogs(){
   const dir=$('#lf-dir').value,cc=$('#lf-cc').value.toUpperCase(),port=$('#lf-port').value,ip=$('#lf-ip').value;
   const rows=(DROPS.recent||[]).filter(r=>(!dir||r.dir===dir)&&(!cc||(r.cc||'').toUpperCase().includes(cc))&&(!port||r.dport===port)&&(!ip||(r.src+r.dst).includes(ip)));
   $('#lf-count').textContent=rows.length+' shown';
-  $('#recent').innerHTML=rows.slice(0,300).map(r=>`<tr><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td><span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td><td>${reasonBadge(r.reason)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">no drops (enable LOG_DROPS)</td></tr>';
+  $('#recent').innerHTML=rows.slice(0,300).map(r=>`<tr${r.action==='accept'?' style="color:var(--ok)"':''}><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td><span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td><td>${reasonBadge(r.reason)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">no drops (enable LOG_DROPS)</td></tr>';
 }
 
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
@@ -758,6 +758,7 @@ function rowHTML(r,n,ro,multi){
   }
   const tog=`<span class="tog ${r.disabled?'':'on'}" ${ro?'':'data-toggle="1"'} title="${r.disabled?'disabled':'enabled'}"></span>`;
   const ifchip=r.iface?` <span class="chip if" title="interface">${esc(r.iface)}</span>`:'';
+  const logchip=r.log?` <span class="pill dir" style="font-size:10px;padding:1px 5px;margin-left:4px" title="logging enabled">LOG</span>`:'';
   const namecell=`<td>${r.name?esc(r.name):'<span class="muted">—</span>'}</td>`;
   const dash='<td style="text-align:right"><span class="muted">—</span></td>';
   const hnd=`<td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${n}</span></td>`;
@@ -767,7 +768,7 @@ function rowHTML(r,n,ro,multi){
     return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
       ${hnd}<td>${tog}</td>${namecell}
       <td colspan="3"><span class="chip nat" title="NAT rule — edit via Raw">${esc(r.text||r.body||'')}</span></td>
-      <td><span class="pill nat">NAT</span></td>${dash}${fcell}</tr>`;
+      <td><span class="pill nat">NAT</span>${logchip}</td>${dash}${fcell}</tr>`;
   }
   // Inter-zone rules: source zone → destination zone, service, verdict.
   if(r.kind==='zone'){
@@ -778,7 +779,7 @@ function rowHTML(r,n,ro,multi){
     return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
       ${hnd}<td>${tog}</td>${namecell}
       <td>${zc(r.src)}</td><td>${zc(r.dst)}</td><td>${zsvc}</td>
-      <td>${zact}</td>${dash}${fcell}</tr>`;
+      <td>${zact}${logchip}</td>${dash}${fcell}</tr>`;
   }
   // SYN-flood protection: kernel synproxy on an inbound/forwarded port.
   if(r.kind==='synproxy'){
@@ -787,18 +788,19 @@ function rowHTML(r,n,ro,multi){
     return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
       ${hnd}<td>${tog}</td>${namecell}
       <td><span class="chip syn" title="SYN-flood guard">SYN guard</span></td><td>${sd}</td><td>${ssvc}</td>
-      <td><span class="pill syn" title="kernel synproxy: offloads the handshake, drops spoofed SYNs">SYNPROXY</span></td>${dash}${fcell}</tr>`;
+      <td><span class="pill syn" title="kernel synproxy: offloads the handshake, drops spoofed SYNs">SYNPROXY</span>${logchip}</td>${dash}${fcell}</tr>`;
   }
   let s, d, svcc, act, hits;
   if(r.action==='throttle'){
     s=`<span class="chip thr" title="max new connections per source">≤ ${esc(r.rate||'')}</span>`;
     d=r.dir==='fwd-in'?FWD:HOST;
     svcc=`<span class="chip svc">${esc(r.proto)}/${esc(r.port)}</span>${ifchip}`;
-    act=`<span class="pill thr" title="auto-ban offenders for ${esc(r.ban||'the default (THROTTLE_BAN)')}">THROTTLE</span>`;
+    act=`<span class="pill thr" title="auto-ban offenders for ${esc(r.ban||'the default (THROTTLE_BAN)')}">THROTTLE</span>`+logchip;
     hits='<span class="muted">—</span>';
   }else{
     [s,d]=srcDst(r);
     act=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
+    act+=logchip;
     svcc=svc(r)+ifchip;
     hits=r.disabled?'<span class="muted">—</span>':(!r.matched?'<span class="muted">—</span>':(r.hits===0&&r.action!=='deny'&&baselineAcceptsFor(r.dir)>0?`<b>0</b><span class="hint" title="0 new, non-whitelisted hits. Matching traffic from established connections or whitelisted sources — e.g. your own SSH — is accepted by the baseline rules above this policy, so it never reaches this rule.">*</span>`:`<b>${r.hits.toLocaleString()}</b>`));
   }
@@ -938,7 +940,7 @@ function throttleDrawer(file,id){
   if(MODE==='ro')return;
   const r=id!=null?findRule(file,id):null;
   const rate=((r&&r.rate)||'5/minute').split('/');
-  const v={dir:r?r.dir:'in',proto:r?r.proto:'tcp',port:r?r.port:'22',num:rate[0]||'5',unit:rate[1]||'minute',ban:(r&&r.ban)||'',iface:(r&&r.iface)||'',name:(r&&r.name)||''};
+  const v={dir:r?r.dir:'in',proto:r?r.proto:'tcp',port:r?r.port:'22',num:rate[0]||'5',unit:rate[1]||'minute',ban:(r&&r.ban)||'',iface:(r&&r.iface)||'',name:(r&&r.name)||'',log:r?r.log:false};
   const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
   $('#drawertitle').textContent=id!=null?'Edit throttle':'New throttle';
   $('#drawerbody').innerHTML=`
@@ -955,6 +957,7 @@ function throttleDrawer(file,id){
     </div>
     <label class="fld"><span>Ban duration (optional)</span><input id="t-ban" value="${esc(v.ban)}" placeholder="default 1h — or 30m / 2h / 1d" autocomplete="off"></label>
     ${ifaceFieldHTML('t-iface',v.iface,'Interface (optional)')}
+    <label class="fld" style="flex-direction:row;align-items:center;gap:8px;margin-top:4px"><input type="checkbox" id="t-log" ${v.log?'checked':''}><span>Log this rule</span></label>
     <p class="muted" style="font-size:12px">Sources exceeding the rate on this port are auto-banned in the kernel. <b>Whitelisted sources are never throttled.</b> Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveThrottle('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
@@ -965,7 +968,7 @@ function throttleDrawer(file,id){
 }
 async function saveThrottle(file,id){
   const b={file:($('#t-file')?$('#t-file').value:file),action:'throttle',dir:$('#t-dir').value,proto:$('#t-proto').value,
-    port:$('#t-port').value.trim(),rate:$('#t-num').value+'/'+$('#t-unit').value,ban:$('#t-ban').value.trim(),iface:$('#t-iface').value.trim(),name:$('#t-name').value};
+    port:$('#t-port').value.trim(),rate:$('#t-num').value+'/'+$('#t-unit').value,ban:$('#t-ban').value.trim(),iface:$('#t-iface').value.trim(),name:$('#t-name').value,log:$('#t-log').checked};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}
@@ -976,7 +979,7 @@ async function saveThrottle(file,id){
 function synproxyDrawer(file,id){
   if(MODE==='ro')return;
   const r=id!=null?findRule(file,id):null;
-  const v={dir:r?r.dir:'in',port:r?r.port:'22',iface:(r&&r.iface)||'',name:(r&&r.name)||''};
+  const v={dir:r?r.dir:'in',port:r?r.port:'22',iface:(r&&r.iface)||'',name:(r&&r.name)||'',log:r?r.log:false};
   const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
   $('#drawertitle').textContent=id!=null?'Edit synproxy':'New synproxy (SYN-flood protection)';
   $('#drawerbody').innerHTML=`
@@ -988,6 +991,7 @@ function synproxyDrawer(file,id){
     </div>
     <label class="fld"><span>Port</span><input id="sp-port" value="${esc(v.port)}" placeholder="22 or 80,443" autocomplete="off"></label>
     ${ifaceFieldHTML('sp-iface',v.iface,'Interface (optional)')}
+    <label class="fld" style="flex-direction:row;align-items:center;gap:8px;margin-top:4px"><input type="checkbox" id="sp-log" ${v.log?'checked':''}><span>Log this rule</span></label>
     <p class="muted" style="font-size:12px">The kernel completes the TCP handshake (synproxy) before the connection reaches the service, so spoofed SYNs that never finish it are dropped. Runs before the allow rules. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveSynproxy('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
@@ -998,7 +1002,7 @@ function synproxyDrawer(file,id){
 }
 async function saveSynproxy(file,id){
   const b={file:($('#sp-file')?$('#sp-file').value:file),kind:'synproxy',dir:$('#sp-dir').value,
-    port:$('#sp-port').value.trim(),iface:$('#sp-iface').value.trim(),name:$('#sp-name').value};
+    port:$('#sp-port').value.trim(),iface:$('#sp-iface').value.trim(),name:$('#sp-name').value,log:$('#sp-log').checked};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}
@@ -1009,8 +1013,8 @@ async function saveSynproxy(file,id){
 function zoneDrawer(file,id){
   if(MODE==='ro')return;
   const r=id!=null?findRule(file,id):null;
-  const v=r?{action:r.action,src:r.src,dst:r.dst,proto:r.proto,port:r.port==='-'?'':r.port,geo:r.geo||'',name:r.name}
-           :{action:'allow',src:'',dst:'',proto:'tcp',port:'',geo:'',name:''};
+  const v=r?{action:r.action,src:r.src,dst:r.dst,proto:r.proto,port:r.port==='-'?'':r.port,geo:r.geo||'',name:r.name,log:r.log}
+           :{action:'allow',src:'',dst:'',proto:'tcp',port:'',geo:'',name:'',log:false};
   const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
   $('#drawertitle').textContent=id!=null?'Edit zone rule':'New inter-zone rule';
   $('#drawerbody').innerHTML=`
@@ -1026,6 +1030,7 @@ function zoneDrawer(file,id){
       <label class="fld" style="flex:1"><span>Port / service</span><input id="z-port" list="svclist" value="${esc(v.port)}" placeholder="80, 80,443 or a service"></label>
     </div>
     <label class="fld"><span>From (source geo, optional)</span><input id="z-geo" list="tgtlist" value="${esc(v.geo)}" placeholder="country / region / group — blank = any source" autocomplete="off"></label>
+    <label class="fld" style="flex-direction:row;align-items:center;gap:8px;margin-top:4px"><input type="checkbox" id="z-log" ${v.log?'checked':''}><span>Log this rule</span></label>
     <p class="muted" style="font-size:12px">Zones are <code>ZONE_*</code> interface lists in config. Built into the <b>forward</b> chain (needs <code>ip_forward=1</code>); with <code>SEGMENT_DEFAULT="deny"</code> anything not allowed is dropped. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveZone('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
@@ -1040,7 +1045,7 @@ function zProtoChange(){const p=$('#z-proto').value,pt=$('#z-port');
 async function saveZone(file,id){
   const b={file:($('#z-file')?$('#z-file').value:file),kind:'zone',action:$('#z-action').value,
     src:$('#z-src').value.trim(),dst:$('#z-dst').value.trim(),proto:$('#z-proto').value,
-    port:$('#z-port').value.trim(),geo:$('#z-geo').value.trim(),name:$('#z-name').value};
+    port:$('#z-port').value.trim(),geo:$('#z-geo').value.trim(),name:$('#z-name').value,log:$('#z-log').checked};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}
@@ -1051,8 +1056,8 @@ async function saveZone(file,id){
 function natDrawer(file,id){
   if(MODE==='ro')return;
   const r=id!=null?findRule(file,id):null;
-  const v=r?{nt:r.natType||'masquerade',iface:r.iface||'',lan:r.lan||'',target:r.target||'',proto:r.proto||'tcp',port:r.port||'',geo:r.geo||'',name:r.name}
-           :{nt:'masquerade',iface:'',lan:'',target:'',proto:'tcp',port:'',geo:'',name:''};
+  const v=r?{nt:r.natType||'masquerade',iface:r.iface||'',lan:r.lan||'',target:r.target||'',proto:r.proto||'tcp',port:r.port||'',geo:r.geo||'',name:r.name,log:r.log}
+           :{nt:'masquerade',iface:'',lan:'',target:'',proto:'tcp',port:'',geo:'',name:'',log:false};
   const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
   $('#drawertitle').textContent=id!=null?'Edit NAT rule':'New NAT rule';
   $('#drawerbody').innerHTML=`
@@ -1067,6 +1072,7 @@ function natDrawer(file,id){
     <label class="fld" id="n-geo-w"><span>From (source geo, optional)</span><input id="n-geo" list="tgtlist" value="${esc(v.geo)}" placeholder="country / region / group — blank = any" autocomplete="off"></label>
     ${ifaceFieldHTML('n-iface',v.iface,'Interface (WAN)','n-iface-l')}
     <div id="n-lan-w">${ifaceFieldHTML('n-lan',v.lan,'LAN interface (inbound, optional)')}</div>
+    <label class="fld" style="flex-direction:row;align-items:center;gap:8px;margin-top:4px"><input type="checkbox" id="n-log" ${v.log?'checked':''}><span>Log this rule</span></label>
     <p class="muted" style="font-size:12px"><b>masquerade</b>/<b>snat</b> rewrite outbound source on the WAN — the WAN interface alone is enough; the LAN interface is optional and just restricts which inbound interface is NAT'd. <b>dnat</b> forwards a WAN port to an internal host. Needs <code>ip_forward=1</code>. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveNat('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
@@ -1087,7 +1093,7 @@ async function saveNat(file,id){
   const b={file:($('#n-file')?$('#n-file').value:file),kind:'nat',natType:t,iface:$('#n-iface').value.trim(),
     lan:($('#n-lan')?$('#n-lan').value.trim():''),
     target:$('#n-target').value.trim(),proto:$('#n-proto').value,port:$('#n-port').value.trim(),
-    geo:$('#n-geo').value.trim(),name:$('#n-name').value};
+    geo:$('#n-geo').value.trim(),name:$('#n-name').value,log:$('#n-log').checked};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}
@@ -1149,8 +1155,8 @@ async function saveTpl(){const name=$('#tpl-name').value.trim();if(!name){toast(
 function ruleDrawer(file,id){
   if(MODE==='ro')return;
   const r=id!=null?findRule(file,id):null;
-  const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name}
-           :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:''};
+  const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name,log:r.log}
+           :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:'',log:false};
   const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
   $('#drawertitle').textContent=id!=null?'Edit rule':'New rule';
   $('#drawerbody').innerHTML=`
@@ -1166,6 +1172,7 @@ function ruleDrawer(file,id){
     </div>
     <label class="fld"><span>Target</span><input id="r-target" list="tgtlist" value="${esc(v.target)}" placeholder="any / abuse / country / region / group / IP" autocomplete="off"></label>
     ${ifaceFieldHTML('r-iface',v.iface,'Interface (optional)')}
+    <label class="fld" style="flex-direction:row;align-items:center;gap:8px;margin-top:4px"><input type="checkbox" id="r-log" ${v.log?'checked':''}><span>Log this rule</span></label>
     <p class="muted" style="font-size:12px"><b>Direction</b> sets what the target means: <b>in</b> = source, <b>out</b> = destination, <b>fwd-*</b> = forwarded. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveRule('${esc(file)}',${id!=null?id:'null'})">Save to draft</button>
@@ -1179,7 +1186,7 @@ function rProtoChange(){const p=$('#r-proto').value,pt=$('#r-port');
   else{pt.disabled=false;pt.placeholder=p==='any'?'blank = every port, or a service (e.g. dns)':'443, 80,443 or a service';}}
 async function saveRule(file,id){
   const b={file:($('#r-file')?$('#r-file').value:file),action:$('#r-action').value,dir:$('#r-dir').value,proto:$('#r-proto').value,port:$('#r-port').value,
-    target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value};
+    target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value,log:$('#r-log').checked};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}

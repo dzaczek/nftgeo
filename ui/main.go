@@ -557,6 +557,7 @@ type Drop struct {
 	Dir    string `json:"dir"` // ingress|egress|forward
 	CC     string `json:"cc"`
 	Reason string `json:"reason"` // which policy dropped it: abuse|geo|deny|default-deny
+	Action string `json:"action"`
 }
 type DropsResp struct {
 	Enabled     bool           `json:"enabled"`
@@ -573,7 +574,7 @@ var reKV = regexp.MustCompile(`(\w+)=(\S+)`)
 // The drop-log prefix is "nftgeo-drop:<label>" where <label> is the rule's name
 // or a policy category; capture it up to the nft "KEY=" fields (labels may
 // contain spaces).
-var reReason = regexp.MustCompile(`nftgeo-drop:(.+?)\s+(?:IN|OUT|MAC|PHYSIN|PHYSOUT|SRC|DST)=`)
+var reReason = regexp.MustCompile(`nftgeo-(drop|accept):(.+?)\s+(?:IN|OUT|MAC|PHYSIN|PHYSOUT|SRC|DST)=`)
 
 func drops(since string) DropsResp {
 	resp := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}, Timeline: make([]int, 24)}
@@ -597,29 +598,32 @@ func drops(since string) DropsResp {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.Contains(line, "nftgeo-drop") {
+		if !strings.Contains(line, "nftgeo-drop") && !strings.Contains(line, "nftgeo-accept") {
 			continue
 		}
 		var rec struct {
 			Msg string `json:"MESSAGE"`
 			TS  string `json:"__REALTIME_TIMESTAMP"`
 		}
-		if json.Unmarshal([]byte(line), &rec) != nil || !strings.Contains(rec.Msg, "nftgeo-drop") {
+		if json.Unmarshal([]byte(line), &rec) != nil || (!strings.Contains(rec.Msg, "nftgeo-drop") && !strings.Contains(rec.Msg, "nftgeo-accept")) {
 			continue
 		}
 		f := map[string]string{}
 		for _, m := range reKV.FindAllStringSubmatch(rec.Msg, -1) {
 			f[m[1]] = m[2]
 		}
-		d := Drop{Src: f["SRC"], Dst: f["DST"], Dport: f["DPT"], Proto: f["PROTO"]}
+		d := Drop{Src: f["SRC"], Dst: f["DST"], Dport: f["DPT"], Proto: f["PROTO"], Action: "drop"}
 		if m := reReason.FindStringSubmatch(rec.Msg); m != nil {
-			d.Reason = m[1]
+			d.Action = m[1]
+			d.Reason = m[2]
 		}
 		if us, e := strconv.ParseInt(rec.TS, 10, 64); e == nil {
 			t := time.UnixMicro(us)
 			d.Time = t.UTC().Format(time.RFC3339)
-			if ha := int(time.Since(t).Hours()); ha >= 0 && ha < 24 {
-				resp.Timeline[23-ha]++
+			if d.Action == "drop" {
+				if ha := int(time.Since(t).Hours()); ha >= 0 && ha < 24 {
+					resp.Timeline[23-ha]++
+				}
 			}
 		}
 		in, out := f["IN"] != "", f["OUT"] != ""
@@ -627,23 +631,25 @@ func drops(since string) DropsResp {
 		case in && !out:
 			d.Dir = "ingress"
 			d.CC = geo.lookup(d.Src)
-			if d.CC != "" {
+			if d.CC != "" && d.Action == "drop" {
 				resp.IngressByCC[d.CC]++
 			}
 		case out && !in:
 			d.Dir = "egress"
 			d.CC = geo.lookup(d.Dst)
-			if d.CC != "" {
+			if d.CC != "" && d.Action == "drop" {
 				resp.EgressByCC[d.CC]++
 			}
 		default:
 			d.Dir = "forward"
 			d.CC = geo.lookup(d.Src)
 		}
-		if d.Dport != "" {
-			resp.TopPorts[d.Dport]++
+		if d.Action == "drop" {
+			if d.Dport != "" {
+				resp.TopPorts[d.Dport]++
+			}
+			resp.Total++
 		}
-		resp.Total++
 		resp.Recent = append(resp.Recent, d)
 	}
 	// newest first, cap the recent list
@@ -658,7 +664,7 @@ func drops(since string) DropsResp {
 func logDropsOn() bool {
 	// A cheap heuristic: LOG_DROPS emits "log prefix" rules into the ruleset.
 	out, _ := run("nft", "list", "table", fam, table)
-	return strings.Contains(out, `log prefix "nftgeo-drop`)
+	return strings.Contains(out, `log prefix "nftgeo-drop`) || strings.Contains(out, `log prefix "nftgeo-accept`)
 }
 
 // ---- policy (rules.conf) & objects (config) --------------------------------
@@ -678,6 +684,7 @@ type PolicyRule struct {
 	Text    string `json:"text,omitempty"` // nat: verbatim rule text
 	Comment string `json:"comment"`
 	File    string `json:"file"`
+	Log     bool   `json:"log"`
 	Hits    int64  `json:"hits"`
 	Matched bool   `json:"matched"`
 }
@@ -1041,6 +1048,7 @@ func filterNewDrops(recent []Drop, after, now int64) ([]statsEntry, int64) {
 		if ts > hw {
 			hw = ts
 		}
+		if dr.Action == "accept" { continue }
 		entries = append(entries, statsEntry{Ts: ts, Src: dr.Src, CC: dr.CC, Port: dr.Dport, Reason: dr.Reason})
 	}
 	return entries, hw
@@ -1098,6 +1106,9 @@ func policy() []PolicyRule {
 					continue
 				}
 				pr = PolicyRule{Action: fields[0], Dir: fields[1], Proto: fields[2], Port: fields[3], Target: fields[4]}
+				if len(fields) > 5 && fields[len(fields)-1] == "log" {
+					pr.Log = true
+				}
 				for i := 5; i < len(fields)-1; i++ {
 					if fields[i] == "on" {
 						pr.Iface = fields[i+1]
@@ -1108,6 +1119,9 @@ func policy() []PolicyRule {
 					continue
 				}
 				pr = PolicyRule{Kind: "zone", Action: fields[0], Src: fields[1], Dst: fields[3], Proto: fields[4], Port: fields[5]}
+				if len(fields) > 6 && fields[len(fields)-1] == "log" {
+					pr.Log = true
+				}
 				if len(fields) >= 8 && fields[6] == "from" {
 					pr.Geo = fields[7]
 				}
@@ -1116,6 +1130,9 @@ func policy() []PolicyRule {
 					continue
 				}
 				pr = PolicyRule{Kind: "nat", Text: strings.Join(fields, " ")}
+				if len(fields) > 1 && fields[len(fields)-1] == "log" {
+					pr.Log = true
+				}
 				for i := 1; i < len(fields)-1; i++ {
 					if fields[i] == "on" {
 						pr.Iface = fields[i+1]
@@ -1126,6 +1143,9 @@ func policy() []PolicyRule {
 					continue
 				}
 				pr = PolicyRule{Kind: "synproxy", Action: fields[0], Dir: fields[1], Proto: fields[2], Port: fields[3]}
+				if len(fields) > 4 && fields[len(fields)-1] == "log" {
+					pr.Log = true
+				}
 				for i := 4; i < len(fields)-1; i++ {
 					if fields[i] == "on" {
 						pr.Iface = fields[i+1]
@@ -2462,43 +2482,48 @@ type draftRule struct {
 	Trivia   []string `json:"-"`
 	Hits     int64    `json:"hits"`
 	Matched  bool     `json:"matched"`
+	Log      bool     `json:"log"`
 }
 
 var sectionRe = regexp.MustCompile(`^#{2,}\s*(.*?)\s*#*$`)
 
 // ruleFields splits a candidate rule line into fields + trailing comment, and
 // reports whether it is a valid allow/deny rule.
-func ruleFields(s string) (fields []string, body, comment, kind string, ok bool) {
+func ruleFields(s string) (fields []string, body, comment, kind string, ok bool, log bool) {
 	body = s
 	if i := strings.Index(body, "#"); i >= 0 {
 		comment = strings.TrimSpace(body[i+1:])
 		body = body[:i]
 	}
 	body = strings.TrimSpace(body)
+	if strings.HasSuffix(body, " log") {
+		log = true
+		body = strings.TrimSpace(strings.TrimSuffix(body, " log"))
+	}
 	f := strings.Fields(body)
 	switch ruleKind(f) {
 	case "filter", "throttle":
 		if len(f) >= 5 {
-			return f, body, comment, ruleKind(f), true
+			return f, body, comment, ruleKind(f), true, log
 		}
 	case "zone": // allow|deny <src> -> <dst> <proto> <port> [from <geo>]
 		if len(f) >= 6 {
-			return f, body, comment, "zone", true
+			return f, body, comment, "zone", true, log
 		}
 	case "nat": // masquerade on <if> | snat out on <if> to <ip> | dnat <proto> <port> to <ip>[:port] [on <if>]
 		if len(f) >= 3 {
-			return f, body, comment, "nat", true
+			return f, body, comment, "nat", true, log
 		}
 	case "synproxy": // synproxy <in|fwd-in> tcp <port> [on <iface>]
 		if len(f) >= 4 {
-			return f, body, comment, "synproxy", true
+			return f, body, comment, "synproxy", true, log
 		}
 	}
-	return nil, "", "", "", false
+	return nil, "", "", "", false, false
 }
 
-func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, trivia []string) *draftRule {
-	r := &draftRule{ID: id, Kind: kind, Disabled: disabled, Body: body, Name: comment, Trivia: trivia}
+func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, trivia []string, log bool) *draftRule {
+	r := &draftRule{ID: id, Kind: kind, Disabled: disabled, Body: body, Name: comment, Trivia: trivia, Log: log}
 	switch kind {
 	case "throttle":
 		// throttle <dir> <proto> <port> <rate> [ban <dur>] [on <iface>]
@@ -2590,14 +2615,14 @@ func parseDraftRules(text string) ([]*draftRule, []string) {
 		}
 		if strings.HasPrefix(trimmed, "#") {
 			// A commented line that parses as a rule is a disabled rule.
-			if f, body, comment, kind, ok := ruleFields(strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))); ok {
-				rules = append(rules, mkDraftRule(id, true, f, body, comment, kind, trivia))
+			if f, body, comment, kind, ok, log := ruleFields(strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))); ok {
+				rules = append(rules, mkDraftRule(id, true, f, body, comment, kind, trivia, log))
 				id++
 				trivia = nil
 				continue
 			}
-		} else if f, body, comment, kind, ok := ruleFields(trimmed); ok {
-			rules = append(rules, mkDraftRule(id, false, f, body, comment, kind, trivia))
+		} else if f, body, comment, kind, ok, log := ruleFields(trimmed); ok {
+			rules = append(rules, mkDraftRule(id, false, f, body, comment, kind, trivia, log))
 			id++
 			trivia = nil
 			continue
@@ -2622,6 +2647,9 @@ func serializeDraftRules(rules []*draftRule, tail []string) string {
 			b.WriteString("# ")
 		}
 		b.WriteString(r.Body)
+		if r.Log {
+			b.WriteString(" log")
+		}
 		if r.Name != "" {
 			b.WriteString(" # " + r.Name)
 		}
@@ -3092,7 +3120,7 @@ var (
 
 // buildThrottleBody assembles/validates a throttle rule; the engine re-validates
 // at preview/deploy.
-func buildThrottleBody(dir, proto, port, rate, ban, iface string) (string, error) {
+func buildThrottleBody(dir, proto, port, rate, ban, iface string, log bool) (string, error) {
 	dir, proto = strings.TrimSpace(dir), strings.ToLower(strings.TrimSpace(proto))
 	port, rate = strings.TrimSpace(port), strings.TrimSpace(rate)
 	ban, iface = strings.TrimSpace(ban), strings.TrimSpace(iface)
@@ -3125,12 +3153,15 @@ func buildThrottleBody(dir, proto, port, rate, ban, iface string) (string, error
 		}
 		parts = append(parts, "on", iface)
 	}
+	if log {
+		parts = append(parts, "log")
+	}
 	return strings.Join(parts, " "), nil
 }
 
 // buildSynproxyBody assembles/validates a synproxy rule
 // (synproxy <in|fwd-in> tcp <port> [on <iface>]); the engine re-validates.
-func buildSynproxyBody(dir, port, iface string) (string, error) {
+func buildSynproxyBody(dir, port, iface string, log bool) (string, error) {
 	dir, port, iface = strings.TrimSpace(dir), strings.TrimSpace(port), strings.TrimSpace(iface)
 	switch dir {
 	case "in", "fwd-in":
@@ -3147,6 +3178,9 @@ func buildSynproxyBody(dir, port, iface string) (string, error) {
 		}
 		parts = append(parts, "on", iface)
 	}
+	if log {
+		parts = append(parts, "log")
+	}
 	return strings.Join(parts, " "), nil
 }
 
@@ -3158,7 +3192,7 @@ func sanitizeComment(s string) string {
 
 // buildRuleBody assembles and field-validates a rule line; the engine's own
 // validate is still the final gate at preview/deploy.
-func buildRuleBody(action, dir, proto, port, target, iface string) (string, error) {
+func buildRuleBody(action, dir, proto, port, target, iface string, log bool) (string, error) {
 	action, dir = strings.ToLower(strings.TrimSpace(action)), strings.TrimSpace(dir)
 	proto, port = strings.ToLower(strings.TrimSpace(proto)), strings.TrimSpace(port)
 	target, iface = strings.TrimSpace(target), strings.TrimSpace(iface)
@@ -3198,12 +3232,15 @@ func buildRuleBody(action, dir, proto, port, target, iface string) (string, erro
 		}
 		parts = append(parts, "on", iface)
 	}
+	if log {
+		parts = append(parts, "log")
+	}
 	return strings.Join(parts, " "), nil
 }
 
 // buildZoneBody assembles/validates an inter-zone rule
 // (allow|deny <src> -> <dst> <proto> <port> [from <geo>]); engine re-validates.
-func buildZoneBody(action, src, dst, proto, port, geo string) (string, error) {
+func buildZoneBody(action, src, dst, proto, port, geo string, log bool) (string, error) {
 	action = strings.ToLower(strings.TrimSpace(action))
 	src, dst = strings.ToLower(strings.TrimSpace(src)), strings.ToLower(strings.TrimSpace(dst))
 	proto, port, geo = strings.ToLower(strings.TrimSpace(proto)), strings.TrimSpace(port), strings.TrimSpace(geo)
@@ -3238,13 +3275,16 @@ func buildZoneBody(action, src, dst, proto, port, geo string) (string, error) {
 		}
 		parts = append(parts, "from", geo)
 	}
+	if log {
+		parts = append(parts, "log")
+	}
 	return strings.Join(parts, " "), nil
 }
 
 // buildNatBody assembles/validates a NAT rule (masquerade / snat / dnat); the
 // engine re-validates, so this is permissive but shell-metacharacter-free. lan
 // is the optional inbound interface for masquerade/snat ("in <lan>").
-func buildNatBody(natType, proto, port, target, geo, iface, lan string) (string, error) {
+func buildNatBody(natType, proto, port, target, geo, iface, lan string, log bool) (string, error) {
 	natType = strings.ToLower(strings.TrimSpace(natType))
 	target, iface, lan = strings.TrimSpace(target), strings.TrimSpace(iface), strings.TrimSpace(lan)
 	if iface != "" && !ruleIfaceRe.MatchString(iface) {
@@ -3306,6 +3346,7 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		Src, Dst, Geo, NatType, Lan             string
 		Rate, Ban                               string
 		Name                                    string
+		Log                                     bool
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
@@ -3319,15 +3360,15 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch {
 	case req.Kind == "zone":
-		body, err = buildZoneBody(req.Action, req.Src, req.Dst, req.Proto, req.Port, req.Geo)
+		body, err = buildZoneBody(req.Action, req.Src, req.Dst, req.Proto, req.Port, req.Geo, req.Log)
 	case req.Kind == "nat":
-		body, err = buildNatBody(req.NatType, req.Proto, req.Port, req.Target, req.Geo, req.Iface, req.Lan)
+		body, err = buildNatBody(req.NatType, req.Proto, req.Port, req.Target, req.Geo, req.Iface, req.Lan, req.Log)
 	case req.Kind == "synproxy":
-		body, err = buildSynproxyBody(req.Dir, req.Port, req.Iface)
+		body, err = buildSynproxyBody(req.Dir, req.Port, req.Iface, req.Log)
 	case req.Action == "throttle":
-		body, err = buildThrottleBody(req.Dir, req.Proto, req.Port, req.Rate, req.Ban, req.Iface)
+		body, err = buildThrottleBody(req.Dir, req.Proto, req.Port, req.Rate, req.Ban, req.Iface, req.Log)
 	default:
-		body, err = buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface)
+		body, err = buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface, req.Log)
 	}
 	if err != nil {
 		http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
@@ -3346,9 +3387,9 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
 			return
 		}
-		found.Body, found.Name = body, name
+		found.Body, found.Name, found.Log = body, name, req.Log
 	} else {
-		rules = append(rules, &draftRule{ID: -1, Body: body, Name: name})
+		rules = append(rules, &draftRule{ID: -1, Body: body, Name: name, Log: req.Log})
 	}
 	if err := writeDraftFor(*rf, rules, tail); err != nil {
 		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
