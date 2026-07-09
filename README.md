@@ -1,5 +1,9 @@
 # nftgeo
 
+
+https://github.com/user-attachments/assets/2dcec705-e08b-4702-aec9-d42b21d051c6
+
+
 **Declarative geo-aware firewall manager for Linux nftables.**
 
 Stop hand-feeding nftables country IP sets. Write a readable policy that says
