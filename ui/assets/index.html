@@ -192,6 +192,8 @@
   @media(max-width:760px){.app{grid-template-columns:1fr}.side{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px}
     .brand{border:0;padding:12px 14px}.nav{display:flex;flex-wrap:wrap;padding:0 8px}.nav a{padding:8px 10px}
     .sidefoot{margin:0 0 0 auto;border:0}.g2,.g3{grid-template-columns:1fr!important}}
+  @keyframes movePulse { 0% { background: #3d8bfd40; } 100% { background: transparent; } }
+  .highlight-move td { animation: movePulse 3s ease-out; }
 </style>
 </head>
 <body>
@@ -590,8 +592,15 @@ async function refresh(){
     refreshCommitBar();
   }catch(e){console.error(e);}
 }
+function getRuleColor(str) {
+  if (!str) return 'var(--mut)';
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  const h = Math.abs(hash) % 360;
+  return `hsl(${h}, 70%, 75%)`;
+}
 function reasonBadge(x){if(!x)return '<span class="muted">—</span>';
-  const col={abuse:'#ff8a9c',geo:'#9db4e6',deny:'#f4d98a','default-deny':'#ff8a9c',drop:'#c9c9c9'}[x]||'var(--mut)';
+  const col={abuse:'#ff8a9c',geo:'#9db4e6',deny:'#f4d98a','default-deny':'#ff8a9c',drop:'#c9c9c9'}[x]||getRuleColor(x);
   return `<span class="pill" style="background:#161d2e;color:${col};text-transform:none">${esc(x)}</span>`;}
 function renderLogs(){
   const dir=$('#lf-dir').value,cc=$('#lf-cc').value.toUpperCase(),port=$('#lf-port').value,ip=$('#lf-ip').value;
@@ -750,21 +759,23 @@ function svc(r){const p=r.port&&r.port!=='-'?r.port:'';const label=(p?esc(r.prot
 function fileBadge(f){const d=f==='rules.conf'?'rules.conf':f.replace(/\.conf$/,'');return `<span class="filebadge" title="${esc(f)}">${esc(d)}</span>`;}
 function rowHTML(r,n,ro,multi){
   const fa=`data-file="${esc(r.file)}"`;
+  const hl = (window.HIGHLIGHT_RULE && window.HIGHLIGHT_RULE.file === r.file && window.HIGHLIGHT_RULE.id === r.id) ? ' highlight-move' : '';
   const fcell=multi?`<td class="filecol">${fileBadge(r.file)}</td>`:'';
   if(r.kind==='section'){
-    return `<tr class="prow secrow" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+    return `<tr class="prow secrow${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
       <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}</td>
       <td colspan="7" class="sectitle">§ ${esc(r.title||'(untitled)')}</td>${fcell}</tr>`;
   }
   const tog=`<span class="tog ${r.disabled?'':'on'}" ${ro?'':'data-toggle="1"'} title="${r.disabled?'disabled':'enabled'}"></span>`;
   const ifchip=r.iface?` <span class="chip if" title="interface">${esc(r.iface)}</span>`:'';
-  const namecell=`<td>${r.name?esc(r.name):'<span class="muted">—</span>'}</td>`;
+  const rcol=r.name?getRuleColor(r.name):'var(--mut)';
+  const namecell=`<td>${r.name?`<span class="dot" style="background:${rcol};box-shadow:none;width:8px;height:8px"></span><span style="color:${rcol}">${esc(r.name)}</span>`:'<span class="muted">—</span>'}</td>`;
   const dash='<td style="text-align:right"><span class="muted">—</span></td>';
   const hnd=`<td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${n}</span></td>`;
   // NAT rules (masquerade/snat/dnat) have no src→dst/service shape: show the
   // verbatim rule with a NAT badge. Edited via the Raw editor (see click handler).
   if(r.kind==='nat'){
-    return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+    return `<tr class="prow${r.disabled?' rdis':''}${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
       ${hnd}<td>${tog}</td>${namecell}
       <td colspan="3"><span class="chip nat" title="NAT rule — edit via Raw">${esc(r.text||r.body||'')}</span></td>
       <td><span class="pill nat">NAT</span></td>${dash}${fcell}</tr>`;
@@ -775,7 +786,7 @@ function rowHTML(r,n,ro,multi){
     const g=r.geo?` <span class="chip zone" title="source geo">from ${esc(r.geo)}</span>`:'';
     const zact=r.action==='deny'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
     const zsvc=`<span class="chip svc">${esc(r.proto)}${r.port&&r.port!=='-'?'/'+esc(r.port):''}</span>${g}`;
-    return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+    return `<tr class="prow${r.disabled?' rdis':''}${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
       ${hnd}<td>${tog}</td>${namecell}
       <td>${zc(r.src)}</td><td>${zc(r.dst)}</td><td>${zsvc}</td>
       <td>${zact}</td>${dash}${fcell}</tr>`;
@@ -784,7 +795,7 @@ function rowHTML(r,n,ro,multi){
   if(r.kind==='synproxy'){
     const sd=r.dir==='fwd-in'?FWD:HOST;
     const ssvc=`<span class="chip svc">${esc(r.proto||'tcp')}/${esc(r.port||'')}</span>${ifchip}`;
-    return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+    return `<tr class="prow${r.disabled?' rdis':''}${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
       ${hnd}<td>${tog}</td>${namecell}
       <td><span class="chip syn" title="SYN-flood guard">SYN guard</span></td><td>${sd}</td><td>${ssvc}</td>
       <td><span class="pill syn" title="kernel synproxy: offloads the handshake, drops spoofed SYNs">SYNPROXY</span></td>${dash}${fcell}</tr>`;
@@ -802,10 +813,10 @@ function rowHTML(r,n,ro,multi){
     svcc=svc(r)+ifchip;
     hits=r.disabled?'<span class="muted">—</span>':(!r.matched?'<span class="muted">—</span>':(r.hits===0&&r.action!=='deny'&&baselineAcceptsFor(r.dir)>0?`<b>0</b><span class="hint" title="0 new, non-whitelisted hits. Matching traffic from established connections or whitelisted sources — e.g. your own SSH — is accepted by the baseline rules above this policy, so it never reaches this rule.">*</span>`:`<b>${r.hits.toLocaleString()}</b>`));
   }
-  return `<tr class="prow${r.disabled?' rdis':''}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+  return `<tr class="prow${r.disabled?' rdis':''}${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
     <td class="hnd">${ro?'':'<span class="grip">⠿</span>'}<span class="muted">${n}</span></td>
     <td>${tog}</td>
-    <td>${r.name?esc(r.name):'<span class="muted">—</span>'}</td>
+    ${namecell}
     <td>${s}</td><td>${d}</td><td>${svcc}</td>
     <td>${act}</td><td style="text-align:right">${hits}</td>${fcell}</tr>`;
 }
@@ -1224,17 +1235,20 @@ polBody.addEventListener('dragover',e=>{
   const sib=[...polBody.querySelectorAll(`.prow:not(.dragging)`)].filter(r=>r.dataset.file===file);
   const after=sib.reduce((c,ch)=>{const box=ch.getBoundingClientRect();const off=e.clientY-box.top-box.height/2;
     return off<0&&off>c.off?{off,el:ch}:c;},{off:-Infinity,el:null}).el;
-  if(after)polBody.insertBefore(dragging,after);
+  if(after)after.parentNode.insertBefore(dragging,after);
   else if(sib.length)sib[sib.length-1].after(dragging);
 });
 polBody.addEventListener('dragend',async e=>{
   const row=e.target.closest('.prow');if(!row)return;row.classList.remove('dragging');
   const file=row.dataset.file;
+  const movedId=+row.dataset.id;
   const order=[...polBody.querySelectorAll('.prow')].filter(r=>r.dataset.file===file).map(r=>+r.dataset.id);
   const cur=(RULES||[]).filter(r=>r.file===file).map(r=>r.id);
   if(order.length===cur.length&&order.every((v,i)=>v===cur[i]))return; // no change within this file
   const res=await post('/api/rules/draft/reorder',{file,order});
   if(res&&res.error){toast(res.error);loadPolicy();return;}
+  window.HIGHLIGHT_RULE = {file, id: movedId};
+  setTimeout(() => { window.HIGHLIGHT_RULE = null; renderPolicy(); }, 3000);
   await loadPolicy(); refreshCommitBar();
 });
 
