@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.62.1] - 2026-07-09
+
+### Fixed
+- **Session-approval prompts are now in English.** The dual-session approval flow
+  (shown when a second session opens while one is active) had hardcoded Polish
+  strings while the rest of the dashboard is English; translated the "someone is
+  opening a new session" warning, its countdown/reject button, and the "waiting
+  for approval" lock message.
+- **Clickable dashboard URL in `nftgeo-ui token`** now renders as a proper
+  underlined OSC 8 hyperlink instead of just bold text (merged from #65).
+
 ## [1.62.0] - 2026-07-09
 
 ### Added

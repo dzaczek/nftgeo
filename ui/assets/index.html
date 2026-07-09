@@ -1541,7 +1541,7 @@ $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();}
 function showPendingLock(msg){$('#lockmsg').textContent=msg;$('#lock').style.display='flex';$('#lockspin').style.display='block';}
 
 async function pollSession(pollId) {
-  showPendingLock('Trwa oczekiwanie na akceptacje sesji przez drugiego usera...');
+  showPendingLock('Waiting for the active session to approve this new one…');
   return new Promise(resolve => {
     const p = setInterval(async () => {
       try {
@@ -1558,9 +1558,9 @@ async function handlePendingSession(d) {
   if (d.pending_session && !document.getElementById('pending-alert')) {
     const alertHtml = `
       <div id="pending-alert" style="position:fixed;bottom:20px;right:20px;background:#c0392b;color:#fff;padding:15px;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,0.5);z-index:9999;">
-        <div style="font-weight:bold;margin-bottom:10px;">Ostrzeżenie: Ktoś otwiera nową sesję!</div>
-        <div style="margin-bottom:10px;">Pozostało: <span id="pending-countdown">${Math.floor(d.pending_expires_in)}</span>s</div>
-        <button onclick="rejectPendingSession()" style="background:#fff;color:#c0392b;border:none;padding:5px 10px;cursor:pointer;border-radius:2px;font-weight:bold;">Przerwij sesję</button>
+        <div style="font-weight:bold;margin-bottom:10px;">Warning: someone is opening a new session!</div>
+        <div style="margin-bottom:10px;">Time left: <span id="pending-countdown">${Math.floor(d.pending_expires_in)}</span>s</div>
+        <button onclick="rejectPendingSession()" style="background:#fff;color:#c0392b;border:none;padding:5px 10px;cursor:pointer;border-radius:2px;font-weight:bold;">Reject session</button>
       </div>
     `;
     document.body.insertAdjacentHTML('beforeend', alertHtml);
