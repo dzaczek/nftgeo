@@ -157,7 +157,7 @@ sudo ./install.sh
 ```
 
 The installer installs `curl` / `nftables` / `ca-certificates`, copies the
-engine and CLI to `/usr/local/sbin`, creates `/etc/nftgeo/{config,rules.conf}`
+engine and CLI to `/usr/sbin`, creates `/etc/nftgeo/{config,rules.conf}`
 plus empty `rules.d/` and `groups.d/`, installs `nftgeo.service` +
 `nftgeo.timer`, and enables the service at boot and the twice-daily timer.
 
@@ -453,7 +453,7 @@ sudo systemctl enable --now nftgeo-ui.service
 
 # If installed from source:
 make build
-sudo install -m 0755 dist/nftgeo-ui-linux-amd64 /usr/local/sbin/nftgeo-ui
+sudo install -m 0755 dist/nftgeo-ui-linux-amd64 /usr/sbin/nftgeo-ui
 sudo install -m 0644 systemd/nftgeo-ui.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now nftgeo-ui

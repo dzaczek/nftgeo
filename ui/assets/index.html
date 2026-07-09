@@ -436,7 +436,7 @@ const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const j=async u=>{const r=await fetch(u);if(r.status===401||r.status===403){showLock('Session expired — generate a new token on the host.');throw new Error('unauth');}return r.json();};
 let map=null, DROPS={recent:[]}, RULES=[], MODE='rw', REFRESHER=null;
-function showLock(m){$('#lock').style.display='flex';$('#lockmsg').textContent=m||'';if(REFRESHER){clearInterval(REFRESHER);REFRESHER=null;}}
+function showLock(m){$('#lock').style.display='flex';const el=$('#lockmsg');el.textContent=m||'';el.style.color='var(--drop)';if(REFRESHER){clearInterval(REFRESHER);REFRESHER=null;}}
 function hideLock(){$('#lock').style.display='none';}
 
 function nav(v){
@@ -1538,10 +1538,10 @@ document.addEventListener('click',e=>{const t=e.target.closest('.ipl');if(t&&t.d
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeDrawer();}});
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
 
-function showPendingLock(msg){$('#lockmsg').textContent=msg;$('#lock').style.display='flex';$('#lockspin').style.display='block';}
+function showPendingLock(msg){const m=$('#lockmsg');m.textContent=msg;m.style.color='var(--fg)';$('#lock').style.display='flex';$('#lockspin').style.display='block';}
 
 async function pollSession(pollId) {
-  showPendingLock('Trwa oczekiwanie na akceptacje sesji przez drugiego usera...');
+  showPendingLock('Session pending: another session is already active. This one will start automatically in about 30 seconds unless that session rejects it. Please wait — do not refresh (refreshing invalidates the token and you would need a new one).');
   return new Promise(resolve => {
     const p = setInterval(async () => {
       try {
@@ -1558,9 +1558,9 @@ async function handlePendingSession(d) {
   if (d.pending_session && !document.getElementById('pending-alert')) {
     const alertHtml = `
       <div id="pending-alert" style="position:fixed;bottom:20px;right:20px;background:#c0392b;color:#fff;padding:15px;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,0.5);z-index:9999;">
-        <div style="font-weight:bold;margin-bottom:10px;">Ostrzeżenie: Ktoś otwiera nową sesję!</div>
-        <div style="margin-bottom:10px;">Pozostało: <span id="pending-countdown">${Math.floor(d.pending_expires_in)}</span>s</div>
-        <button onclick="rejectPendingSession()" style="background:#fff;color:#c0392b;border:none;padding:5px 10px;cursor:pointer;border-radius:2px;font-weight:bold;">Przerwij sesję</button>
+        <div style="font-weight:bold;margin-bottom:10px;">Warning: someone is opening a new session!</div>
+        <div style="margin-bottom:10px;">Time left: <span id="pending-countdown">${Math.floor(d.pending_expires_in)}</span>s</div>
+        <button onclick="rejectPendingSession()" style="background:#fff;color:#c0392b;border:none;padding:5px 10px;cursor:pointer;border-radius:2px;font-weight:bold;">Reject session</button>
       </div>
     `;
     document.body.insertAdjacentHTML('beforeend', alertHtml);

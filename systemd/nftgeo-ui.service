@@ -7,14 +7,19 @@ After=network.target nftgeo.service
 # unlocks the editor, which stages a draft and commits via the deadman-guarded
 # CLI. Runs as root (reads the kernel log + nft; commits write /etc/nftgeo).
 # Bind stays on localhost; put a reverse proxy in front for remote access.
-ExecStart=/usr/local/sbin/nftgeo-ui -addr 127.0.0.1:8787
+ExecStart=/usr/sbin/nftgeo-ui -addr 127.0.0.1:8787
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 ProtectHome=true
 PrivateTmp=true
-# /usr and /boot read-only; /etc stays writable for commits.
+# ProtectSystem=full makes /usr, /boot AND /etc read-only. The dashboard commits
+# by shelling out to `nftgeo apply` (a child of this unit, so it inherits the
+# sandbox), which writes config/rules/whitelist under /etc/nftgeo and installs the
+# generated ruleset to /etc/nftables.d/nftgeo.nft. Punch writable holes for both,
+# or commits fail.
 ProtectSystem=full
+ReadWritePaths=/etc/nftgeo /etc/nftables.d
 
 [Install]
 WantedBy=multi-user.target
