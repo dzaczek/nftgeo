@@ -1481,14 +1481,23 @@ var (
 	authOn     bool
 	sessionTTL = parseDur(env("UI_SESSION_TTL", "15m"), 15*time.Minute)
 
-	sessMu    sync.Mutex
-	sessions  = map[string]*uiSession{}
-	usedNonce = map[string]time.Time{} // nonce -> time added; pruned in sweepSessions
+	sessMu         sync.Mutex
+	sessions       = map[string]*uiSession{}
+	usedNonce      = map[string]time.Time{} // nonce -> time added; pruned in sweepSessions
+	pendingSession *pendingReq
 )
 
 type uiSession struct {
 	mode string
 	last time.Time
+}
+
+type pendingReq struct {
+	id      string
+	mode    string
+	nonce   string
+	expires time.Time
+	status  string
 }
 
 func parseDur(s string, def time.Duration) time.Duration {
@@ -1580,12 +1589,92 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		usedNonce[nonce] = time.Now()
+
+		// Check for an existing rw session to trigger approval
+		hasActiveRW := false
+		for _, s := range sessions {
+			if s.mode == "rw" && time.Since(s.last) <= sessionTTL {
+				hasActiveRW = true
+				break
+			}
+		}
+
+		if hasActiveRW {
+			reqID := randHex(24)
+			pendingSession = &pendingReq{
+				id:      reqID,
+				mode:    mode,
+				nonce:   nonce,
+				expires: time.Now().Add(30 * time.Second),
+				status:  "pending",
+			}
+			sessMu.Unlock()
+			writeJSON(w, map[string]interface{}{"status": "pending", "poll_id": reqID})
+			return
+		}
 	}
+
 	sid := randHex(24)
 	sessions[sid] = &uiSession{mode: mode, last: time.Now()}
 	sessMu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "nftgeo_sess", Value: sid, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	writeJSON(w, map[string]interface{}{"mode": mode})
+}
+
+func handleSessionPoll(w http.ResponseWriter, r *http.Request) {
+	if !authOn {
+		writeJSON(w, map[string]interface{}{"error": "auth disabled"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		PollID string `json:"poll_id"`
+	}
+	json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+
+	sessMu.Lock()
+	defer sessMu.Unlock()
+
+	if pendingSession == nil || pendingSession.id != body.PollID {
+		http.Error(w, `{"error":"invalid poll_id"}`, http.StatusNotFound)
+		return
+	}
+
+	if time.Now().After(pendingSession.expires) {
+		// Timeout -> accept by default as requested: "jesli ktos wygenruje nowy token i toworzy nim przegladarke chce miec 30 s ostrzezenia... mzoliwosc jej przerwania"
+		// If they don't interrupt it, it proceeds.
+		if pendingSession.status == "pending" {
+			pendingSession.status = "accepted"
+		}
+	}
+
+	if pendingSession.status == "rejected" {
+		pendingSession = nil
+		http.Error(w, `{"error":"session rejected by current user"}`, http.StatusForbidden)
+		return
+	}
+
+	if pendingSession.status == "accepted" {
+		// Drop all old rw sessions
+		for id, s := range sessions {
+			if s.mode == "rw" {
+				delete(sessions, id)
+			}
+		}
+
+		sid := randHex(24)
+		sessions[sid] = &uiSession{mode: pendingSession.mode, last: time.Now()}
+		mode := pendingSession.mode
+		pendingSession = nil
+		http.SetCookie(w, &http.Cookie{Name: "nftgeo_sess", Value: sid, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		writeJSON(w, map[string]interface{}{"status": "ok", "mode": mode})
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{"status": "pending"})
 }
 
 // requireAuth gates an API handler: a valid, non-idle session cookie is required;
@@ -1647,6 +1736,7 @@ func tokenCmd(args []string) {
 	ro := fs.Bool("ro", false, "long-term read-only token (panel only, no firewall changes)")
 	addr := fs.String("addr", "127.0.0.1:8787", "server address for the link")
 	ttl := fs.Duration("ttl", 0, "override token validity window")
+	raw := fs.Bool("raw", false, "print only the raw token (no URL or other text)")
 	fs.Parse(args)
 	secret, err := loadOrCreateSecret()
 	if err != nil {
@@ -1661,12 +1751,26 @@ func tokenCmd(args []string) {
 		exp = time.Now().Add(*ttl)
 	}
 	tok := mintToken(secret, mode, exp)
-	fmt.Printf("Open (valid until %s):\n  http://%s/#auth=%s\n", exp.Format("2006-01-02 15:04 MST"), *addr, tok)
-	if mode == "ro" {
-		fmt.Println("Mode: read-only - long-term panel access, no firewall changes.")
-	} else {
-		fmt.Printf("Mode: full - one-time link; the session then expires after %s of inactivity.\n", sessionTTL)
+
+	if *raw {
+		fmt.Print(tok)
+		return
 	}
+
+	url := fmt.Sprintf("http://%s/#auth=%s", *addr, tok)
+
+	// Fancy output
+	fmt.Printf("\033[1;32m=== NFTGEO-UI SESSION TOKEN ===\033[0m\n\n")
+	fmt.Printf("Valid until: \033[1m%s\033[0m\n", exp.Format("2006-01-02 15:04 MST"))
+	if mode == "ro" {
+		fmt.Printf("Mode:        \033[1;36mRead-Only\033[0m (panel only, no firewall changes)\n")
+	} else {
+		fmt.Printf("Mode:        \033[1;31mFull Read-Write\033[0m (one-time link, expires after %s of inactivity)\n", sessionTTL)
+	}
+	fmt.Printf("\nClick the link below to open the dashboard:\n")
+	// Clickable URL using ANSI OSC 8
+	fmt.Printf("\033[1m\033]8;;%s\033\\%s\033]8;;\033\\\033[0m\n\n", url, url)
+	fmt.Printf("Or copy the token directly:\n\033[1;33m%s\033[0m\n\n", tok)
 }
 
 // ---- draft + commit pipeline (M6B.1) ----------------------------------------
@@ -3517,11 +3621,45 @@ func main() {
 
 	// token exchange is the only API reachable without a session
 	http.HandleFunc("/api/session", handleSession)
+	http.HandleFunc("/api/session_poll", handleSessionPoll)
 
 	api := func(pattern string, h http.HandlerFunc) { http.HandleFunc(pattern, requireAuth(h)) }
 
 	api("/api/me", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]interface{}{"mode": w.Header().Get("X-Nftgeo-Mode"), "auth": authOn})
+		sessMu.Lock()
+		pending := false
+		var expiresIn float64
+		if pendingSession != nil && pendingSession.status == "pending" {
+			pending = true
+			expiresIn = pendingSession.expires.Sub(time.Now()).Seconds()
+			if expiresIn < 0 {
+				expiresIn = 0
+				pendingSession.status = "accepted"
+				pending = false
+			}
+		}
+		sessMu.Unlock()
+		writeJSON(w, map[string]interface{}{
+			"mode":               w.Header().Get("X-Nftgeo-Mode"),
+			"auth":               authOn,
+			"pending_session":    pending,
+			"pending_expires_in": expiresIn,
+		})
+	})
+
+	api("/api/session_reject", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		sessMu.Lock()
+		defer sessMu.Unlock()
+		if pendingSession != nil && pendingSession.status == "pending" {
+			pendingSession.status = "rejected"
+			writeJSON(w, map[string]interface{}{"status": "rejected"})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"status": "none"})
 	})
 	api("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		ch := chains()

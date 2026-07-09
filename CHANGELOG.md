@@ -8,6 +8,23 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.58.0] - 2026-07-09
+
+Integrates PR #53 (cleaned up: dropped committed build artifacts, a stray
+binary, and agent scratch files; kept the features).
+
+### Added
+- **Fancy `nftgeo-ui token` output + `-raw` flag.** The token command now prints
+  a colorized block with a terminal-clickable link and the bare token on its own
+  line; `nftgeo-ui token -raw` prints only the token, for scripting/pasting.
+- **Paste-a-token login.** The dashboard's lock screen now has a token input +
+  Log In button, so you can authenticate without the `#auth=` URL.
+- **Single active read-write session.** Opening a new `rw` session while one is
+  active starts a 30-second negotiation: the current operator sees a warning with
+  a countdown and a *Reject* button; if they don't reject, the old session is
+  ended and the new one takes over. The incoming user sees a waiting state.
+  (Minting a token needs the root-owned secret, so this stays operator-only.)
+
 ## [1.57.1] - 2026-07-09
 
 ### Fixed
