@@ -1798,7 +1798,7 @@ func tokenCmd(args []string) {
 	}
 	fmt.Printf("\nClick the link below to open the dashboard:\n")
 	// Clickable URL using ANSI OSC 8
-	fmt.Printf("\033[1m\033]8;;%s\033\\%s\033]8;;\033\\\033[0m\n\n", url, url)
+	fmt.Printf("\033]8;;%s\033\\\033[4;36m%s\033[0m\033]8;;\033\\\n\n", url, url)
 	fmt.Printf("Or copy the token directly:\n\033[1;33m%s\033[0m\n\n", tok)
 }
 
