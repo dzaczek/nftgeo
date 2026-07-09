@@ -36,6 +36,13 @@ allow in tcp 22 pl
 deny  in tcp 22 any     # close the port to everyone else
 ```
 
+### Changed
+
+- **Policy view reflects the sequential model (#45).** The per-chain flow bar
+  now reads `invalid → established → whitelist → your rules ↓ → policy` (dropping
+  the old deny → allow → deny-by-default slots), with a `row order = match order`
+  hint — the table order is now the evaluation order.
+
 ### Documentation
 
 - **Examples and docs rewritten for the sequential model (#44).** The
