@@ -592,3 +592,35 @@ func TestCurrentWhitelistFilePrecedence(t *testing.T) {
 		t.Errorf("empty file: got %v, want the 2 config entries", got)
 	}
 }
+
+func TestParseDraftRulesIngress(t *testing.T) {
+	in := "drop abuse # bad\naccept 203.0.113.0/24\ndrop any tcp 22 log\n"
+	items, tail := parseDraftRules(in)
+	if len(items) != 3 {
+		t.Fatalf("got %d items, want 3", len(items))
+	}
+	if items[0].Kind != "ingress" || items[0].Action != "drop" || items[0].Target != "abuse" || items[0].Name != "bad" {
+		t.Errorf("rule0: %+v", items[0])
+	}
+	if items[2].Proto != "tcp" || items[2].Port != "22" || !items[2].Log {
+		t.Errorf("rule2: %+v", items[2])
+	}
+	if got := serializeDraftRules(items, tail); got != in {
+		t.Errorf("round-trip mismatch:\n got %q\nwant %q", got, in)
+	}
+}
+
+func TestBuildIngressBody(t *testing.T) {
+	if b, err := buildIngressBody("drop", "abuse", "", "", false); err != nil || b != "drop abuse" {
+		t.Errorf("drop abuse: got %q err %v", b, err)
+	}
+	if b, err := buildIngressBody("drop", "any", "tcp", "22", true); err != nil || b != "drop any tcp 22 log" {
+		t.Errorf("drop any tcp 22 log: got %q err %v", b, err)
+	}
+	if _, err := buildIngressBody("accept", "abuse", "", "", false); err == nil {
+		t.Error("accept abuse should be rejected")
+	}
+	if _, err := buildIngressBody("bogus", "any", "", "", false); err == nil {
+		t.Error("bad action should be rejected")
+	}
+}

@@ -296,6 +296,7 @@
           <button class="btn-ghost" id="addnat" style="color:var(--fg)" title="NAT: masquerade / snat / dnat">+ NAT</button>
           <button class="btn-ghost" id="rawbtn" style="color:var(--mut)" title="Raw text edit of a file's draft">Raw</button>
           <button class="btn-go" id="addrule">+ Add rule</button>
+          <button class="btn-ghost" id="addingress" title="Early stateless drop at the ingress hook">+ Ingress</button>
         </span>
       </div>
       <datalist id="tgtlist"></datalist>
@@ -832,6 +833,17 @@ function rowHTML(r,n,ro,multi){
   const namecell=`<td>${newpill}${r.name?`<span class="dot" style="background:${rcol};box-shadow:none;width:8px;height:8px"></span><span style="color:${rcol}">${esc(r.name)}</span>`:(isNew?'<span class="muted">(unnamed)</span>':'<span class="muted">—</span>')}</td>`;
   const dash='<td style="text-align:right"><span class="muted">—</span></td>';
   const hnd=`<td class="hnd">${ro?'':'<span class="grip">⠿</span>'}${mv}<span class="muted">${n}</span></td>`;
+  // Ingress rules (early stateless drop): source target, optional proto/port, verdict.
+  if(r.kind==='ingress'){
+    const iact=r.action==='drop'?'<span class="pill deny">DROP</span>':'<span class="pill allow">ACCEPT</span>';
+    const itgt=(r.target==='abuse')?'<span class="chip abuse">abuse</span>':(r.target==='any'?'<span class="chip any">any</span>':`<span class="chip obj">${esc(r.target||'?')}</span>`);
+    const isvc=(r.proto&&r.proto!=='any')?`<span class="chip svc">${esc(r.proto)}${r.port&&r.port!=='-'?'/'+esc(r.port):''}</span>`:'<span class="muted">all</span>';
+    const ilog=`<span class="tlog${r.log?' on':''}" ${ro?'':'data-togglelog="1"'} title="${r.log?'logging ON — click to disable':'log matches (click to enable)'}">log</span>`;
+    return `<tr class="prow${r.disabled?' rdis':''}${hl}" ${fa} data-id="${r.id}" ${ro?'':'draggable="true"'}>
+      ${hnd}<td>${tog}</td>${namecell}
+      <td>${itgt}</td><td><span class="chip" title="ingress hook (pre-routing)">⇥ ingress</span></td><td>${isvc}</td>
+      <td>${iact}${ilog}</td>${dash}${fcell}</tr>`;
+  }
   // NAT rules (masquerade/snat/dnat) have no src→dst/service shape: show the
   // verbatim rule with a NAT badge. Edited via the Raw editor (see click handler).
   if(r.kind==='nat'){
@@ -892,6 +904,7 @@ function rowHTML(r,n,ro,multi){
 // live in a separate nat table, not the forward filter chain, so they get their
 // own group; inter-zone rules do run in the forward chain.
 function ruleChain(r){
+  if(r.kind==='ingress')return 'ingress';
   if(r.kind==='nat')return 'nat';
   if(r.kind==='zone')return 'forward';
   const d=r.dir||'in';
@@ -902,6 +915,7 @@ function ruleChain(r){
 // Chain display metadata. Hooks reflect the actual nftgeo filter chains
 // (type filter hook <name> priority -100) — no prerouting/postrouting here.
 const CHAIN_INFO={
+  ingress: {label:'INGRESS', hook:'hook ingress', desc:'Early stateless drop, before routing/conntrack', icon:'🛡'},
   input:   {label:'INPUT',   hook:'hook input',   desc:'Traffic TO this host',              icon:'⬇'},
   forward: {label:'FORWARD', hook:'hook forward', desc:'Traffic ROUTED through (zones)',     icon:'↔'},
   output:  {label:'OUTPUT',  hook:'hook output',  desc:'Traffic FROM this host',            icon:'⬆'},
@@ -913,7 +927,7 @@ function renderPolicy(){
   // Group rules by chain. Sections attach to whichever chain the rules below
   // them belong to. NAT rules go to a separate NAT group.
   const filtered=(RULES||[]).filter(r=>!f||JSON.stringify(r).toLowerCase().includes(f));
-  const chains={input:[],forward:[],output:[],nat:[]};
+  const chains={ingress:[],input:[],forward:[],output:[],nat:[]};
   let lastChain='input';
   for(const r of filtered){
     if(r.kind==='section'){
@@ -928,7 +942,7 @@ function renderPolicy(){
     chains[ch].push(r);
   }
   // Render each chain that has rules, with a chain header card and flow diagram.
-  const order=['input','forward','output','nat'];
+  const order=['ingress','input','forward','output','nat'];
   let html='';
   let n=0;
   for(const ch of order){
@@ -1005,6 +1019,7 @@ async function policyClickHandler(e){
   if(r&&r.action==='throttle'){throttleDrawer(file,id);return;}
   if(r&&r.kind==='synproxy'){synproxyDrawer(file,id);return;}
   if(r&&r.kind==='zone'){zoneDrawer(file,id);return;}
+  if(r&&r.kind==='ingress'){ingressDrawer(file,id);return;}
   if(r&&r.kind==='nat'){natDrawer(file,id);return;}
   const chip=e.target.closest('.chip.obj,.chip.any,.chip.abuse');
   if(chip){inlineTarget(row,chip);return;}
@@ -1019,6 +1034,7 @@ document.addEventListener('click',function(e){
 });
 const firstFile=()=>FILES[0]?FILES[0].name:'rules.conf';
 $('#addrule').addEventListener('click',()=>ruleDrawer(firstFile(),null));
+{const ai=$('#addingress');if(ai)ai.addEventListener('click',()=>ingressDrawer('ingress.conf',null));}
 $('#addsection').addEventListener('click',()=>sectionDrawer(firstFile(),null));
 $('#addthrottle').addEventListener('click',()=>throttleDrawer(firstFile(),null));
 $('#addsynproxy').addEventListener('click',()=>synproxyDrawer(firstFile(),null));
@@ -1289,6 +1305,50 @@ async function deleteRule(file,id){
   const res=await post('/api/rules/draft/delete',{file,id});
   if(res&&res.error){toast(res.error);return;}
   closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Rule deleted.');
+}
+function ingressFileSelectHTML(sel){
+  const igf=(FILES||[]).filter(f=>f.name==='ingress.conf'||f.name.indexOf('ingress.d/')===0);
+  if(igf.length<=1)return '';
+  return `<label class="fld"><span>File</span><select id="ig-file">${igf.map(f=>`<option${f.name===sel?' selected':''}>${esc(f.name)}</option>`).join('')}</select></label>`;
+}
+// Ingress rule editor — restricted grammar (accept|drop <target> [proto] [port] [log]),
+// no dir/state (the ingress hook is source-based and stateless).
+function ingressDrawer(file,id){
+  if(MODE==='ro')return;
+  const r=id!=null?findRule(file,id):null;
+  const v=r?{action:r.action,target:r.target,proto:r.proto||'any',port:r.port==='-'?'':(r.port||''),name:r.name,log:!!r.log}
+           :{action:'drop',target:'abuse',proto:'any',port:'',name:'',log:false};
+  const opt=(arr,sv)=>arr.map(o=>`<option${o===sv?' selected':''}>${o}</option>`).join('');
+  $('#drawertitle').textContent=id!=null?'Edit ingress rule':'New ingress rule';
+  $('#drawerbody').innerHTML=`
+    ${id!=null?'':ingressFileSelectHTML(file||'ingress.conf')}
+    <p class="muted" style="font-size:12px">Ingress = early <b>stateless</b> drop, before routing/conntrack. Source-based; the whitelist is always accepted first. Needs Linux ≥5.10.</p>
+    <label class="fld"><span>Name (comment)</span><input id="ig-name" value="${esc(v.name)}" placeholder="describe this rule" autocomplete="off"></label>
+    <div style="display:flex;gap:10px">
+      <label class="fld" style="flex:1"><span>Action</span><select id="ig-action">${opt(['drop','accept'],v.action)}</select></label>
+      <label class="fld" style="flex:1"><span>Protocol</span><select id="ig-proto" onchange="igProtoChange()">${opt(['any','tcp','udp','all','sctp','icmp','icmpv6'],v.proto)}</select></label>
+    </div>
+    <label class="fld"><span>Target (source)</span><input id="ig-target" list="tgtlist" value="${esc(v.target)}" placeholder="abuse / country / region / group / IP / CIDR / any" autocomplete="off"></label>
+    <label class="fld"><span>Port / service</span><input id="ig-port" list="svclist" value="${esc(v.port)}" placeholder="blank = all ports"></label>
+    <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="ig-log" style="width:auto"${v.log?' checked':''}><span style="margin:0">Log matches (nftgeo-accept/nftgeo-drop:&lt;name&gt;)</span></label>
+    <div style="display:flex;gap:8px;margin-top:auto">
+      <button class="btn-go" onclick="saveIngress('${esc(file||'ingress.conf')}',${id!=null?id:'null'})">Save to draft</button>
+      ${id!=null?`<button class="btn-rb" onclick="deleteRule('${esc(file)}',${id})">Delete</button>`:''}
+      <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
+    </div>`;
+  igProtoChange(); openDrawer(); $('#ig-target').focus();
+}
+function igProtoChange(){const p=$('#ig-proto').value,pt=$('#ig-port');
+  if(p==='any'||p==='icmp'||p==='icmpv6'){pt.value='';pt.disabled=true;pt.placeholder=p==='any'?'(all ports)':'(no port)';}
+  else{pt.disabled=false;pt.placeholder='blank = all '+p+' ports, or 443, 80,443';}}
+async function saveIngress(file,id){
+  const b={kind:'ingress',file:($('#ig-file')?$('#ig-file').value:file),action:$('#ig-action').value,
+    target:$('#ig-target').value.trim(),proto:$('#ig-proto').value,port:$('#ig-port').value.trim(),
+    name:$('#ig-name').value,log:$('#ig-log').checked};
+  if(id!=null)b.id=id;
+  const res=await post('/api/rules/draft/save',b);
+  if(res&&res.error){toast('Rejected: '+res.error);return;}
+  closeDrawer(); await loadPolicy(); refreshCommitBar(); toast('Saved to draft.');
 }
 function inlineTarget(row,chip){
   const file=row.dataset.file, id=+row.dataset.id, r=findRule(file,id); if(!r)return;

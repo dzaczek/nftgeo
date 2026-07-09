@@ -50,6 +50,8 @@ var (
 	configFile         = env("CONFIG_FILE", "/etc/nftgeo/config")
 	rulesFile          = env("RULES_FILE", "/etc/nftgeo/rules.conf")
 	rulesDir           = env("RULES_DIR", "/etc/nftgeo/rules.d")
+	ingressFile        = env("INGRESS_FILE", "/etc/nftgeo/ingress.conf")
+	ingressDir         = env("INGRESS_DIR", "/etc/nftgeo/ingress.d")
 	whitelistFile      = env("WHITELIST_FILE", "/etc/nftgeo/whitelist.conf")
 	whitelistHostsFile = env("WHITELIST_HOSTS_FILE", "/etc/nftgeo/whitelist-hosts.conf")
 	feedsDir           = env("ABUSE_FEEDS_CACHE_DIR", "/var/lib/nftgeo/feeds")
@@ -725,6 +727,8 @@ func ruleKind(f []string) string {
 		return "throttle"
 	case "synproxy":
 		return "synproxy"
+	case "accept", "drop": // ingress hook rule: <accept|drop> <target> [proto] [port] [log]
+		return "ingress"
 	case "allow", "deny":
 		for _, t := range f {
 			if t == "->" {
@@ -734,6 +738,14 @@ func ruleKind(f []string) string {
 		return "filter"
 	}
 	return ""
+}
+
+func isProtoTok(s string) bool {
+	switch s {
+	case "tcp", "udp", "sctp", "all", "any", "icmp", "icmpv6", "esp", "ah", "gre":
+		return true
+	}
+	return false
 }
 
 // ruleComment reproduces the "nftgeo:<line>" tag the engine stamps on every rule
@@ -1863,6 +1875,21 @@ func ruleFileList() []ruleFile {
 			out = append(out, mk(filepath.Join(rulesDir, n), "rules.d/"+n))
 		}
 	}
+	// Ingress hook files (early stateless drop): ingress.conf, then ingress.d/*.
+	// Shown as their own "Ingress" chain group; they use the same draft/commit.
+	out = append(out, mk(ingressFile, "ingress.conf"))
+	if ents, err := os.ReadDir(ingressDir); err == nil {
+		var names []string
+		for _, e := range ents {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".conf") {
+				names = append(names, e.Name())
+			}
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			out = append(out, mk(filepath.Join(ingressDir, n), "ingress.d/"+n))
+		}
+	}
 	return out
 }
 
@@ -2038,6 +2065,41 @@ func previewEnv() ([]string, func()) {
 				}
 			}
 			envv = append(envv, "RULES_DIR="+tmp)
+			tmps = append(tmps, tmp)
+		}
+	}
+	// ingress.conf: point INGRESS_FILE at its draft if one exists.
+	for _, rf := range files {
+		if rf.rel == "ingress.conf" {
+			if _, e := os.Stat(rf.draft); e == nil {
+				envv = append(envv, "INGRESS_FILE="+rf.draft)
+			}
+		}
+	}
+	// ingress.d: mirror rules.d — render from a temp dir of draft-or-live drop-ins.
+	anyID := false
+	for _, rf := range files {
+		if strings.HasPrefix(rf.rel, "ingress.d/") {
+			if _, e := os.Stat(rf.draft); e == nil {
+				anyID = true
+			}
+		}
+	}
+	if anyID {
+		if tmp, err := os.MkdirTemp("", "nftgeo-id-*"); err == nil {
+			for _, rf := range files {
+				if !strings.HasPrefix(rf.rel, "ingress.d/") {
+					continue
+				}
+				src := rf.live
+				if _, e := os.Stat(rf.draft); e == nil {
+					src = rf.draft
+				}
+				if b, e := os.ReadFile(src); e == nil {
+					os.WriteFile(filepath.Join(tmp, strings.TrimPrefix(rf.rel, "ingress.d/")), b, 0644)
+				}
+			}
+			envv = append(envv, "INGRESS_DIR="+tmp)
 			tmps = append(tmps, tmp)
 		}
 	}
@@ -2523,6 +2585,10 @@ func ruleFields(s string) (fields []string, body, comment, kind string, ok bool)
 		if len(f) >= 4 {
 			return f, body, comment, "synproxy", true
 		}
+	case "ingress": // accept|drop <target> [proto] [port] [log]
+		if len(f) >= 2 {
+			return f, body, comment, "ingress", true
+		}
 	}
 	return nil, "", "", "", false
 }
@@ -2582,6 +2648,22 @@ func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, 
 		}
 		if f[0] == "dnat" && len(f) >= 3 {
 			r.Proto, r.Port = f[1], f[2] // dnat <proto> <port> to ...
+		}
+	case "ingress":
+		// accept|drop <target> [proto] [port] [log]
+		r.Action, r.Target = f[0], f[1]
+		i := 2
+		switch {
+		case i < len(f) && isProtoTok(f[i]):
+			r.Proto = f[i]
+			i++
+			if i < len(f) && f[i] != "log" {
+				r.Port = f[i]
+				i++
+			}
+		}
+		if i < len(f) && f[i] == "log" {
+			r.Log = true
 		}
 	default: // filter
 		r.Action, r.Dir, r.Proto, r.Port, r.Target = f[0], f[1], f[2], f[3], f[4]
@@ -2912,8 +2994,8 @@ func handleRulesToggleLog(w http.ResponseWriter, r *http.Request) {
 			found = rr
 		}
 	}
-	if found == nil || found.Kind != "filter" {
-		http.Error(w, `{"error":"log toggle only applies to filter rules"}`, http.StatusBadRequest)
+	if found == nil || (found.Kind != "filter" && found.Kind != "ingress") {
+		http.Error(w, `{"error":"log toggle only applies to filter/ingress rules"}`, http.StatusBadRequest)
 		return
 	}
 	fields := strings.Fields(found.Body)
@@ -3381,6 +3463,46 @@ func buildRuleBody(action, dir, proto, port, target, iface string) (string, erro
 	return strings.Join(parts, " "), nil
 }
 
+// buildIngressBody assembles/validates an ingress-hook rule
+// (accept|drop <target> [proto] [port] [log]); the engine re-validates on apply.
+func buildIngressBody(action, target, proto, port string, log bool) (string, error) {
+	action = strings.ToLower(strings.TrimSpace(action))
+	target = strings.TrimSpace(target)
+	proto = strings.ToLower(strings.TrimSpace(proto))
+	port = strings.TrimSpace(port)
+	if action != "accept" && action != "drop" {
+		return "", fmt.Errorf("ingress action must be accept or drop")
+	}
+	if target == "" {
+		return "", fmt.Errorf("target required (country / region / group / IP / CIDR / any / abuse)")
+	}
+	if !ruleTargetRe.MatchString(target) {
+		return "", fmt.Errorf("target: country / region / group / IP / CIDR / any / abuse")
+	}
+	if action == "accept" && target == "abuse" {
+		return "", fmt.Errorf("target 'abuse' only valid with drop")
+	}
+	parts := []string{action, target}
+	if proto != "" && proto != "any" {
+		if !ruleProtos[proto] {
+			return "", fmt.Errorf("protocol must be tcp / udp / sctp / all / any / icmp / icmpv6")
+		}
+		parts = append(parts, proto)
+		if port != "" && port != "-" {
+			if !rulePortRe.MatchString(port) {
+				return "", fmt.Errorf("port must be a number, range (n-m), list (n,m), or a service")
+			}
+			parts = append(parts, port)
+		}
+	} else if port != "" && port != "-" {
+		return "", fmt.Errorf("choose a protocol (tcp/udp/…) to match a port")
+	}
+	if log {
+		parts = append(parts, "log")
+	}
+	return strings.Join(parts, " "), nil
+}
+
 // buildZoneBody assembles/validates an inter-zone rule
 // (allow|deny <src> -> <dst> <proto> <port> [from <geo>]); engine re-validates.
 func buildZoneBody(action, src, dst, proto, port, geo string) (string, error) {
@@ -3503,6 +3625,8 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		body, err = buildZoneBody(req.Action, req.Src, req.Dst, req.Proto, req.Port, req.Geo)
 	case req.Kind == "nat":
 		body, err = buildNatBody(req.NatType, req.Proto, req.Port, req.Target, req.Geo, req.Iface, req.Lan)
+	case req.Kind == "ingress":
+		body, err = buildIngressBody(req.Action, req.Target, req.Proto, req.Port, req.Log)
 	case req.Kind == "synproxy":
 		body, err = buildSynproxyBody(req.Dir, req.Port, req.Iface)
 	case req.Action == "throttle":
