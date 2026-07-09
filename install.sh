@@ -22,8 +22,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y iprange || true
 
 install -d -m 0755 /etc/nftgeo /etc/nftgeo/rules.d /etc/nftgeo/groups.d \
 	/etc/nftables.d /var/lib/nftgeo /var/lib/nftgeo/zones /usr/local/sbin
-install -m 0755 "${BASE_DIR}/bin/nftgeo-update" /usr/local/sbin/nftgeo-update
-install -m 0755 "${BASE_DIR}/bin/nftgeo" /usr/local/sbin/nftgeo
+install -m 0755 "${BASE_DIR}/bin/nftgeo-update" /usr/sbin/nftgeo-update
+install -m 0755 "${BASE_DIR}/bin/nftgeo" /usr/sbin/nftgeo
 
 if [ -f "${BASE_DIR}/man/nftgeo.8" ]; then
 	install -d -m 0755 /usr/local/share/man/man8
@@ -48,11 +48,11 @@ install -m 0644 "${BASE_DIR}/systemd/nftgeo.timer" /etc/systemd/system/nftgeo.ti
 
 # Install the web UI if the binary ships alongside the engine (make build / release tarball).
 if [ -f "${BASE_DIR}/dist/nftgeo-ui-linux-amd64" ]; then
-	install -m 0755 "${BASE_DIR}/dist/nftgeo-ui-linux-amd64" /usr/local/sbin/nftgeo-ui
+	install -m 0755 "${BASE_DIR}/dist/nftgeo-ui-linux-amd64" /usr/sbin/nftgeo-ui
 elif [ -f "${BASE_DIR}/ui/nftgeo-ui" ]; then
-	install -m 0755 "${BASE_DIR}/ui/nftgeo-ui" /usr/local/sbin/nftgeo-ui
+	install -m 0755 "${BASE_DIR}/ui/nftgeo-ui" /usr/sbin/nftgeo-ui
 fi
-if [ -f /usr/local/sbin/nftgeo-ui ] && [ -f "${BASE_DIR}/systemd/nftgeo-ui.service" ]; then
+if [ -f /usr/sbin/nftgeo-ui ] && [ -f "${BASE_DIR}/systemd/nftgeo-ui.service" ]; then
 	install -m 0644 "${BASE_DIR}/systemd/nftgeo-ui.service" /etc/systemd/system/nftgeo-ui.service
 fi
 
@@ -67,7 +67,7 @@ echo "  systemctl start nftgeo.service"
 echo ""
 echo "Timer enabled — runs every 12h to refresh geo zones + abuse blocklists."
 echo "  systemctl list-timers nftgeo.timer   # check next run"
-if [ -f /usr/local/sbin/nftgeo-ui ]; then
+if [ -f /usr/sbin/nftgeo-ui ]; then
 	echo ""
 	echo "Web dashboard (nftgeo-ui) installed. Enable with:"
 	echo "  systemctl enable --now nftgeo-ui"
@@ -77,5 +77,5 @@ else
 	echo ""
 	echo "Web dashboard (nftgeo-ui) not installed."
 	echo "Build it with: make build"
-	echo "Then re-run install.sh, or copy dist/nftgeo-ui-linux-amd64 to /usr/local/sbin/nftgeo-ui"
+	echo "Then re-run install.sh, or copy dist/nftgeo-ui-linux-amd64 to /usr/sbin/nftgeo-ui"
 fi

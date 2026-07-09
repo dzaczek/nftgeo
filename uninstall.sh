@@ -16,9 +16,9 @@ fi
 if command -v nft >/dev/null 2>&1 && nft list table inet nftgeo_dyn >/dev/null 2>&1; then
 	nft delete table inet nftgeo_dyn
 fi
-rm -f /usr/local/sbin/nftgeo
-rm -f /usr/local/sbin/nftgeo-update
-rm -f /usr/local/sbin/nftgeo-ui
+rm -f /usr/sbin/nftgeo
+rm -f /usr/sbin/nftgeo-update
+rm -f /usr/sbin/nftgeo-ui
 
 rm -f /etc/systemd/system/nftgeo.service
 rm -f /etc/systemd/system/nftgeo.timer
