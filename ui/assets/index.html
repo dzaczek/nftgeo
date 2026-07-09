@@ -198,6 +198,8 @@
   .prow:hover .mv{opacity:1}
   .mv span{cursor:pointer;color:var(--mut);font-size:11px;line-height:1;padding:0 2px;user-select:none}
   .mv span:hover{color:var(--acc2)}
+  .rnew td{background:#38d99612}
+  .rnew td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
 </style>
 </head>
 <body>
@@ -230,7 +232,7 @@
       <span id="cbedit">
         <button class="btn-ghost" onclick="discardDraft()">Discard</button>
         <button class="btn-ghost" onclick="previewDeploy()">Preview</button>
-        <button class="btn-go" onclick="startDeploy()">Commit / Deploy</button>
+        <button id="cbdeploy" class="btn-go" onclick="startDeploy()">Commit / Deploy</button>
       </span>
       <span id="cbpending" style="display:none">
         <button class="btn-keep" onclick="keepDeploy()">Keep changes</button>
@@ -472,7 +474,7 @@ async function rawSave(){const f=$('#raw-file')?$('#raw-file').value:firstFile()
   if(r.status===401||r.status===403){showLock('Read-only session — cannot edit.');return;}
   if(!r.ok){try{const d=await r.json();if(d.error)toast('Rejected: '+d.error);else toast('Error: '+r.status);}catch(e){toast('Error: '+r.status);}return;}
   closeModal(); await loadPolicy(); refreshCommitBar(); toast('Raw draft saved.');}
-async function discardDraft(){if(!confirm('Discard all draft changes? The live firewall is unaffected.'))return;
+async function discardDraft(){if(!confirm('Discard all draft changes? The live firewall is unaffected.'))return;window.NEW_RULES=null;
   await post('/api/draft/discard');await loadPolicy();refreshCommitBar();toast('Draft discarded.');}
 
 async function previewDeploy(){
@@ -484,19 +486,30 @@ async function previewDeploy(){
     +'<div style="text-align:right;margin-top:10px"><button class="btn-go" style="border:0;border-radius:7px;padding:8px 14px;cursor:pointer;font-weight:600" onclick="closeModal();startDeploy()">Deploy with 90s deadman</button></div>';}
   openModal(h);}
 
+let DEPLOYING=false;
 async function startDeploy(){
+  if(DEPLOYING)return; // guard against double-clicks during the (slow) apply
   if(!confirm('Deploy the draft now?\nIt applies with a 90s deadman and auto-rolls-back unless you confirm "Keep".'))return;
-  const d=await post('/api/commit/apply',{seconds:90});
-  // A conflict (a deploy already pending, etc.) comes back as {error}; surface it
-  // and refresh the bar so the pending Keep/Roll-back controls show.
-  if(d.error){toast(d.error);refreshCommitBar();return;}
-  if(!d.deployed){
-    if(d.valid===false){toast('Draft is invalid — see the preview.');previewDeploy();}
-    else toast('Deploy failed: '+(d.message||'unknown error'));
-    return;
+  DEPLOYING=true;
+  const btn=$('#cbdeploy'), label=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='Deploying…';}
+  try{
+    const d=await post('/api/commit/apply',{seconds:90});
+    // A conflict (a deploy already pending, etc.) comes back as {error}; surface it
+    // and refresh the bar so the pending Keep/Roll-back controls show.
+    if(d.error){toast(d.error);refreshCommitBar();return;}
+    if(!d.deployed){
+      if(d.valid===false){toast('Draft is invalid — see the preview.');previewDeploy();}
+      else toast('Deploy failed: '+(d.message||'unknown error'));
+      return;
+    }
+    refreshCommitBar();
+  }finally{
+    DEPLOYING=false;
+    if(btn){btn.disabled=false;btn.textContent=label;}
   }
-  refreshCommitBar();}
-async function keepDeploy(){const d=await post('/api/commit/keep');stopCountdown();toast('Changes kept.');refreshCommitBar();refresh();}
+}
+async function keepDeploy(){const d=await post('/api/commit/keep');window.NEW_RULES=null;stopCountdown();toast('Changes kept.');refreshCommitBar();refresh();}
 async function rollbackDeploy(){const d=await post('/api/commit/rollback');stopCountdown();toast('Rolled back — live rules restored, draft kept.');refreshCommitBar();refresh();}
 
 async function refreshCommitBar(){
@@ -763,7 +776,9 @@ function svc(r){const p=r.port&&r.port!=='-'?r.port:'';const label=(p?esc(r.prot
 function fileBadge(f){const d=f==='rules.conf'?'rules.conf':f.replace(/\.conf$/,'');return `<span class="filebadge" title="${esc(f)}">${esc(d)}</span>`;}
 function rowHTML(r,n,ro,multi){
   const fa=`data-file="${esc(r.file)}"`;
-  const hl = (window.HIGHLIGHT_RULE && window.HIGHLIGHT_RULE.file === r.file && window.HIGHLIGHT_RULE.id === r.id) ? ' highlight-move' : '';
+  const isNew = window.NEW_RULES && window.NEW_RULES.file === r.file && window.NEW_RULES.ids.includes(r.id);
+  const hl = ((window.HIGHLIGHT_RULE && window.HIGHLIGHT_RULE.file === r.file && window.HIGHLIGHT_RULE.id === r.id) ? ' highlight-move' : '') + (isNew ? ' rnew' : '');
+  const newpill = isNew ? `<span class="pill" style="background:var(--ok);color:#04210f;font-size:9px;padding:1px 5px;margin-right:5px;font-weight:700;vertical-align:middle">NEW</span>` : '';
   const fcell=multi?`<td class="filecol">${fileBadge(r.file)}</td>`:'';
   // Precise reorder controls (drag-and-drop is fiddly at chain ends): move a rule
   // up/down one, or to the top/bottom of its file. stopPropagation so a click on
@@ -781,7 +796,7 @@ function rowHTML(r,n,ro,multi){
   const tog=`<span class="tog ${r.disabled?'':'on'}" ${ro?'':'data-toggle="1"'} title="${r.disabled?'disabled':'enabled'}"></span>`;
   const ifchip=r.iface?` <span class="chip if" title="interface">${esc(r.iface)}</span>`:'';
   const rcol=r.name?getRuleColor(r.name):'var(--mut)';
-  const namecell=`<td>${r.name?`<span class="dot" style="background:${rcol};box-shadow:none;width:8px;height:8px"></span><span style="color:${rcol}">${esc(r.name)}</span>`:'<span class="muted">—</span>'}</td>`;
+  const namecell=`<td>${newpill}${r.name?`<span class="dot" style="background:${rcol};box-shadow:none;width:8px;height:8px"></span><span style="color:${rcol}">${esc(r.name)}</span>`:(isNew?'<span class="muted">(unnamed)</span>':'<span class="muted">—</span>')}</td>`;
   const dash='<td style="text-align:right"><span class="muted">—</span></td>';
   const hnd=`<td class="hnd">${ro?'':'<span class="grip">⠿</span>'}${mv}<span class="muted">${n}</span></td>`;
   // NAT rules (masquerade/snat/dnat) have no src→dst/service shape: show the
@@ -1174,9 +1189,14 @@ async function templatesDrawer(){
   openDrawer();
 }
 async function importTpl(id){const file=$('#tpl-file')?$('#tpl-file').value:(FILES[0]?FILES[0].name:'rules.conf');
-  const r=await post('/api/rules/draft/import',{file,id});if(r&&r.error){toast(r.error);return;}closeDrawer();await loadPolicy();refreshCommitBar();
-  if(r&&r.warnings&&r.warnings.length){toast('Imported '+(r.rules||0)+' rules. ⚠ '+r.warnings.join('  '));}
-  else{toast('Imported '+(r.rules||0)+' rules to the top of '+file+' — deploy via Commit.');}}
+  const r=await post('/api/rules/draft/import',{file,id});if(r&&r.error){toast(r.error);return;}closeDrawer();
+  // Mark the imported rules as NEW so they're easy to spot — they're prepended to
+  // the top of the file, so they are ids 0..N-1 there. Cleared on the next reorder
+  // or deploy/discard (ids shift after those).
+  window.NEW_RULES=(r&&r.rules)?{file,ids:[...Array(r.rules).keys()]}:null;
+  await loadPolicy();refreshCommitBar();
+  if(r&&r.warnings&&r.warnings.length){toast('Imported '+(r.rules||0)+' rules (marked NEW). ⚠ '+r.warnings.join('  '));}
+  else{toast('Imported '+(r.rules||0)+' rules (marked NEW) at the top of '+file+' — review, then deploy via Commit.');}}
 async function delTpl(id){const r=await post('/api/templates/delete',{id});if(r&&r.error){toast(r.error);return;}templatesDrawer();}
 async function saveTpl(){const name=$('#tpl-name').value.trim();if(!name){toast('Name required.');return;}const r=await post('/api/templates',{name,description:''});if(r&&r.error){toast('Rejected: '+r.error);return;}toast('Template saved.');templatesDrawer();}
 
@@ -1251,6 +1271,7 @@ polBody.addEventListener('dragover',e=>{
   else if(sib.length)sib[sib.length-1].after(dragging);
 });
 polBody.addEventListener('dragend',async e=>{
+  window.NEW_RULES=null;
   const row=e.target.closest('.prow');if(!row)return;row.classList.remove('dragging');
   const file=row.dataset.file;
   const movedId=+row.dataset.id;
@@ -1270,6 +1291,7 @@ polBody.addEventListener('dragend',async e=>{
 // in its file (reorder) or crossing into the neighbouring file (move) as needed.
 function fileIds(f){return (RULES||[]).filter(r=>r.file===f).map(r=>r.id);}
 async function moveRule(file,id,where){
+  window.NEW_RULES=null;
   const seq=(RULES||[]).filter(r=>{const t=(RULES||[]).find(x=>x.file===file&&x.id===id);return t&&ruleChain(r)===ruleChain(t);});
   const i=seq.findIndex(r=>r.file===file&&r.id===id); if(i<0)return;
   let j; if(where==='up')j=i-1; else if(where==='down')j=i+1; else if(where==='top')j=0; else j=seq.length-1;

@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.59.1] - 2026-07-09
+
+### Fixed
+- **Imported template rules are now marked NEW.** After importing a template the
+  added rules (prepended to the file) get a green `NEW` badge and a highlighted
+  row, so they're easy to spot instead of blending in. The marking clears once
+  you reorder, deploy, or discard.
+- **Commit / Deploy button no longer looks hung / double-clickable.** The apply
+  can take a few seconds (render + load + deadman); the button now disables and
+  shows "Deploying…" for the duration, with a re-entry guard, so it can't be
+  fired multiple times.
 ## [1.59.0] - 2026-07-09
 
 ### Added
