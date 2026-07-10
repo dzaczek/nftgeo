@@ -103,6 +103,13 @@ ZONE_CACHE_HOURS="20"
 # Then: systemctl restart systemd-journald
 LOG_DROPS=""
 
+# NFLOG group for the dashboard. The engine also delivers every 'log' packet to
+# this nfnetlink_log multicast group, which nftgeo-ui listens on to build the
+# drop map/stats. NFLOG is network-namespace aware, so unlike the kernel log it
+# works inside LXC/OpenVZ containers (where 'journalctl -k' is the host's and
+# unreadable). Default 5; set to 0 to disable NFLOG and use the kernel log only.
+NFLOG_GROUP="5"
+
 # Baseline hardening on every managed chain. Set to any non-empty value to accept
 # loopback traffic, drop invalid conntrack state, and always permit the ICMPv6
 # types IPv6 needs (so fencing v6 cannot break Neighbor Discovery). Off by default.

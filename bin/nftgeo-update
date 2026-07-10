@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.68.0"
+NFTGEO_VERSION="1.69.0"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -52,6 +52,12 @@ LOG_LIMIT="${LOG_LIMIT:-limit rate 10/second}"
 # The drop reason (abuse|geo|deny|default-deny) is appended as ":<reason>" to the
 # log prefix, so the dashboard can show which policy dropped a packet.
 LOG_PREFIX_BASE="$(printf '%s' "$LOG_PREFIX" | sed 's/[[:space:]]*$//')"
+# NFLOG: deliver every "log prefix" packet to this nfnetlink_log multicast group
+# instead of only the kernel ring buffer. The dashboard's built-in listener reads
+# it, so drop stats/map work even in LXC/OpenVZ containers where the kernel log is
+# the host's and unreadable from inside. 0 disables NFLOG (kernel log only, the
+# pre-1.69 behaviour). Appended as " group N" after each log prefix.
+NFLOG_GROUP="${NFLOG_GROUP:-5}"
 
 # Default ban duration for "throttle" rules: a source that exceeds the rate is
 # added to a dynamic block set for this long. Per-rule override with "ban <dur>".
@@ -171,6 +177,12 @@ fi
 if [ -r "$CONFIG_FILE" ]; then
 	. "$CONFIG_FILE"
 fi
+
+# Derive the NFLOG suffix after the config is sourced, so a config override of
+# NFLOG_GROUP (e.g. NFLOG_GROUP="0" to disable) actually takes effect.
+case "$NFLOG_GROUP" in ''|*[!0-9]*) NFLOG_GROUP=0 ;; esac
+NFLOG_SUFFIX=""
+[ "$NFLOG_GROUP" -gt 0 ] && NFLOG_SUFFIX=" group ${NFLOG_GROUP}"
 
 case "$DEFAULT_INPUT" in
 	accept|drop) ;;
@@ -538,7 +550,7 @@ emit_set_match() {
 			case "$4" in abuse*) _lr=abuse ;; g_*) _lr=geo ;; *) [ "$5" = accept ] && _lr=allow || _lr=drop ;; esac
 		fi
 		_pfx="$LOG_PREFIX_BASE"; [ "$5" = accept ] && _pfx="nftgeo-accept"
-		printf '\t\t%s %s log prefix "%s:%s "\n' "$mpfx" "$LOG_LIMIT" "$_pfx" "$_lr"
+		printf '\t\t%s %s log prefix "%s:%s "%s\n' "$mpfx" "$LOG_LIMIT" "$_pfx" "$_lr" "$NFLOG_SUFFIX"
 	fi
 	if [ -n "${7:-}" ]; then
 		printf '\t\t%s counter %s comment "%s"\n' "$mpfx" "$5" "$7"
@@ -1545,7 +1557,7 @@ emit_chain() {
 	if [ -n "$ANTISPOOF" ] && { [ "$hook" = input ] || [ "$hook" = forward ]; }; then
 		for _asi in $ANTISPOOF; do
 			case "$_asi" in *[!A-Za-z0-9._@:-]*) echo "bad interface in ANTISPOOF: '$_asi'" >&2; exit 1 ;; esac
-			[ -n "$LOG_DROPS" ] && printf '\t\tiifname "%s" meta nfproto ipv4 fib saddr . iif oif 0 %s log prefix "%s:antispoof "\n' "$_asi" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+			[ -n "$LOG_DROPS" ] && printf '\t\tiifname "%s" meta nfproto ipv4 fib saddr . iif oif 0 %s log prefix "%s:antispoof "%s\n' "$_asi" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$NFLOG_SUFFIX"
 			printf '\t\tiifname "%s" meta nfproto ipv4 fib saddr . iif oif 0 counter drop\n' "$_asi"
 		done
 	fi
@@ -1553,11 +1565,11 @@ emit_chain() {
 	# Whitelist always wins on every managed port.
 	for s in $sides; do
 		if [ -s "${TMP_DIR}/whitelist4.set" ]; then
-			[ -n "$LOG_WHITELIST" ] && printf '\t\tip %s @whitelist4 %s log prefix "nftgeo-accept:whitelist "\n' "$s" "$LOG_LIMIT"
+			[ -n "$LOG_WHITELIST" ] && printf '\t\tip %s @whitelist4 %s log prefix "nftgeo-accept:whitelist "%s\n' "$s" "$LOG_LIMIT" "$NFLOG_SUFFIX"
 			printf '\t\tip %s @whitelist4 counter accept\n' "$s"
 		fi
 		if [ -s "${TMP_DIR}/whitelist6.set" ]; then
-			[ -n "$LOG_WHITELIST" ] && printf '\t\tip6 %s @whitelist6 %s log prefix "nftgeo-accept:whitelist "\n' "$s" "$LOG_LIMIT"
+			[ -n "$LOG_WHITELIST" ] && printf '\t\tip6 %s @whitelist6 %s log prefix "nftgeo-accept:whitelist "%s\n' "$s" "$LOG_LIMIT" "$NFLOG_SUFFIX"
 			printf '\t\tip6 %s @whitelist6 counter accept\n' "$s"
 		fi
 	done
@@ -1617,7 +1629,7 @@ emit_chain() {
 				case "$printed" in *"|${m}|"*) continue ;; esac
 				printed="${printed}|${m}|"
 				mm=""; [ "$m" != any ] && mm="$m "
-				[ "$_dolog" = 1 ] && printf '\t\t%s%s%s log prefix "%s:%s "\n' "$pre" "$mm" "$LOG_LIMIT" "$_pfx" "$_lr"
+				[ "$_dolog" = 1 ] && printf '\t\t%s%s%s log prefix "%s:%s "%s\n' "$pre" "$mm" "$LOG_LIMIT" "$_pfx" "$_lr" "$NFLOG_SUFFIX"
 				printf '\t\t%s%scounter %s comment "%s"\n' "$pre" "$mm" "$_vd" "$src"
 			done
 		else
@@ -1638,7 +1650,7 @@ emit_chain() {
 				_vd=accept; [ "$_za" = deny ] && _vd=drop
 				if [ "$_zg" = "-" ]; then
 					_m="$(zone_l4 "$_zp" "$_zport")"; _mm=""; [ -n "$_m" ] && _mm="${_m} "
-					[ "$_vd" = drop ] && [ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s log prefix "%s:zone "\n' "$pre" "$_mm" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+					[ "$_vd" = drop ] && [ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s log prefix "%s:zone "%s\n' "$pre" "$_mm" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$NFLOG_SUFFIX"
 					printf '\t\t%s%scounter %s\n' "$pre" "$_mm" "$_vd"
 				else
 					for _fam in 4 6; do
@@ -1646,7 +1658,7 @@ emit_chain() {
 						_ipv=ip; [ "$_fam" = 6 ] && _ipv=ip6
 						_mm=""; [ "$_m" != any ] && _mm="${_m} "
 						_gm="${_ipv} saddr @$(set_name "$_zg" "$_fam")"
-						[ "$_vd" = drop ] && [ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s %s log prefix "%s:zone "\n' "$pre" "$_mm" "$_gm" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+						[ "$_vd" = drop ] && [ -n "$LOG_DROPS" ] && printf '\t\t%s%s%s %s log prefix "%s:zone "%s\n' "$pre" "$_mm" "$_gm" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$NFLOG_SUFFIX"
 						printf '\t\t%s%s%s counter %s\n' "$pre" "$_mm" "$_gm" "$_vd"
 					done
 				fi
@@ -1656,7 +1668,7 @@ emit_chain() {
 		# no rule above allowed (established/related is already accepted above).
 		if [ "$SEGMENT_DEFAULT" = deny ] && [ -s "$ZONE_SEG_IF" ]; then
 			_allif="$(iface_set "$(sort -u "$ZONE_SEG_IF" | tr '\n' ' ')")"
-			[ -n "$LOG_DROPS" ] && printf '\t\tiifname %s oifname %s %s log prefix "%s:segment "\n' "$_allif" "$_allif" "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+			[ -n "$LOG_DROPS" ] && printf '\t\tiifname %s oifname %s %s log prefix "%s:segment "%s\n' "$_allif" "$_allif" "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$NFLOG_SUFFIX"
 			printf '\t\tiifname %s oifname %s counter drop\n' "$_allif" "$_allif"
 		fi
 	fi
@@ -1664,7 +1676,7 @@ emit_chain() {
 	# Under default-deny, log what the policy would drop so it shows in the panel
 	# (an explicit logged drop just before the implicit "policy drop").
 	if [ "$hook" = input ] && [ "$DEFAULT_INPUT" = drop ] && [ -n "$LOG_DROPS" ]; then
-		printf '\t\t%s log prefix "%s:default-deny "\n' "$LOG_LIMIT" "$LOG_PREFIX_BASE"
+		printf '\t\t%s log prefix "%s:default-deny "%s\n' "$LOG_LIMIT" "$LOG_PREFIX_BASE" "$NFLOG_SUFFIX"
 		printf '\t\tcounter drop\n'
 	fi
 
@@ -1703,7 +1715,7 @@ emit_ingress() {
 				_dolog=0; { [ "$_ilog" = 1 ] || { [ "$_act" = drop ] && [ -n "$LOG_DROPS" ]; }; } && _dolog=1
 				_pfx="$LOG_PREFIX_BASE"; [ "$_act" = accept ] && _pfx="nftgeo-accept"
 				_lr="$lname"; [ -z "$_lr" ] && _lr="$_act"
-				[ "$_dolog" = 1 ] && printf '\t\t%s%s log prefix "%s:%s "\n' "$mm" "$LOG_LIMIT" "$_pfx" "$_lr"
+				[ "$_dolog" = 1 ] && printf '\t\t%s%s log prefix "%s:%s "%s\n' "$mm" "$LOG_LIMIT" "$_pfx" "$_lr" "$NFLOG_SUFFIX"
 				printf '\t\t%scounter %s comment "%s"\n' "$mm" "$_act" "$src"
 			done
 		else

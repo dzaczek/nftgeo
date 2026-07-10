@@ -34,6 +34,8 @@ nftgeo warns about (but does not flip) `ip_forward`/`forwarding` sysctls.
 - SOC overview: per-interface throughput/error charts (`/proc/net/dev` ring,
   1 h), conntrack + net KPIs, per-IP drop histograms, gradient area charts
   *(1.66.0)*.
+- NFLOG drop logging (`NFLOG_GROUP`) + built-in pure-Go listener, so the drop
+  map/stats work inside LXC/OpenVZ containers, not just on hosts *(1.69.0)*.
 - **P1 — HARDEN**: loopback accept, `ct state invalid` drop, essential ICMPv6.
 - **P2 — Interfaces**: `on <iface>` on any rule, arbitrary interface names
   (VLANs, tunnels, bridges) with an unknown-interface warning.

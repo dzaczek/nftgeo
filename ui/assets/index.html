@@ -713,10 +713,13 @@ async function loadTopIPs(){
 // all, so `log` runs but its output never reaches the dashboard.
 function updateLogWarn(d){
   const el=$('#logwarn');if(!el)return;
-  if(d.enabled&&!d.container){el.style.display='none';return;}
+  // With logging on, drops reach the dashboard via NFLOG (works in containers)
+  // or the kernel log — nothing to warn about.
+  if(d.enabled){el.style.display='none';return;}
   el.style.display='block';
-  if(d.container){
-    el.innerHTML='This host is a <b>container</b> (LXC/OpenVZ) — nftables <code>log</code> writes to the <b>host</b> kernel log, which the container can\'t read, so the drop map &amp; per-IP stats stay empty here even with logging enabled. Rules still drop traffic, and per-rule hit counters work in the <b>Policy</b> tab. (Real log delivery would need NFLOG.)';
+  if(d.container&&!d.nflog){
+    // Container AND no NFLOG listener: even enabling logging won't reach us.
+    el.innerHTML='This host is a <b>container</b> (LXC/OpenVZ) and the NFLOG listener isn\'t available — nftables <code>log</code> writes to the <b>host</b> kernel log, which the container can\'t read, so the drop map &amp; per-IP stats stay empty. Rules still drop traffic, and per-rule hit counters work in the <b>Policy</b> tab.';
   }else{
     el.innerHTML='No drops are being logged yet — the map &amp; drop stats need drop logging. Add <code>log</code> to a <code>deny</code> rule for per-rule logging, or set <code>LOG_DROPS="1"</code> in config to log every drop.';
   }

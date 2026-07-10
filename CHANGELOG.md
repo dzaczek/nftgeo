@@ -8,6 +8,24 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.69.0] - 2026-07-10
+
+### Added
+- **NFLOG drop logging — the drop map & stats now work in containers.** The
+  engine appends ` group N` to every `log prefix` (new `NFLOG_GROUP`, default
+  `5`; `0` restores kernel-log-only behaviour), routing logged packets to the
+  `nfnetlink_log` multicast group instead of only the kernel ring buffer.
+  Unlike the kernel log (host-only, invisible inside LXC/OpenVZ), NFLOG is
+  network-namespace aware, so nftgeo-ui's built-in pure-Go listener
+  (`github.com/florianl/go-nflog`) receives drops even in a container — which
+  is what finally makes the world map, top source IPs, and drop stats populate
+  on hosts like mikr.us. It works identically on bare metal/VMs, so the
+  dashboard uses NFLOG uniformly and only falls back to journalctl when NFLOG
+  can't be opened (group disabled, or no `CAP_NET_ADMIN`). No new system
+  service — the listener is inside the existing `nftgeo-ui` binary.
+- The drop-logging banner now knows about NFLOG: it only shows the
+  "container can't log" message when NFLOG is genuinely unavailable.
+
 ## [1.68.0] - 2026-07-10
 
 ### Added

@@ -634,6 +634,7 @@ type Drop struct {
 type DropsResp struct {
 	Enabled     bool           `json:"enabled"`
 	Container   bool           `json:"container"` // in an LXC/container: kernel log not visible
+	Nflog       bool           `json:"nflog"`     // drops sourced from the NFLOG listener
 	Total       int            `json:"total"`
 	IngressByCC map[string]int `json:"ingressByCC"`
 	EgressByCC  map[string]int `json:"egressByCC"`
@@ -669,17 +670,74 @@ var reKV = regexp.MustCompile(`(\w+)=(\S+)`)
 // fields (labels may contain spaces). accept lines come from per-rule logging.
 var reReason = regexp.MustCompile(`nftgeo-(drop|accept):(.+?)\s+(?:IN|OUT|MAC|PHYSIN|PHYSOUT|SRC|DST)=`)
 
+// drops builds the dashboard's 24h drop summary. Records come from the NFLOG
+// listener when it's active (works in containers), else from the kernel log via
+// journalctl.
 func drops(since string) DropsResp {
+	var records []Drop
+	if nflogActive() {
+		records = nflogDropsSince(since)
+	} else {
+		records = collectJournalDrops(since)
+	}
+	resp := aggregateDrops(records)
+	resp.Enabled = logDropsOn()
+	resp.Container = kernelLogHidden()
+	resp.Nflog = nflogActive()
+	return resp
+}
+
+// aggregateDrops turns parsed drop/accept records (Dir/CC/Verdict/Time already
+// set) into the dashboard summary: totals, per-country, top ports, the 24h
+// timeline, and the recent list. accept records show in Recent but do not feed
+// the drop analytics.
+func aggregateDrops(records []Drop) DropsResp {
 	resp := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}, Timeline: make([]int, 24)}
+	for _, d := range records {
+		drop := d.Verdict == "drop"
+		if t, e := time.Parse(time.RFC3339, d.Time); e == nil {
+			if ha := int(time.Since(t).Hours()); drop && ha >= 0 && ha < 24 {
+				resp.Timeline[23-ha]++
+			}
+		}
+		switch d.Dir {
+		case "ingress":
+			if drop && d.CC != "" {
+				resp.IngressByCC[d.CC]++
+			}
+		case "egress":
+			if drop && d.CC != "" {
+				resp.EgressByCC[d.CC]++
+			}
+		}
+		if drop {
+			if d.Dport != "" {
+				resp.TopPorts[d.Dport]++
+			}
+			resp.Total++
+		}
+		resp.Recent = append(resp.Recent, d)
+	}
+	sort.Slice(resp.Recent, func(i, j int) bool { return resp.Recent[i].Time > resp.Recent[j].Time })
+	if len(resp.Recent) > 200 {
+		resp.Recent = resp.Recent[:200]
+	}
+	return resp
+}
+
+// collectJournalDrops parses nftgeo log lines from the kernel log (journalctl),
+// setting each record's direction, country, verdict, and timestamp.
+func collectJournalDrops(since string) []Drop {
+	var out []Drop
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "journalctl", "-k", "-o", "json", "--no-pager", "--since", since)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return resp
+		return out
 	}
 	if err := cmd.Start(); err != nil {
-		return resp
+		return out
 	}
 	defer cmd.Wait()
 	defer stdout.Close()
@@ -711,50 +769,24 @@ func drops(since string) DropsResp {
 			d.Verdict = m[1]
 			d.Reason = m[2]
 		}
-		// accept lines (per-rule connection logging) are shown in Recent but do
-		// not feed the drop analytics (totals, timeline, top ports, geo).
-		drop := d.Verdict == "drop"
 		if us, e := strconv.ParseInt(rec.TS, 10, 64); e == nil {
-			t := time.UnixMicro(us)
-			d.Time = t.UTC().Format(time.RFC3339)
-			if ha := int(time.Since(t).Hours()); drop && ha >= 0 && ha < 24 {
-				resp.Timeline[23-ha]++
-			}
+			d.Time = time.UnixMicro(us).UTC().Format(time.RFC3339)
 		}
-		in, out := f["IN"] != "", f["OUT"] != ""
+		in, out2 := f["IN"] != "", f["OUT"] != ""
 		switch {
-		case in && !out:
+		case in && !out2:
 			d.Dir = "ingress"
 			d.CC = geo.lookup(d.Src)
-			if drop && d.CC != "" {
-				resp.IngressByCC[d.CC]++
-			}
-		case out && !in:
+		case out2 && !in:
 			d.Dir = "egress"
 			d.CC = geo.lookup(d.Dst)
-			if drop && d.CC != "" {
-				resp.EgressByCC[d.CC]++
-			}
 		default:
 			d.Dir = "forward"
 			d.CC = geo.lookup(d.Src)
 		}
-		if drop {
-			if d.Dport != "" {
-				resp.TopPorts[d.Dport]++
-			}
-			resp.Total++
-		}
-		resp.Recent = append(resp.Recent, d)
+		out = append(out, d)
 	}
-	// newest first, cap the recent list
-	sort.Slice(resp.Recent, func(i, j int) bool { return resp.Recent[i].Time > resp.Recent[j].Time })
-	if len(resp.Recent) > 200 {
-		resp.Recent = resp.Recent[:200]
-	}
-	resp.Enabled = logDropsOn()
-	resp.Container = kernelLogHidden()
-	return resp
+	return out
 }
 
 func logDropsOn() bool {
@@ -4032,10 +4064,23 @@ func main() {
 	// read per tick, in-memory ring only).
 	startIfSampler()
 
+	// NFLOG drop listener: works inside containers where the kernel log isn't
+	// readable. When it's up, it records drops directly, so the journalctl-based
+	// ingest below is skipped to avoid double-counting.
+	startNflog()
+
 	// Load persisted stats and start the ingest+dump ticker. Only write to disk
 	// when new drops were actually ingested (no churn when the box is idle).
 	loadStats()
 	go func() {
+		if nflogActive() {
+			// NFLOG feeds the stats store as packets arrive; just persist
+			// periodically so a restart keeps the history.
+			for range time.Tick(5 * time.Minute) {
+				dumpStats()
+			}
+			return
+		}
 		if ingestDropsLog() > 0 {
 			dumpStats()
 		}

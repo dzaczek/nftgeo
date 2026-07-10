@@ -354,6 +354,7 @@ order.
 | `DEFAULT_INPUT` | `accept` | Input chain policy: `accept` (selective) or `drop` (default-deny) |
 | `LOG_DROPS` | `""` (off) | Log dropped packets to kernel log / journald |
 | `LOG_WHITELIST` | `""` (off) | Log whitelist hits as `nftgeo-accept:whitelist` |
+| `NFLOG_GROUP` | `5` | Also deliver `log` packets to this NFLOG group so the dashboard sees drops inside containers (LXC/OpenVZ). `0` = kernel log only |
 | `HARDEN` | `""` (off) | Baseline: accept loopback, drop invalid, permit essential ICMPv6 |
 | `ANTISPOOF` | `""` | Interfaces to protect with strict uRPF (reverse-path filter) |
 | `ZONE_CACHE_HOURS` | `20` | How long downloaded country zones are reused |
@@ -670,7 +671,7 @@ sudo systemctl start nftgeo.service
 | Port still open after `allow` | An `allow` on its own doesn't close the port — add a catch-all `deny ... any` below it. `validate` warns about this. |
 | Egress geo-fencing breaks updates | If you restrict outbound 80/443, make sure the allowed regions cover ipdeny.com and AbuseIPDB, or add their IPs to `WHITELIST`. |
 | Service won't start on a fresh install | If `rules.conf` is still the empty example, the engine loads a permissive baseline and warns (with `DEFAULT_INPUT=accept`); it only aborts if `DEFAULT_INPUT=drop`, where an empty ruleset would lock you out. Add rules and re-apply. |
-| Drop map/stats empty in a container | On LXC/OpenVZ (e.g. mikr.us) nftables `log` writes to the *host* kernel log, which the container can't read — so `LOG_DROPS`/per-rule `log` drop traffic but log nothing visible. The dashboard detects and states this. Rules still drop; per-rule hit counters (Policy tab) still work. |
+| Drop map/stats empty in a container | Since 1.69.0 the dashboard reads drops via **NFLOG** (`NFLOG_GROUP`, default 5), which works inside LXC/OpenVZ — enable logging (`LOG_DROPS="1"` or per-rule `log`) and the map populates. If NFLOG can't be opened (no `CAP_NET_ADMIN`, or `NFLOG_GROUP=0`) it falls back to the kernel log, which a container can't read; the banner says so. |
 | `nft: Message too long` on load | The container's netlink buffer is too small and `net.core.wmem_max` is host-controlled. The engine retries the transient automatically; if it persists, ask the host to raise `net.core.wmem_max`. |
 
 ---

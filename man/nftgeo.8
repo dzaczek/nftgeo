@@ -1,5 +1,5 @@
 .\" nftgeo(8) manual page
-.TH NFTGEO 8 "2026-07-10" "nftgeo 1.68.0" "System Administration"
+.TH NFTGEO 8 "2026-07-10" "nftgeo 1.69.0" "System Administration"
 .SH NAME
 nftgeo \- declarative geo / abuse / segmentation firewall for nftables
 .SH SYNOPSIS
@@ -297,6 +297,13 @@ Non-empty logs dropped packets with an
 .B nftgeo-drop:<reason>
 prefix (view with
 .BR "journalctl -k | grep nftgeo-drop" ).
+.TP
+.B NFLOG_GROUP
+NFLOG multicast group (default 5) that every
+.B log
+packet is also delivered to, so the dashboard can build the drop map/stats
+inside LXC/OpenVZ containers where the kernel log is the host's and unreadable.
+Set to 0 to disable NFLOG and use the kernel log only.
 .TP
 .B LOG_WHITELIST
 Non-empty logs whitelist hits (rate-limited) with an
