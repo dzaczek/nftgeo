@@ -213,6 +213,7 @@ sudo nftgeo rollback                   # restore the previous generation
 ```sh
 HARDEN="1"                             # baseline: accept lo, drop invalid, ICMPv6
 LOG_DROPS="1"                          # log dropped packets to journald/dmesg
+NFLOG_GROUP="5"                        # dashboard drop map via NFLOG (works in LXC); 0=off
 LOG_WHITELIST="1"                      # log whitelist hits (nftgeo-accept:whitelist)
 ABUSE_FEEDS="https://..."              # extra blocklists
 WHITELIST_HOSTS="vpn.example.ch"       # hostname whitelist
