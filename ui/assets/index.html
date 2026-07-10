@@ -319,8 +319,8 @@
           <button class="btn-ghost" id="addzone" style="color:var(--fg)" title="inter-zone rule (forward chain)">+ Zone</button>
           <button class="btn-ghost" id="addnat" style="color:var(--fg)" title="NAT: masquerade / snat / dnat">+ NAT</button>
           <button class="btn-ghost" id="rawbtn" style="color:var(--mut)" title="Raw text edit of a file's draft">Raw</button>
-          <button class="btn-go" id="addrule">+ Add rule</button>
-          <button class="btn-ghost" id="addingress" title="Early stateless drop at the ingress hook">+ Ingress</button>
+          <button class="btn-go" id="addrule" title="allow/deny filter rule (input / output / forward) — stateful, first-match-wins">+ Filter rule</button>
+          <button class="btn-ghost" id="addingress" title="Ingress-hook rule — earliest netfilter stage, per-device, stateless, before routing &amp; conntrack. accept/drop by source; the whitelist is auto-accepted first.">+ Ingress rule</button>
         </span>
       </div>
       <datalist id="tgtlist"></datalist>
@@ -1129,7 +1129,8 @@ function ruleChain(r){
 // Chain display metadata. Hooks reflect the actual nftgeo filter chains
 // (type filter hook <name> priority -100) — no prerouting/postrouting here.
 const CHAIN_INFO={
-  ingress: {label:'INGRESS', hook:'hook ingress', desc:'Early stateless drop, before routing/conntrack', icon:'🛡'},
+  ingress: {label:'INGRESS', hook:'hook ingress', desc:'Earliest stage — per-device, stateless, before routing & conntrack', icon:'🛡',
+            note:'The ingress hook runs first, per network device, before routing and connection tracking. Rules here are <b>source-based and stateless</b> (<code>accept</code>/<code>drop &lt;target&gt; [proto] [port]</code>) — no direction, no connection state — so a drop sheds the packet at the cheapest possible point (ideal for abuse/geo under DDoS). The whitelist is always accepted first, so it can never be dropped here. This is an extra early layer, not a replacement for your <code>deny … abuse</code> filter rules.'},
   input:   {label:'INPUT',   hook:'hook input',   desc:'Traffic TO this host',              icon:'⬇'},
   forward: {label:'FORWARD', hook:'hook forward', desc:'Traffic ROUTED through (zones)',     icon:'↔'},
   output:  {label:'OUTPUT',  hook:'hook output',  desc:'Traffic FROM this host',            icon:'⬆'},
@@ -1155,13 +1156,17 @@ function renderPolicy(){
     lastChain=ch;
     chains[ch].push(r);
   }
-  // Render each chain that has rules, with a chain header card and flow diagram.
+  // Render each chain that has rules, in netfilter processing order: ingress
+  // (per-device, pre-routing) → input/forward → output → NAT. The header shows
+  // the stage number so the packet-processing order is explicit.
   const order=['ingress','input','forward','output','nat'];
   let html='';
   let n=0;
+  let stage=0;
   for(const ch of order){
     const rules=chains[ch];
     if(!rules||rules.length===0)continue;
+    stage++;
     const info=CHAIN_INFO[ch]||CHAIN_INFO.input;
     const isNat=ch==='nat';
     const label=isNat?'NAT':info.label;
@@ -1173,8 +1178,13 @@ function renderPolicy(){
       <span style="font-size:16px">${icon}</span>
       <b>${label}</b>
       <span class="muted" style="font-size:11px">${esc(desc)}</span>
-      <span class="muted" style="font-size:11px;margin-left:auto">${rules.filter(r=>r.kind!=='section').length} rule${rules.filter(r=>r.kind!=='section').length!==1?'s':''}</span>
+      <span class="muted" style="font-size:11px;margin-left:auto" title="netfilter processing order">stage ${stage} · ${rules.filter(r=>r.kind!=='section').length} rule${rules.filter(r=>r.kind!=='section').length!==1?'s':''}</span>
     </div>`;
+    // Extra behaviour note for hooks that differ from the usual stateful filter
+    // (ingress is the important one: stateless, per-device, pre-conntrack).
+    if(info.note){
+      html+=`<div class="muted" style="padding:6px 12px;font-size:11px;line-height:1.5;border-bottom:1px solid var(--line);background:var(--bg)">${info.note}</div>`;
+    }
     // Flow bar: a fixed baseline runs first (with live counters), then YOUR
     // rules are evaluated in the order shown in the table below — top-to-bottom,
     // first match wins — then the chain policy. Order in the table IS the

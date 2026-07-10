@@ -8,6 +8,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.69.1] - 2026-07-10
+
+### Changed
+- **Policy tab reads in netfilter processing order.** Each chain group now
+  shows its stage number (ingress → input → forward → output → NAT), making the
+  packet-processing order explicit. The ingress group gains a behaviour note
+  explaining it's the earliest stage — per-device, stateless, before routing and
+  conntrack, whitelist auto-accepted first.
+- **Clearer rule buttons.** "+ Add rule" is now "+ Filter rule" (with a tooltip:
+  allow/deny, stateful, first-match-wins) and "+ Ingress" is "+ Ingress rule",
+  so the two rule kinds and where they run are unambiguous.
+
 ## [1.69.0] - 2026-07-10
 
 ### Added
