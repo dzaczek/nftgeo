@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.65.0"
+NFTGEO_VERSION="1.66.0"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -1849,6 +1849,14 @@ write_status() {
 	[ -f "${TMP_DIR}/geo_fetched_at" ] && _geo_fetched=$(cat "${TMP_DIR}/geo_fetched_at")
 	[ -n "$_geo_fetched" ] && echo "$_geo_fetched" > "$GEO_FETCH_TS"
 	[ -f "$GEO_FETCH_TS" ] && _geo_fetched=$(cat "$GEO_FETCH_TS")
+	# No recorded download yet (zones served from cache since before the
+	# timestamp existed): estimate from the newest zone cache file's mtime so
+	# the panel does not claim "not yet fetched" while geo data is working.
+	# Not persisted — a real download will set GEO_FETCH_TS.
+	if [ -z "$_geo_fetched" ] && [ -d "$ZONE_DIR" ]; then
+		_geo_fetched=$(find "$ZONE_DIR" \( -name '*.v4' -o -name '*.v6' \) -type f \
+			-exec stat -c %Y {} + 2>/dev/null | sort -n | tail -1) || true
+	fi
 	_abuse_has_key="false"
 	[ -n "${ABUSEIPDB_API_KEY:-}" ] && _abuse_has_key="true"
 	_abuse_rule="false"

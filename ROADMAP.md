@@ -31,6 +31,9 @@ nftgeo warns about (but does not flip) `ip_forward`/`forwarding` sysctls.
   <target> [proto] [port] [log]`), whitelist auto-first; opt-in *(1.64.0)*.
 - Run status `status.json` (API key presence, fetch timestamps, warnings) +
   AbuseIPDB card with in-panel API key editing + geo freshness *(1.65.0)*.
+- SOC overview: per-interface throughput/error charts (`/proc/net/dev` ring,
+  1 h), conntrack + net KPIs, per-IP drop histograms, gradient area charts
+  *(1.66.0)*.
 - **P1 — HARDEN**: loopback accept, `ct state invalid` drop, essential ICMPv6.
 - **P2 — Interfaces**: `on <iface>` on any rule, arbitrary interface names
   (VLANs, tunnels, bridges) with an unknown-interface warning.

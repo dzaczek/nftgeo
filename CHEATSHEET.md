@@ -251,7 +251,10 @@ sudo ./uninstall.sh
 ## Dashboard (nftgeo-ui)
 
 Local read-only web panel + visual policy editor (world map of drops, live stats,
-Objects/Policy editor). Binds to `127.0.0.1:8787`; front it with a proxy for TLS.
+Objects/Policy editor). The overview is a SOC view: per-interface in/out
+throughput charts with error counters (last hour, sampled from `/proc/net/dev`
+— near-zero cost), conntrack usage, and per-IP drop histograms. Binds to
+`127.0.0.1:8787`; front it with a proxy for TLS.
 
 ```sh
 sudo systemctl enable --now nftgeo-ui        # start the panel

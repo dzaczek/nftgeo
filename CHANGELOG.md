@@ -8,6 +8,35 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.66.0] - 2026-07-10
+
+### Added
+- **SOC overview: per-interface utilization & error monitoring.** The dashboard
+  samples `/proc/net/dev` every 10 s into an in-memory ring (one hour of
+  history, a few hundred KB of RAM, no external tools, no disk writes — new
+  `/api/ifstats`). Each interface gets a card with a gradient area chart of
+  in/out throughput (hover tooltip, peak, % of link speed from
+  `/sys/class/net/*/speed`, up/down state, cumulative totals) and per-type
+  error deltas over the hour — RX/TX errors, drops, fifo, frame, collisions,
+  carrier — shown as red chips plus an error-rate spark chart only when
+  something actually failed.
+- **Per-IP drop histograms.** The Top source IPs table gains an Activity
+  column: a time-bucketed mini-histogram of each IP's drops over the selected
+  range (new `/api/ip-histogram`, served from the existing in-memory drop
+  store).
+- **SOC header KPIs.** Live net RX/TX throughput (all interfaces) and
+  conntrack usage (`nf_conntrack_count`/`max`, turns red above 85 %).
+- **Pro charts.** The flat drops sparkline is now a gridded, gradient-filled
+  SVG area chart with a hover tooltip; the same chart engine drives the
+  interface cards. Pure inline SVG — no chart library, CSP stays strict.
+
+### Fixed
+- `status.json`: when zones are served from cache and no download timestamp
+  was recorded yet, geo `fetched_at` now falls back to the newest zone cache
+  file's mtime instead of claiming "not yet fetched".
+- AbuseIPDB status card used undefined CSS variables (`--border`, `--bg2`) —
+  now themed correctly.
+
 ## [1.65.0] - 2026-07-10
 
 ### Added

@@ -76,9 +76,26 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
   .card h3{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);margin:0 0 10px}
   #map{height:400px}
-  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:14px}
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
   .kpi b{font-size:26px;display:block}.kpi span{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:1px}
+  .kpi b small{font-size:13px;color:var(--mut);font-weight:400}
+  @media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}}
+  /* SOC area charts */
+  .achart{position:relative}
+  .achart svg{display:block}
+  .achart .actip{position:absolute;pointer-events:none;display:none;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:11px;white-space:nowrap;z-index:5;box-shadow:0 2px 8px #0006}
+  .aleg{display:flex;gap:12px;font-size:11px;color:var(--mut);margin-top:2px}
+  .aleg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+  /* interface cards */
+  .ifhead{display:flex;align-items:center;gap:8px}
+  .ifhead .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .errchip{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:9px;margin:2px 3px 0 0;border:1px solid var(--line);color:var(--mut)}
+  .errchip.bad{color:var(--drop);border-color:var(--drop);font-weight:600}
+  /* per-IP mini histogram */
+  .ipHist{display:inline-flex;align-items:flex-end;gap:1px;height:14px;vertical-align:middle}
+  .ipHist i{width:3px;background:var(--drop);display:inline-block;border-radius:1px 1px 0 0;min-height:1px}
+  .ipHist i.z{opacity:.18;height:1px !important}
   .row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}
   .bar{height:6px;background:var(--acc2);border-radius:3px;margin-top:3px}.bar.drop{background:var(--drop)}
   /* tables */
@@ -255,6 +272,8 @@
         <div class="kpi"><b id="k-in">0</b><span>ingress</span></div>
         <div class="kpi"><b id="k-out">0</b><span>egress</span></div>
         <div class="kpi"><b id="k-abuse">0</b><span>abuse IPs</span></div>
+        <div class="kpi" title="Live network throughput, all interfaces (sum RX / sum TX)"><b id="k-net">—</b><span>net rx / tx</span></div>
+        <div class="kpi" title="Tracked connections vs kernel limit (nf_conntrack)"><b id="k-ct">—</b><span>conntrack</span></div>
       </div>
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card"><h3>System</h3><div id="health"></div></div>
@@ -269,8 +288,12 @@
           <div class="card" style="margin-top:14px"><h3>Top blocked ports</h3><div id="ports"></div></div>
         </div>
       </div>
+      <!-- SOC: per-interface utilization + errors (last hour, sampled by the UI) -->
+      <div id="ifsec" style="display:none;margin-top:14px">
+        <div class="grid g2" id="ifgrid"></div>
+      </div>
       <div class="card" style="margin-top:14px">
-        <h3>Top source IPs <select id="topip-range" onchange="loadTopIPs()" style="float:right;font-size:12px;background:var(--bg);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:2px 6px">
+        <h3>Top source IPs <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— with drop activity histogram</span> <select id="topip-range" onchange="loadTopIPs()" style="float:right;font-size:12px;background:var(--bg);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:2px 6px">
           <option value="1h">last 1h</option>
           <option value="6h">last 6h</option>
           <option value="24h" selected>last 24h</option>
@@ -387,7 +410,7 @@
       <div class="grid g2" style="margin-top:14px">
         <div class="card"><h3>nftables sets (live sizes)</h3><div id="o-sets"></div></div>
         <div class="card"><h3>Abuse sources <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— what fills the abuse blocklist</span></h3>
-<div id="o-abuseipdb-status" style="margin-bottom:12px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg2)"></div>
+<div id="o-abuseipdb-status" style="margin-bottom:12px;padding:8px 12px;border-radius:6px;border:1px solid var(--line);background:var(--bg)"></div>
 <div id="o-feeds"></div></div>
       </div>
       <div class="card" style="margin-top:14px">
@@ -566,20 +589,102 @@ function renderHealth(h){h=h||{};
     }
   }
 }
-function sparkline(el,data){data=data||[];const w=300,ht=52,max=Math.max(1,...data);
-  const pts=data.map((v,i)=>`${(i/(Math.max(1,data.length-1)))*w},${ht-(v/max)*(ht-6)-3}`).join(' ');
-  el.innerHTML=`<svg viewBox="0 0 ${w} ${ht}" width="100%" height="${ht}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="var(--drop)" stroke-width="2"/></svg>
-    <div class="muted" style="font-size:11px;display:flex;justify-content:space-between"><span>-24h</span><span>peak ${max}/h</span><span>now</span></div>`;}
+// ---- SOC area charts (pure SVG, no deps) ----
+function fmtBits(v){if(!isFinite(v)||v<1)return '0 b/s';const u=['b/s','Kb/s','Mb/s','Gb/s','Tb/s'];let i=0;while(v>=1000&&i<u.length-1){v/=1000;i++;}return (v>=100?Math.round(v):v.toFixed(1))+' '+u[i];}
+function fmtBytes(v){if(!isFinite(v)||v<1)return '0 B';const u=['B','KB','MB','GB','TB'];let i=0;while(v>=1024&&i<u.length-1){v/=1024;i++;}return (v>=100?Math.round(v):v.toFixed(1))+' '+u[i];}
+function fmtNum(v){return v>=1e6?(v/1e6).toFixed(1)+'M':v>=1000?(v/1000).toFixed(1)+'k':String(Math.round(v));}
+// registry so the shared tooltip handler can read a chart's data back
+const ACHARTS={};
+// areaChart(id,{series:[{data,color,label}],fmt,tleft,tright,h}) -> html.
+// Gradient-filled, gridded, hover tooltip via the delegated handler below.
+function areaChart(id,o){
+  ACHARTS[id]=o;
+  const w=600,h=o.h||110,pad=4;
+  const max=Math.max(1e-9,...o.series.flatMap(s=>s.data));
+  const n=Math.max(2,(o.series[0]&&o.series[0].data.length)||2);
+  const x=i=>i/(n-1)*w;
+  const y=v=>h-pad-(v/max)*(h-2*pad);
+  const grid=[0.25,0.5,0.75].map(f=>`<line x1="0" y1="${(h*f).toFixed(1)}" x2="${w}" y2="${(h*f).toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3,5" opacity=".6"/>`).join('');
+  const layers=o.series.map((s,si)=>{
+    if(!s.data.length)return '';
+    const pts=s.data.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+    const gid=id+'g'+si;
+    return `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${s.color}" stop-opacity=".35"/><stop offset="100%" stop-color="${s.color}" stop-opacity=".02"/></linearGradient></defs>
+      <path d="M0,${h-pad} L${pts.join(' L')} L${w},${h-pad} Z" fill="url(#${gid})"/>
+      <polyline points="${pts.join(' ')}" fill="none" stroke="${s.color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`;
+  }).join('');
+  const fmt=o.fmt||fmtNum;
+  const leg=o.series.length>1?`<div class="aleg">${o.series.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.label||'')}</span>`).join('')}<span style="margin-left:auto">peak ${esc(fmt(max))}</span></div>`
+    :`<div class="aleg"><span>${esc((o.series[0]&&o.series[0].label)||'')}</span><span style="margin-left:auto">peak ${esc(fmt(max))}</span></div>`;
+  return `<div class="achart" id="${id}" data-ac="1"><svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${grid}${layers}</svg><div class="actip"></div></div>
+    <div class="muted" style="font-size:11px;display:flex;justify-content:space-between"><span>${esc(o.tleft||'')}</span><span>${esc(o.tright||'now')}</span></div>${leg}`;
+}
+// one delegated tooltip handler for every area chart
+document.addEventListener('mousemove',e=>{
+  const el=e.target.closest&&e.target.closest('.achart');
+  document.querySelectorAll('.achart .actip').forEach(t=>{if(!el||t.parentNode!==el)t.style.display='none';});
+  if(!el)return;
+  const o=ACHARTS[el.id];if(!o||!o.series.length||!o.series[0].data.length)return;
+  const r=el.getBoundingClientRect();
+  const fx=Math.min(Math.max((e.clientX-r.left)/r.width,0),1);
+  const n=o.series[0].data.length;
+  const i=Math.min(n-1,Math.round(fx*(n-1)));
+  const fmt=o.fmt||fmtNum;
+  const when=o.ts&&o.ts[i]?new Date(o.ts[i]*1000).toLocaleTimeString():'';
+  const tip=el.querySelector('.actip');
+  tip.innerHTML=(when?`<div class="muted">${esc(when)}</div>`:'')+o.series.map(s=>`<div><i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${s.color};margin-right:4px"></i>${esc(s.label||'')} <b>${esc(fmt(s.data[i]||0))}</b></div>`).join('');
+  tip.style.display='block';
+  const left=Math.min(r.width-110,Math.max(0,e.clientX-r.left+12));
+  tip.style.left=left+'px';tip.style.top='4px';
+});
+function sparkline(el,data){data=data||[];
+  el.innerHTML=areaChart('spark-drops',{series:[{data,color:'var(--drop)',label:'drops/h'}],tleft:'-24h',h:64});}
+// ---- interface utilization cards (SOC) ----
+async function loadIfstats(){
+  let d;try{d=await j('/api/ifstats');}catch(e){return;}
+  const ifs=(d.ifaces||[]).filter(f=>f.name!=='lo');
+  const sec=$('#ifsec');if(!sec)return;
+  if(!ifs.length){sec.style.display='none';return;}
+  sec.style.display='block';
+  // KPI: current throughput (last sample, all ifaces) + conntrack
+  let rxNow=0,txNow=0;
+  for(const f of ifs){rxNow+=f.rx_bps[f.rx_bps.length-1]||0;txNow+=f.tx_bps[f.tx_bps.length-1]||0;}
+  $('#k-net').innerHTML=`${esc(fmtBits(rxNow))} <small>/ ${esc(fmtBits(txNow))}</small>`;
+  const ct=d.conntrack||{};
+  if(ct.max>0){const pct=Math.round(100*ct.count/ct.max);
+    $('#k-ct').innerHTML=`${ct.count.toLocaleString()} <small>/ ${fmtNum(ct.max)} (${pct}%)</small>`;
+    $('#k-ct').style.color=pct>85?'var(--drop)':'';}
+  const errLabels={rx_errs:'RX err',rx_drop:'RX drop',rx_fifo:'RX fifo',rx_frame:'RX frame',tx_errs:'TX err',tx_drop:'TX drop',tx_fifo:'TX fifo',tx_colls:'colls',tx_carrier:'carrier'};
+  $('#ifgrid').innerHTML=ifs.map(f=>{
+    const rxN=f.rx_bps[f.rx_bps.length-1]||0,txN=f.tx_bps[f.tx_bps.length-1]||0;
+    const speed=f.speed_mbps>0?f.speed_mbps*1e6:0;
+    const util=speed?` · ${Math.max(rxN,txN)/speed*100<0.1?'<0.1':(Math.max(rxN,txN)/speed*100).toFixed(1)}% of ${f.speed_mbps>=1000?(f.speed_mbps/1000)+' Gb':f.speed_mbps+' Mb'}`:'';
+    const errsAll=Object.entries(f.errors||{});
+    const errSum=errsAll.reduce((a,[,v])=>a+v,0);
+    const chips=errSum?errsAll.filter(([,v])=>v>0).map(([k,v])=>`<span class="errchip bad">${errLabels[k]||k} +${v}</span>`).join('')
+      :'<span class="errchip">no errors (1h)</span>';
+    const errChart=errSum?areaChart('ifer-'+f.name,{series:[{data:f.err_series||[],color:'var(--warnc)',label:'errors+drops / sample'}],ts:d.ts,tleft:'-1h',h:36}):'';
+    return `<div class="card">
+      <h3 class="ifhead"><span class="dot" style="background:${f.up?'var(--ok)':'var(--drop)'}" title="${f.up?'up':'down'}"></span>${esc(f.name)}
+        <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400;font-size:11.5px">${esc(fmtBits(rxN))} in · ${esc(fmtBits(txN))} out${util}</span>
+        <span class="muted" style="margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400;font-size:11px" title="cumulative since boot">Σ ${esc(fmtBytes(f.totals.rx_bytes))} / ${esc(fmtBytes(f.totals.tx_bytes))}</span></h3>
+      ${areaChart('ifc-'+f.name,{series:[{data:f.rx_bps,color:'var(--acc2)',label:'in'},{data:f.tx_bps,color:'var(--acc)',label:'out'}],fmt:fmtBits,ts:d.ts,tleft:'-1h',h:96})}
+      <div style="margin-top:6px">${chips}</div>${errChart}
+    </div>`;
+  }).join('');
+}
 
+function ipHistBar(b){const m=Math.max(1,...b);
+  return '<span class="ipHist" title="drop activity over the selected range (oldest → newest)">'+b.map(v=>`<i class="${v?'':'z'}" style="height:${Math.max(1,Math.round(14*v/m))}px"></i>`).join('')+'</span>';}
 async function loadTopIPs(){
   const sel=$('#topip-range');const range=sel?sel.value:'24h';
   try{
     const now=Math.floor(Date.now()/1000);
     const from=now-{'1h':3600,'6h':21600,'24h':86400,'168h':604800}[range];
-    const r=await j('/api/top-ips?from='+from+'&limit=20');
+    const r=await j('/api/ip-histogram?from='+from+'&limit=20&buckets=40');
     const ips=r.ips||[];
-    $('#topip').innerHTML=ips.length?'<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px">#</th><th style="text-align:left;padding:4px 8px">IP</th><th style="text-align:right;padding:4px 8px">Hits</th><th style="text-align:left;padding:4px 8px">CC</th><th style="text-align:right;padding:4px 8px">Last seen</th></tr></thead><tbody>'+
-      ips.map((ip,i)=>`<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 8px;color:var(--mut)">${i+1}</td><td style="padding:4px 8px" class="mono ipl" onclick="lookup('${ip.ip}')">${esc(ip.ip)}</td><td style="padding:4px 8px;text-align:right"><b>${ip.hits}</b></td><td style="padding:4px 8px">${esc(ip.cc||'')}</td><td style="padding:4px 8px;text-align:right;color:var(--mut)">${ip.last?new Date(ip.last*1000).toLocaleTimeString():''}</td></tr>`).join('')+
+    $('#topip').innerHTML=ips.length?'<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px">#</th><th style="text-align:left;padding:4px 8px">IP</th><th style="text-align:right;padding:4px 8px">Hits</th><th style="text-align:left;padding:4px 8px">Activity</th><th style="text-align:left;padding:4px 8px">CC</th><th style="text-align:right;padding:4px 8px">Last seen</th></tr></thead><tbody>'+
+      ips.map((ip,i)=>`<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 8px;color:var(--mut)">${i+1}</td><td style="padding:4px 8px" class="mono ipl" onclick="lookup('${ip.ip}')">${esc(ip.ip)}</td><td style="padding:4px 8px;text-align:right"><b>${ip.hits}</b></td><td style="padding:4px 8px">${ipHistBar(ip.buckets||[])}</td><td style="padding:4px 8px">${esc(ip.cc||'')}</td><td style="padding:4px 8px;text-align:right;color:var(--mut)">${ip.last?new Date(ip.last*1000).toLocaleTimeString():''}</td></tr>`).join('')+
       '</tbody></table>':'<div class="muted" style="padding:12px">No drops recorded yet.</div>';
   }catch(e){$('#topip').innerHTML='<div class="muted">stats unavailable</div>';}
 }
@@ -629,9 +734,9 @@ async function renderAbuseIPDBStatus(){
   if(warnings.length){
     html+='<div class="alert warn" style="margin:6px 0"><span class="icon">⚠</span><span>Engine warnings:<br>'+warnings.map(w=>esc(w)).join('<br>')+'</span></div>';
   }
-  html+='<div style="margin-top:8px"><input id="abuseipdb-key-input" type="password" placeholder="AbuseIPDB API key" style="width:60%;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:13px" autocomplete="off">';
-  html+=' <button onclick="saveAbuseIPDBKey()" style="padding:4px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--fg);cursor:pointer;font-size:13px">Save</button>';
-  html+=' <button onclick="clearAbuseIPDBKey()" style="padding:4px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--fg);cursor:pointer;font-size:13px">Clear</button></div>';
+  html+='<div style="margin-top:8px"><input id="abuseipdb-key-input" type="password" placeholder="AbuseIPDB API key" style="width:60%;padding:4px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);font-size:13px" autocomplete="off">';
+  html+=' <button onclick="saveAbuseIPDBKey()" style="padding:4px 12px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);cursor:pointer;font-size:13px">Save</button>';
+  html+=' <button onclick="clearAbuseIPDBKey()" style="padding:4px 12px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);cursor:pointer;font-size:13px">Clear</button></div>';
   html+='<div class="muted" style="font-size:11px;margin-top:4px">Get a free key at abuseipdb.com — saved to /etc/nftgeo/config. Apply to activate.</div>';
   el.innerHTML=html;
 }
@@ -670,6 +775,7 @@ async function refresh(){
     try{renderAlerts(await j('/api/alerts'));}catch(e){}
     try{renderAbuseLoad(await j('/api/abuse-load'));}catch(e){}
     loadTopIPs();
+    loadIfstats();
     try{const g=await j('/api/geo');$('#geonote').textContent=`· ${g.countries} countries indexed${g.full?'':' (rule-set only — set GEO_FULL=1 for global)'}`;}catch(e){}
     if(map){const vals={};for(const[k,v]of Object.entries(d.ingressByCC))vals[k.toUpperCase()]=v;try{map.series.regions[0].setValues(vals);}catch(e){}}
     renderLogs();
