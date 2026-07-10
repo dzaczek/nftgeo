@@ -75,7 +75,7 @@
   @media(max-width:960px){.g2,.g3{grid-template-columns:1fr}}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
   .card h3{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);margin:0 0 10px}
-  #map{height:400px}
+  #map{height:260px}
   .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:14px}
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
   .kpi b{font-size:26px;display:block}.kpi span{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:1px}
@@ -280,7 +280,7 @@
         <div class="card"><h3>Drops over time (24h)</h3><div id="spark"></div></div>
       </div>
       <div class="grid g2">
-        <div class="card"><h3>Where drops come from (ingress) <span id="geonote" class="muted" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h3><div id="map"></div>
+        <div class="card" style="align-self:start"><h3>Where drops come from (ingress) <span id="geonote" class="muted" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h3><div id="map"></div>
           <div id="mapfallback" class="muted" style="display:none;font-size:12px">Map library unavailable — see the country list.</div></div>
         <div>
           <div class="card"><h3>Top source countries (ingress)</h3><div id="cc-in"></div></div>

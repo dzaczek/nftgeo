@@ -8,6 +8,13 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.66.2] - 2026-07-10
+
+### Changed
+- **Compact drop map.** The ingress world map was 400 px tall and dominated the
+  overview; reduced to 260 px and pinned to the top of its column so it no
+  longer leaves a large empty gap beside the (taller) stats column.
+
 ## [1.66.1] - 2026-07-10
 
 ### Changed
