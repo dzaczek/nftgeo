@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # Go modules (the dashboard: go-nflog, mdlayher/netlink, golang.org/x/*).
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-deps:
+        patterns:
+          - "*"
+
+  # Keep the SHA-pinned GitHub Actions current (Dependabot bumps the pin + comment).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
