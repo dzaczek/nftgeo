@@ -4341,9 +4341,13 @@ func main() {
 				http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 				return
 			}
-			dev := strings.Join(strings.Fields(req.Dev), " ") // collapse whitespace
-			// Interface names only (space-separated); reject anything that could
-			// break out of the quoted config value.
+			// Accept space- or comma-separated (consistent with target/zone/list
+			// fields); normalise to a single space-separated list.
+			dev := strings.Join(strings.FieldsFunc(req.Dev, func(r rune) bool {
+				return r == ',' || r == ' ' || r == '\t' || r == '\n'
+			}), " ")
+			// Interface names only; reject anything that could break out of the
+			// quoted config value.
 			for _, tok := range strings.Fields(dev) {
 				for _, c := range tok {
 					if !(c == '.' || c == '_' || c == '-' || c == '@' || c == ':' ||

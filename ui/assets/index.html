@@ -1605,7 +1605,7 @@ function ingressDrawer(file,id){
         <button class="btn-ghost" style="color:var(--fg)" onclick="saveIngressDev()">Set</button>
       </div>
       <datalist id="iglist"></datalist>
-      <div class="muted" style="font-size:11px;margin-top:3px">Space-separated (e.g. <code>eth0 eth1</code>). Saved to <code>/etc/nftgeo/config</code> as <code>INGRESS_DEV</code>; apply to activate. Blank = auto-detect.</div>
+      <div class="muted" style="font-size:11px;margin-top:3px">Space/comma separated (e.g. <code>eth0 eth1</code> or <code>eth0,eth1</code>). Saved to <code>/etc/nftgeo/config</code> as <code>INGRESS_DEV</code>; apply to activate. Blank = auto-detect.</div>
     </div>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveIngress('${esc(file||'ingress.conf')}',${id!=null?id:'null'})">Save to draft</button>

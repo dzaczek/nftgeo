@@ -1,0 +1,2 @@
++ hook ingress device "eth0"
++ hook ingress device "eth1"

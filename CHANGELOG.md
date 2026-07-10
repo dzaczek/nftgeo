@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.1] - 2026-07-10
+
+### Fixed
+- **`INGRESS_DEV` now accepts comma- or space-separated interfaces**, consistent
+  with how targets/zones/lists are written everywhere else in nftgeo. Previously
+  the engine word-split on whitespace only, so a comma-separated value (as the
+  dashboard's own list convention suggests) was treated as one bad interface
+  name. The engine normalises commas to spaces, the `/api/ingress-dev` endpoint
+  accepts either, and the ingress-rule drawer's help text now says "space/comma
+  separated".
+
 ## [1.72.0] - 2026-07-10
 
 ### Fixed

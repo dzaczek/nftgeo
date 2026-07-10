@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.72.0"
+NFTGEO_VERSION="1.72.1"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -21,7 +21,7 @@ RULES_FILE="${RULES_FILE:-/etc/nftgeo/rules.conf}"
 RULES_DIR="${RULES_DIR:-/etc/nftgeo/rules.d}"
 # Ingress hook (stateless, pre-routing early drop). Source-based accept/drop.
 # The ingress hook is per-device, so it needs the interface(s) to attach to;
-# INGRESS_DEV is a space-separated list (default: the default-route interface).
+# INGRESS_DEV is a space- or comma-separated list (default: the default-route interface).
 INGRESS_FILE="${INGRESS_FILE:-/etc/nftgeo/ingress.conf}"
 INGRESS_DIR="${INGRESS_DIR:-/etc/nftgeo/ingress.d}"
 INGRESS_DEV="${INGRESS_DEV:-}"
@@ -1732,8 +1732,10 @@ emit_ingress() {
 	[ -s "$INGRESS_NORM" ] || return 0
 	# The ingress hook is per-device. Attach to INGRESS_DEV, or auto-detect the
 	# default-route interface. Without a device the hook receives no packets.
-	_idevs="$INGRESS_DEV"
-	[ -n "$_idevs" ] || _idevs="$(ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)"
+	# Accept comma- or space-separated devices (matches how targets/zones/lists
+	# are written elsewhere), normalising commas to spaces for word-splitting.
+	_idevs="$(printf '%s' "$INGRESS_DEV" | tr ',' ' ')"
+	[ -n "$(printf '%s' "$_idevs" | tr -d ' \t')" ] || _idevs="$(ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)"
 	if [ -z "$_idevs" ]; then
 		echo "ingress rules present but no INGRESS_DEV set and no default route found; skipping ingress chain." >&2
 		return 0
