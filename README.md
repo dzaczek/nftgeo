@@ -670,6 +670,8 @@ sudo systemctl start nftgeo.service
 | Port still open after `allow` | An `allow` on its own doesn't close the port — add a catch-all `deny ... any` below it. `validate` warns about this. |
 | Egress geo-fencing breaks updates | If you restrict outbound 80/443, make sure the allowed regions cover ipdeny.com and AbuseIPDB, or add their IPs to `WHITELIST`. |
 | Service won't start on a fresh install | If `rules.conf` is still the empty example, the engine loads a permissive baseline and warns (with `DEFAULT_INPUT=accept`); it only aborts if `DEFAULT_INPUT=drop`, where an empty ruleset would lock you out. Add rules and re-apply. |
+| Drop map/stats empty in a container | On LXC/OpenVZ (e.g. mikr.us) nftables `log` writes to the *host* kernel log, which the container can't read — so `LOG_DROPS`/per-rule `log` drop traffic but log nothing visible. The dashboard detects and states this. Rules still drop; per-rule hit counters (Policy tab) still work. |
+| `nft: Message too long` on load | The container's netlink buffer is too small and `net.core.wmem_max` is host-controlled. The engine retries the transient automatically; if it persists, ask the host to raise `net.core.wmem_max`. |
 
 ---
 

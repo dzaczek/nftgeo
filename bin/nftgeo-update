@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.67.1"
+NFTGEO_VERSION="1.68.0"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -126,6 +126,35 @@ trap cleanup EXIT
 # Collects warning messages emitted during this run (one per line) for status.json.
 WARN_FILE="${TMP_DIR}/warnings.txt"
 : > "$WARN_FILE"
+# Run an nft command, retrying a transient netlink EMSGSIZE ("Message too
+# long"). In constrained containers (e.g. LXC on shared hosts like mikr.us) the
+# netlink socket buffer can momentarily be too small for the atomic transaction,
+# and net.core.wmem_max is host-controlled — often not raisable from inside. A
+# real ruleset error is surfaced immediately, never retried.
+nft_try() {
+	_attempt=1
+	while :; do
+		if _nfterr="$(nft "$@" 2>&1 >/dev/null)"; then
+			[ -n "$_nfterr" ] && printf '%s\n' "$_nfterr" >&2
+			return 0
+		fi
+		case "$_nfterr" in
+		*"Message too long"*)
+			if [ "$_attempt" -ge 5 ]; then
+				printf '%s\n' "$_nfterr" >&2
+				echo "nft still reports 'Message too long' after ${_attempt} attempts; the host's net.core.wmem_max is too small for this container's ruleset." >&2
+				return 1
+			fi
+			_attempt=$((_attempt + 1))
+			sleep 1
+			;;
+		*)
+			printf '%s\n' "$_nfterr" >&2
+			return 1
+			;;
+		esac
+	done
+}
 # Helper: append a warning to both stderr (journalctl) and the warnings file.
 warn() {
 	echo "$1" >&2
@@ -1837,7 +1866,7 @@ generate
 # golden/text tests (NFTGEO_SKIP_NFT_CHECK=1) or when nft is absent; a real load
 # (below) always requires nft, so this only relaxes render-only runs.
 if [ -z "${NFTGEO_SKIP_NFT_CHECK:-}" ] && command -v nft >/dev/null 2>&1; then
-	nft -c -f "${TMP_DIR}/nftgeo.nft"
+	nft_try -c -f "${TMP_DIR}/nftgeo.nft"
 elif [ -z "$RENDER_ONLY" ]; then
 	echo "nft not found; cannot load the ruleset" >&2
 	exit 1
@@ -1905,7 +1934,7 @@ if [ -f "$NFT_FILE" ] && cmp -s "${TMP_DIR}/nftgeo.nft" "$NFT_FILE" \
 fi
 
 install -m 0644 "${TMP_DIR}/nftgeo.nft" "$NFT_FILE"
-nft -f "$NFT_FILE"
+nft_try -f "$NFT_FILE"
 # Fill the (empty-loaded) abuse set in paced batches after the atomic load.
 [ "${BATCH_ABUSE:-0}" = 1 ] && batch_load_abuse
 

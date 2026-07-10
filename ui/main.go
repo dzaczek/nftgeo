@@ -633,12 +633,33 @@ type Drop struct {
 }
 type DropsResp struct {
 	Enabled     bool           `json:"enabled"`
+	Container   bool           `json:"container"` // in an LXC/container: kernel log not visible
 	Total       int            `json:"total"`
 	IngressByCC map[string]int `json:"ingressByCC"`
 	EgressByCC  map[string]int `json:"egressByCC"`
 	TopPorts    map[string]int `json:"topPorts"`
 	Timeline    []int          `json:"timeline"` // last 24h, hourly buckets (oldest first)
 	Recent      []Drop         `json:"recent"`
+}
+
+// kernelLogHidden reports whether nftables `log` output can't reach this
+// process. In an LXC/OpenVZ container the netfilter `log` target writes to the
+// host's kernel ring buffer, which the container cannot read (`journalctl -k`
+// is empty, `dmesg` is denied) — so LOG_DROPS and per-rule `log` produce drops
+// but no readable log lines, and the drop map/stats stay empty. Detected once.
+var kernelLogHiddenOnce struct {
+	sync.Once
+	val bool
+}
+
+func kernelLogHidden() bool {
+	kernelLogHiddenOnce.Do(func() {
+		out, err := run("systemd-detect-virt", "--container")
+		v := strings.TrimSpace(out)
+		// exits 0 with the container type, or non-zero/"none" on bare metal/VM.
+		kernelLogHiddenOnce.val = err == nil && v != "" && v != "none"
+	})
+	return kernelLogHiddenOnce.val
 }
 
 var reKV = regexp.MustCompile(`(\w+)=(\S+)`)
@@ -732,6 +753,7 @@ func drops(since string) DropsResp {
 		resp.Recent = resp.Recent[:200]
 	}
 	resp.Enabled = logDropsOn()
+	resp.Container = kernelLogHidden()
 	return resp
 }
 

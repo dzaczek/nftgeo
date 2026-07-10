@@ -8,6 +8,26 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.68.0] - 2026-07-10
+
+### Added
+- **Container-aware drop-logging banner.** In an LXC/OpenVZ container the
+  netfilter `log` target writes to the *host* kernel ring buffer, which the
+  container can't read (`journalctl -k` empty, `dmesg` denied) — so `LOG_DROPS`
+  and per-rule `log` drop traffic but produce no readable log lines, and the
+  drop map/stats stay empty. The dashboard now detects this
+  (`systemd-detect-virt --container`) and says so plainly, instead of implying
+  logging is simply off. Per-rule hit counters (Policy tab) still work.
+
+### Changed
+- **Resilient ruleset load in constrained containers.** The atomic `nft`
+  validate/load now retries a transient netlink `EMSGSIZE` ("Message too long")
+  up to 5 times before failing. On shared LXC hosts (e.g. mikr.us) the netlink
+  socket buffer can momentarily be too small for the transaction and
+  `net.core.wmem_max` isn't raisable from inside the container; the retry rides
+  out the transient instead of failing the service. A genuine ruleset error is
+  still surfaced immediately.
+
 ## [1.67.1] - 2026-07-10
 
 ### Changed

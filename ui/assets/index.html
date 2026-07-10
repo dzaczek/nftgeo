@@ -266,7 +266,7 @@
     <section class="view active" id="v-dashboard">
       <div id="alerts"></div>
       <div id="abuseload"></div>
-      <div id="logwarn" class="warn" style="display:none">No drops are being logged yet — the map &amp; drop stats need drop logging. Add <code>log</code> to a <code>deny</code> rule for per-rule logging, or set <code>LOG_DROPS="1"</code> in config to log every drop.</div>
+      <div id="logwarn" class="warn" style="display:none"></div>
       <div class="kpis">
         <div class="kpi"><b id="k-total">0</b><span>drops / 24h</span></div>
         <div class="kpi"><b id="k-in">0</b><span>ingress</span></div>
@@ -707,6 +707,20 @@ async function loadTopIPs(){
       '</tbody></table>':'<div class="muted" style="padding:12px">No drops recorded yet.</div>';
   }catch(e){$('#topip').innerHTML='<div class="muted">stats unavailable</div>';}
 }
+// The drop map & stats are fed from the kernel log (nftgeo-drop lines). This
+// banner explains when they'll stay empty: either no drop logging is on, or —
+// the gotcha on LXC/OpenVZ hosts — the container can't read the kernel log at
+// all, so `log` runs but its output never reaches the dashboard.
+function updateLogWarn(d){
+  const el=$('#logwarn');if(!el)return;
+  if(d.enabled&&!d.container){el.style.display='none';return;}
+  el.style.display='block';
+  if(d.container){
+    el.innerHTML='This host is a <b>container</b> (LXC/OpenVZ) — nftables <code>log</code> writes to the <b>host</b> kernel log, which the container can\'t read, so the drop map &amp; per-IP stats stay empty here even with logging enabled. Rules still drop traffic, and per-rule hit counters work in the <b>Policy</b> tab. (Real log delivery would need NFLOG.)';
+  }else{
+    el.innerHTML='No drops are being logged yet — the map &amp; drop stats need drop logging. Add <code>log</code> to a <code>deny</code> rule for per-rule logging, or set <code>LOG_DROPS="1"</code> in config to log every drop.';
+  }
+}
 function renderAlerts(list){
   const el=$('#alerts');if(!el)return;
   if(!list||!list.length){el.innerHTML='';el.style.display='none';return;}
@@ -786,7 +800,7 @@ async function refresh(){
     $('#upd').textContent=new Date().toLocaleTimeString();
     renderHealth(s.health);
     const d=await j('/api/drops?since=-24h'); DROPS=d;
-    $('#logwarn').style.display=d.enabled?'none':'block';
+    updateLogWarn(d);
     const ing=Object.values(d.ingressByCC).reduce((a,b)=>a+b,0), egr=Object.values(d.egressByCC).reduce((a,b)=>a+b,0);
     $('#k-total').textContent=d.total; $('#k-in').textContent=ing; $('#k-out').textContent=egr;
     bars($('#cc-in'),d.ingressByCC,'drop'); bars($('#cc-out'),d.egressByCC,''); bars($('#ports'),d.topPorts,'');
