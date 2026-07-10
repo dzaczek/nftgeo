@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.67.0"
+NFTGEO_VERSION="1.67.1"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -984,7 +984,10 @@ parse_rules() {
 			echo "No rules found in ${RULES_FILE} or ${RULES_DIR}/*.conf, and DEFAULT_INPUT=drop would lock everyone out. Add an allow/whitelist rule, or set DEFAULT_INPUT=accept." >&2
 			exit 1
 		fi
-		warn "No rules configured in ${RULES_FILE} or ${RULES_DIR}/*.conf; loading a permissive baseline (DEFAULT_INPUT=accept) that blocks nothing. Add rules and re-apply to enforce a policy."
+		# Journal only (echo, not warn): this is the expected fresh-install state,
+		# and the dashboard already shows an empty policy list — surfacing it as a
+		# panel "engine warning" is just noise for someone editing rules in the UI.
+		echo "No rules configured in ${RULES_FILE} or ${RULES_DIR}/*.conf; loading a permissive baseline (DEFAULT_INPUT=accept) that blocks nothing." >&2
 		# Emit an input chain anyway so the table is a coherent (if permissive)
 		# firewall with a real input hook, not just bare sets — the dashboard's
 		# "table loaded" check and the operator both expect an input chain.

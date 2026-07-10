@@ -266,7 +266,7 @@
     <section class="view active" id="v-dashboard">
       <div id="alerts"></div>
       <div id="abuseload"></div>
-      <div id="logwarn" class="warn" style="display:none">Drop logging is off — map &amp; drop stats stay empty. Set <code>LOG_DROPS="1"</code> in <code>/etc/nftgeo/config</code> and apply.</div>
+      <div id="logwarn" class="warn" style="display:none">No drops are being logged yet — the map &amp; drop stats need drop logging. Add <code>log</code> to a <code>deny</code> rule for per-rule logging, or set <code>LOG_DROPS="1"</code> in config to log every drop.</div>
       <div class="kpis">
         <div class="kpi"><b id="k-total">0</b><span>drops / 24h</span></div>
         <div class="kpi"><b id="k-in">0</b><span>ingress</span></div>

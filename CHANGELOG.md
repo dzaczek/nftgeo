@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.67.1] - 2026-07-10
+
+### Changed
+- **"Drop logging is off" banner now mentions per-rule logging.** It no longer
+  implies the only fix is the global `LOG_DROPS="1"` switch — it points to
+  adding `log` on a `deny` rule (per-rule logging) as the alternative.
+- **"No rules configured" is journal-only.** The permissive-baseline notice
+  (1.67.0) is no longer pushed into `status.json`, so it stops showing as a
+  dashboard "engine warning" — the panel already shows an empty policy list.
+  Operators still see it in `journalctl`.
+
 ## [1.67.0] - 2026-07-10
 
 ### Changed
