@@ -4052,6 +4052,28 @@ func handleCommitRollback(w http.ResponseWriter, r *http.Request) {
 // reconcileCommit recovers a deploy interrupted by a UI restart: leftover
 // backups with no pending sentinel mean an apply was never kept, so restore the
 // live files from their backups.
+// reconcileBoot runs as ExecStartPre of nftgeo.service, before nftgeo-update
+// loads the ruleset on boot. If an `apply --confirm` was interrupted by a
+// reboot, the UI's pre-apply config backups still exist; restore them so the
+// engine regenerates the *confirmed* (previous) config, not the unconfirmed one
+// that was live when the box went down. Any sentinel present at boot is stale
+// (its deadman died with the reboot), so clear it. Runs standalone (no server,
+// no auth) — just file operations as root.
+func reconcileBoot() {
+	restored := false
+	for _, s := range stages() {
+		if _, err := os.Stat(s.backup); err == nil {
+			copyFile(s.backup, s.live)
+			os.Remove(s.backup)
+			restored = true
+		}
+	}
+	os.Remove(sentinel)
+	if restored {
+		log.Printf("nftgeo-ui: reconcile-boot rolled back an interrupted apply --confirm (restored config from backup)")
+	}
+}
+
 func reconcileCommit() {
 	if _, err := os.Stat(sentinel); err == nil {
 		return // a real confirm is still pending on the host; leave it
@@ -4072,6 +4094,10 @@ func reconcileCommit() {
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "token" {
 		tokenCmd(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "reconcile-boot" {
+		reconcileBoot()
 		return
 	}
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address (keep it local)")

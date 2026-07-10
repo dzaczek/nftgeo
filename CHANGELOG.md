@@ -8,6 +8,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.0] - 2026-07-10
+
+### Fixed
+- **Reboot during a pending `apply --confirm` no longer commits the unconfirmed
+  change (dashboard deploys).** A boot-time reconcile — `nftgeo-ui
+  reconcile-boot`, wired as an `ExecStartPre` of `nftgeo.service` — restores the
+  UI's pre-apply config backup *before* the engine loads on boot, so a deploy the
+  reboot interrupted is rolled back to the confirmed config instead of booting
+  the unconfirmed (possibly lock-you-out) ruleset. Previously the boot step only
+  deleted the stale sentinel and the engine regenerated from the promoted-but-
+  unconfirmed `rules.conf`. (Jules audit C2.)
+
 ## [1.71.1] - 2026-07-10
 
 ### Changed

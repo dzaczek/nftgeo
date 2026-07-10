@@ -5,9 +5,12 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-# Clean up a stale sentinel from an interrupted "apply --confirm" deadman
-# (the nohup'd deadman process dies on reboot, but the sentinel file persists
-# and would block future applies until manually removed).
+# Roll back an "apply --confirm" that a reboot interrupted, BEFORE the engine
+# loads the ruleset: restore the UI's pre-apply config backups (so the engine
+# regenerates the confirmed config, not the unconfirmed one that was live at
+# shutdown) and clear the stale sentinel. Non-fatal if nftgeo-ui is absent.
+ExecStartPre=-/usr/sbin/nftgeo-ui reconcile-boot
+# Fallback: ensure the stale sentinel is gone even if the above didn't run.
 ExecStartPre=-/bin/rm -f /var/lib/nftgeo/.pending-confirm
 ExecStart=/usr/sbin/nftgeo-update
 # Restore dynamic "nftgeo block" entries (e.g. after a reboot); non-fatal.

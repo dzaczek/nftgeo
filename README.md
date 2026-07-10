@@ -775,10 +775,14 @@ Before geo-fencing the port you use for SSH:
   a separate table at priority `-150`, ahead of the main table (`-100`) and its
   whitelist, so an explicit manual block wins even over a whitelisted address
   (which is why `block` refuses a whitelisted IP unless you pass `--force`).
-- **Reboot during a pending `apply --confirm`.** The deadman auto-rollback is a
-  live process; it does not survive a reboot. If the box reboots inside the
-  confirm window the newly-applied (still-unconfirmed) `rules.conf` is what boots.
-  Keep the emergency console handy, and prefer confirming promptly.
+- **Reboot during a pending `apply --confirm`.** Dashboard deploys are
+  reboot-safe: a boot-time reconcile (`nftgeo-ui reconcile-boot`, wired as an
+  `ExecStartPre` of `nftgeo.service`) restores the pre-apply config from backup
+  before the engine loads, so an unconfirmed change that a reboot interrupted is
+  rolled back, not committed. A CLI `apply --confirm` (where you edited
+  `rules.conf` yourself) has no such backup — the live process deadman still
+  doesn't survive a reboot there, so keep the emergency console handy and confirm
+  promptly.
 
 ---
 
