@@ -291,6 +291,7 @@
       </div>
       <!-- SOC: per-interface utilization + errors (last hour, sampled by the UI) -->
       <div id="ifsec" style="display:none;margin-top:14px">
+        <div id="ifprimhead" style="display:none;font-size:12px;margin-bottom:8px"></div>
         <div class="grid g2" id="ifgrid"></div>
         <div id="ifvirtwrap" style="display:none;margin-top:12px">
           <div class="muted" style="font-size:12px;cursor:pointer;user-select:none;padding:4px 0" id="ifvirthead" onclick="toggleVirtIf()"></div>
@@ -667,6 +668,10 @@ const IF_ERRKEYS=['rx_errs','rx_drop','rx_fifo','rx_frame','tx_errs','tx_drop','
 // mostly idle, and on a container these live in the container's own netns. Demote
 // them below the real uplinks so the graphs aren't drowned out.
 function isVirtualIface(n){return n==='docker0'||/^(veth|docker|br-|virbr|cni|cali|flannel|vnet|nomad|kube|weave|ovs-|dummy|lxcbr)/.test(n);}
+// A container's eth0 is itself one end of a veth pair (peer ifindex = iflink),
+// shown by `ip link` as e.g. eth0@if379. Surface that so it's clear the uplink
+// is a virtual link to the host, not a physical NIC.
+function ifDisplayName(f){return esc(f.name)+((f.veth&&f.iflink)?`<span class="muted" style="font-weight:400">@if${f.iflink}</span>`:'');}
 function ifCardHTML(f,ts){
   const rxN=f.rx_bps[f.rx_bps.length-1]||0,txN=f.tx_bps[f.tx_bps.length-1]||0;
   const speed=f.speed_mbps>0?f.speed_mbps*1e6:0;
@@ -676,7 +681,7 @@ function ifCardHTML(f,ts){
     return `<span class="errchip ${v>0?'bad':''}" title="${IF_ERRLABELS[k]}: +${v} in the last hour · ${tot.toLocaleString()} since boot">${IF_ERRLABELS[k]} ${v>0?'+'+v:tot>0?tot.toLocaleString():'0'}</span>`;}).join('');
   const errChart=errSum?areaChart('ifer-'+f.name,{series:[{data:f.err_series||[],color:'var(--warnc)',label:'errors+drops / sample'}],ts:ts,tleft:'-1h',h:36}):'';
   return `<div class="card">
-    <h3 class="ifhead"><span class="dot" style="background:${f.up?'var(--ok)':'var(--drop)'}" title="${f.up?'up':'down'}"></span>${esc(f.name)}
+    <h3 class="ifhead"><span class="dot" style="background:${f.up?'var(--ok)':'var(--drop)'}" title="${f.up?'up':'down'}"></span>${ifDisplayName(f)}
       <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400;font-size:11.5px">${esc(fmtBits(rxN))} in · ${esc(fmtBits(txN))} out${util}</span>
       <span class="muted" style="margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400;font-size:11px" title="cumulative since boot">Σ ${esc(fmtBytes(f.totals.rx_bytes))} / ${esc(fmtBytes(f.totals.tx_bytes))}</span></h3>
     ${areaChart('ifc-'+f.name,{series:[{data:f.rx_bps,color:'var(--acc2)',label:'in'},{data:f.tx_bps,color:'var(--acc)',label:'out'}],fmt:fmtBits,ts:ts,tleft:'-1h',h:96})}
@@ -709,14 +714,24 @@ async function loadIfstats(){
   const errKeys=IF_ERRKEYS;
   const virtWithErr=extraIfs.filter(f=>errKeys.reduce((a,k)=>a+((f.errors_total||{})[k]||0),0)>0);
   renderIfErrTable(mainIfs.concat(virtWithErr),IF_ERRLABELS,errKeys);
+  // Primary group header: in a container the "uplink" is a veth to the host, and
+  // the physical host's own NICs are in a different netns and not visible here.
+  const pgHead=$('#ifprimhead');
+  if(pgHead){
+    if(d.container){
+      pgHead.style.display='block';
+      pgHead.innerHTML=`Container interfaces <span class="muted" style="font-weight:400">— this host is an LXC/OpenVZ container; its uplink (e.g. <code>eth0@ifN</code>) is a veth to the host. The physical host's own NICs live in another namespace and can't be seen from inside.</span>`;
+    }else{
+      pgHead.style.display='none';
+    }
+  }
   $('#ifgrid').innerHTML=mainIfs.map(f=>ifCardHTML(f,d.ts)).join('');
-  // Virtual/bridge interfaces: collapsed section below, labeled.
+  // Docker / bridge interfaces: collapsed section below, labeled.
   const wrap=$('#ifvirtwrap');
   if(!extraIfs.length){if(wrap)wrap.style.display='none';}
   else{
     wrap.style.display='block';
-    const cont=d.container?' (this host is a container — these are its Docker/bridge interfaces, not the physical host\'s)':'';
-    $('#ifvirthead').innerHTML=`${VIRT_IF_OPEN?'▾':'▸'} ${extraIfs.length} virtual / bridge interface${extraIfs.length!==1?'s':''} — Docker, veth, bridges${cont}`;
+    $('#ifvirthead').innerHTML=`${VIRT_IF_OPEN?'▾':'▸'} ${extraIfs.length} Docker / bridge interface${extraIfs.length!==1?'s':''} — bridges &amp; veth pairs${d.container?' running inside this container':''}`;
     $('#ifvirtgrid').innerHTML=VIRT_IF_OPEN?extraIfs.map(f=>ifCardHTML(f,d.ts)).join(''):'';
   }
 }

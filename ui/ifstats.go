@@ -194,10 +194,19 @@ func ifStats() map[string]interface{} {
 		if s := readSysNet(name, "speed"); s != "" && s != "-1" {
 			speed, _ = strconv.Atoi(s)
 		}
+		// iflink != ifindex means this is one end of a veth pair (the peer's
+		// ifindex is iflink) — e.g. a container's eth0 is a veth to the host, or
+		// a Docker veth. Lets the UI show "eth0@ifN" and group virtual links.
+		ifindex, _ := strconv.Atoi(readSysNet(name, "ifindex"))
+		iflink, _ := strconv.Atoi(readSysNet(name, "iflink"))
 		ifaces = append(ifaces, map[string]interface{}{
 			"name":       name,
 			"up":         readSysNet(name, "operstate") == "up",
 			"speed_mbps": speed,
+			"ifindex":    ifindex,
+			"iflink":     iflink,
+			"veth":       iflink != 0 && iflink != ifindex,
+			"bridge":     readSysNet(name, "bridge/bridge_id") != "",
 			"rx_bps":     rxBps,
 			"tx_bps":     txBps,
 			"rx_pps":     rxPps,
@@ -232,6 +241,7 @@ func ifStats() map[string]interface{} {
 		"sample_secs": ifSampleSecs,
 		"ts":          ts,
 		"ifaces":      ifaces,
+		"container":   kernelLogHidden(),
 		"conntrack": map[string]uint64{
 			"count": procUint("/proc/sys/net/netfilter/nf_conntrack_count"),
 			"max":   procUint("/proc/sys/net/netfilter/nf_conntrack_max"),

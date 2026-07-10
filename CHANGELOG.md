@@ -8,6 +8,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.69.3] - 2026-07-10
+
+### Changed
+- **Container-aware interface grouping.** `/api/ifstats` now reports each
+  interface's `ifindex`/`iflink` (so a veth is detected as `iflink != ifindex`)
+  and whether the process is in a container. The SOC graphs label a container's
+  uplink as what it actually is — a veth to the host, shown as `eth0@ifN` — and
+  head the primary group with a note that this host is a container whose uplink
+  is a veth and whose physical host NICs live in another namespace and can't be
+  seen from inside. The demoted section is now explicitly "Docker / bridge
+  interfaces … running inside this container". (There is no host-interface graph
+  from inside a container by design — that data isn't in the container's netns.)
+
 ## [1.69.2] - 2026-07-10
 
 ### Changed
