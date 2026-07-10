@@ -143,6 +143,14 @@ ANTISPOOF=""
 # deploy behind the deadman (nftgeo apply --confirm).
 # DEFAULT_INPUT="drop"
 
+# Output/forward chain policy (default "accept"). "drop" = strict egress /
+# strict routing: only established/related, loopback, essential ICMPv6, and your
+# explicit "allow out" / "allow fwd-*" rules pass. DANGER: DEFAULT_OUTPUT="drop"
+# blocks NEW outbound (DNS, package/zone/AbuseIPDB updates) unless you allow it
+# (e.g. allow out udp 53 any, allow out tcp 443 any). Deploy behind the deadman.
+# DEFAULT_OUTPUT="drop"
+# DEFAULT_FORWARD="drop"
+
 # Default ban duration for "throttle" rules (reactive brute-force auto-block): a
 # source that exceeds the rate is dropped for this long. Per-rule override with
 # "ban <dur>". Format: N[smhd], e.g. 30m, 1h, 2d.

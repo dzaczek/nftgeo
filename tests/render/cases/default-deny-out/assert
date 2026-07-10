@@ -1,0 +1,5 @@
++ chain output
++ hook output priority -100; policy drop
++ chain forward
++ hook forward priority -100; policy drop
++ oifname "lo" counter accept

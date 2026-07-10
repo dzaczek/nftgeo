@@ -352,6 +352,7 @@ order.
 | `ABUSEIPDB_API_KEY` | `""` | AbuseIPDB API key (only needed for `abuse` target; can also be saved from the dashboard's Reference tab) |
 | `ABUSE_FEEDS` | `""` | Extra plaintext IP/CIDR blocklists (FireHOL, Spamhaus, etc.) |
 | `DEFAULT_INPUT` | `accept` | Input chain policy: `accept` (selective) or `drop` (default-deny) |
+| `DEFAULT_OUTPUT` / `DEFAULT_FORWARD` | `accept` | Output/forward chain policy; `drop` = strict egress/routing (only established, loopback, essential ICMPv6, and your `allow out`/`allow fwd-*` rules pass). Deploy behind the deadman |
 | `LOG_DROPS` | `""` (off) | Log dropped packets to kernel log / journald |
 | `LOG_WHITELIST` | `""` (off) | Log whitelist hits as `nftgeo-accept:whitelist` |
 | `NFLOG_GROUP` | `5` | Also deliver `log` packets to this NFLOG group so the dashboard sees drops inside containers (LXC/OpenVZ). `0` = kernel log only |

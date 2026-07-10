@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.70.1"
+NFTGEO_VERSION="1.71.0"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -79,6 +79,14 @@ ICMP_BURST="${ICMP_BURST:-5}"
 # explicit "allow in" rules get in; everything else is dropped). Loopback is
 # auto-accepted under drop even without HARDEN. Deploy behind the deadman.
 DEFAULT_INPUT="${DEFAULT_INPUT:-accept}"
+
+# Output/forward chain default policy: "accept" (default) or "drop" (default-deny).
+# With "drop", only established/related, loopback, essential ICMPv6, and your
+# explicit "allow out"/"allow fwd-*" rules pass — a strict-egress / strict-routing
+# posture. DANGER: DEFAULT_OUTPUT="drop" blocks new outbound (DNS, package/zone
+# updates, AbuseIPDB) unless you allow it; deploy behind the deadman.
+DEFAULT_OUTPUT="${DEFAULT_OUTPUT:-accept}"
+DEFAULT_FORWARD="${DEFAULT_FORWARD:-accept}"
 
 # Inter-zone forwarding default (roadmap P5). "" (default) leaves forwarding
 # between zones wide open except where a zone rule denies it; "deny" drops all
@@ -192,6 +200,14 @@ NFLOG_SUFFIX=""
 case "$DEFAULT_INPUT" in
 	accept|drop) ;;
 	*) echo "DEFAULT_INPUT must be 'accept' or 'drop' (got '${DEFAULT_INPUT}')" >&2; exit 1 ;;
+esac
+case "$DEFAULT_OUTPUT" in
+	accept|drop) ;;
+	*) echo "DEFAULT_OUTPUT must be 'accept' or 'drop' (got '${DEFAULT_OUTPUT}')" >&2; exit 1 ;;
+esac
+case "$DEFAULT_FORWARD" in
+	accept|drop) ;;
+	*) echo "DEFAULT_FORWARD must be 'accept' or 'drop' (got '${DEFAULT_FORWARD}')" >&2; exit 1 ;;
 esac
 
 # Group/region definitions can also live in drop-in files. Sourced after the
@@ -1527,16 +1543,24 @@ emit_chain() {
 	# $1 hook (input|output|forward), $2 address sides for whitelist/abuse
 	hook="$1"
 	sides="$2"
+	# This hook's default policy (accept/drop).
+	pol=accept
+	case "$hook" in
+		input) pol="$DEFAULT_INPUT" ;;
+		output) pol="$DEFAULT_OUTPUT" ;;
+		forward) pol="$DEFAULT_FORWARD" ;;
+	esac
 	if ! awk -v h="$hook" 'BEGIN{f=1} $2==h{f=0} END{exit f}' "$RULES_NORM" &&
 	   ! awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$THROTTLE_NORM" &&
 	   ! awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$SYNPROXY_NORM" &&
 	   ! { [ "$hook" = forward ] && [ -s "$ZONE_NORM" ]; } &&
-	   ! { [ "$hook" = input ] && [ -n "${FORCE_INPUT_CHAIN:-}" ]; }; then
+	   ! { [ "$hook" = input ] && [ -n "${FORCE_INPUT_CHAIN:-}" ]; } &&
+	   [ "$pol" = accept ]; then
+		# A default-deny hook must always emit its chain, even with no rules, or
+		# the policy has no effect (no hooked chain = no filtering).
 		return 0
 	fi
 
-	pol=accept
-	[ "$hook" = input ] && pol="$DEFAULT_INPUT"
 	printf '\tchain %s {\n' "$hook"
 	printf '\t\ttype filter hook %s priority -100; policy %s;\n' "$hook" "$pol"
 	# Baseline hardening (HARDEN): never filter loopback, drop invalid packets.
@@ -1547,9 +1571,11 @@ emit_chain() {
 		esac
 		printf '\t\tct state invalid counter drop\n'
 	elif [ "$hook" = input ] && [ "$DEFAULT_INPUT" = drop ]; then
-		# A default-deny input policy must still let loopback through, even
-		# without HARDEN, or local services break.
+		# A default-deny policy must still let loopback through, even without
+		# HARDEN, or local services break.
 		printf '\t\tiifname "lo" counter accept\n'
+	elif [ "$hook" = output ] && [ "$DEFAULT_OUTPUT" = drop ]; then
+		printf '\t\toifname "lo" counter accept\n'
 	fi
 	# Stateful: replies to connections you initiated are always allowed.
 	printf '\t\tct state established,related counter accept\n'
@@ -1560,10 +1586,10 @@ emit_chain() {
 		printf '\t\ticmpv6 type echo-request limit rate over %s burst %s packets counter drop\n' "$ICMP_RATE" "$ICMP_BURST"
 	fi
 	# Keep IPv6 working: NDP and essential ICMPv6 must pass even when v6 is fenced.
-	# Always with HARDEN; and unconditionally under a default-deny input policy
-	# even without HARDEN — otherwise DEFAULT_INPUT=drop silently kills IPv6
-	# Neighbor Discovery (SLAAC/RA/RS) and breaks IPv6 connectivity entirely.
-	if [ -n "$HARDEN" ] || { [ "$hook" = input ] && [ "$DEFAULT_INPUT" = drop ]; }; then
+	# Always with HARDEN; and unconditionally on any chain whose policy is
+	# default-deny even without HARDEN — otherwise a "drop" policy silently kills
+	# IPv6 Neighbor Discovery (SLAAC/RA/RS) and breaks IPv6 connectivity.
+	if [ -n "$HARDEN" ] || [ "$pol" = drop ]; then
 		printf '\t\ticmpv6 type { %s } counter accept\n' "$ICMPV6_ESSENTIAL"
 	fi
 

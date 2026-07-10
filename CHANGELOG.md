@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.71.0] - 2026-07-10
+
+### Added
+- **`DEFAULT_OUTPUT` / `DEFAULT_FORWARD` policies.** Output and forward chains
+  are no longer hardcoded to `accept` — set either to `drop` for strict egress
+  or strict routing. A default-deny chain still emits the safe baseline
+  (established/related, loopback, essential ICMPv6) so it can't silently break
+  IPv6 or lock the box, and it's always emitted when set to `drop` (even with no
+  rules) so the policy actually takes effect. New outbound (DNS, updates) must be
+  allowed explicitly. (Jules audit H2.)
+
 ## [1.70.1] - 2026-07-10
 
 ### Added

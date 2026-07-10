@@ -1,5 +1,5 @@
 .\" nftgeo(8) manual page
-.TH NFTGEO 8 "2026-07-10" "nftgeo 1.70.1" "System Administration"
+.TH NFTGEO 8 "2026-07-10" "nftgeo 1.71.0" "System Administration"
 .SH NAME
 nftgeo \- declarative geo / abuse / segmentation firewall for nftables
 .SH SYNOPSIS
@@ -283,9 +283,23 @@ rules still pass; deploy behind the
 .B apply --confirm
 deadman.
 .TP
+.B DEFAULT_OUTPUT ", " DEFAULT_FORWARD
+.B accept
+(default) or
+.B drop
+(strict egress / strict routing). Under
+.BR drop ,
+only established/related, loopback, essential ICMPv6, and explicit
+.B allow out
+/
+.B allow fwd-*
+rules pass \(em new outbound (DNS, updates) is blocked unless allowed. Deploy
+behind the deadman.
+.TP
 .B HARDEN
 Non-empty enables baseline hardening (accept loopback, drop invalid, essential
-ICMPv6).
+ICMPv6, and rate-limit inbound ping via
+.BR ICMP_RATE / ICMP_BURST ).
 .TP
 .B ANTISPOOF
 Space-separated interface list to protect with a strict reverse-path filter
