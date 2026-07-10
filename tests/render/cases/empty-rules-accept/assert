@@ -1,3 +1,4 @@
 ~ loading a permissive baseline
-+ table inet nftgeo
++ chain input
++ policy accept
 - drop

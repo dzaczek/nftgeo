@@ -985,6 +985,10 @@ parse_rules() {
 			exit 1
 		fi
 		warn "No rules configured in ${RULES_FILE} or ${RULES_DIR}/*.conf; loading a permissive baseline (DEFAULT_INPUT=accept) that blocks nothing. Add rules and re-apply to enforce a policy."
+		# Emit an input chain anyway so the table is a coherent (if permissive)
+		# firewall with a real input hook, not just bare sets — the dashboard's
+		# "table loaded" check and the operator both expect an input chain.
+		FORCE_INPUT_CHAIN=1
 	fi
 
 	sort -u "$GEO_TOKENS" -o "$GEO_TOKENS"
@@ -1477,7 +1481,8 @@ emit_chain() {
 	if ! awk -v h="$hook" 'BEGIN{f=1} $2==h{f=0} END{exit f}' "$RULES_NORM" &&
 	   ! awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$THROTTLE_NORM" &&
 	   ! awk -v h="$hook" 'BEGIN{f=1} $1==h{f=0} END{exit f}' "$SYNPROXY_NORM" &&
-	   ! { [ "$hook" = forward ] && [ -s "$ZONE_NORM" ]; }; then
+	   ! { [ "$hook" = forward ] && [ -s "$ZONE_NORM" ]; } &&
+	   ! { [ "$hook" = input ] && [ -n "${FORCE_INPUT_CHAIN:-}" ]; }; then
 		return 0
 	fi
 
