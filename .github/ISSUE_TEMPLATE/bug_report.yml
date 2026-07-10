@@ -1,0 +1,94 @@
+name: Bug report
+description: Something in nftgeo doesn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please reproduce on the **latest release** first,
+        and **redact any secrets** (API keys, real public IPs) from configs/logs.
+        For a security vulnerability, do **not** file a public issue — see
+        [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: nftgeo version
+      description: Output of `nftgeo-update --version`
+      placeholder: nftgeo-update 1.72.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. rules.conf / config below
+        2. sudo nftgeo apply ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant rules.conf / config
+      description: The rule(s) or config lines involved. **Redact API keys and real IPs.**
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / ruleset
+      description: |
+        Whichever apply: `sudo journalctl -xeu nftgeo.service | tail -30`,
+        `sudo nftgeo apply 2>&1 | tail`, `sudo nft list chain inet nftgeo <chain>`,
+        or `/var/lib/nftgeo/status.json`.
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host type
+      description: nftables behaves differently in containers (kernel log, NFLOG, netlink buffer).
+      options:
+        - Bare metal
+        - VM (KVM/Proxmox/cloud)
+        - LXC / OpenVZ container
+        - Docker on the host
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How installed
+      options:
+        - .deb / .rpm package
+        - install.sh (from source)
+        - Manual / other
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: OS & kernel
+      description: e.g. `Ubuntu 24.04`, `uname -r`
+      placeholder: Ubuntu 24.04, 6.8.0-x
+    validations:
+      required: false

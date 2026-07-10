@@ -1,0 +1,62 @@
+name: Feature request
+description: Suggest a new capability or improvement for nftgeo
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Please check the
+        [ROADMAP](../blob/main/ROADMAP.md) and existing issues first —
+        it may already be planned or discussed.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to do that nftgeo doesn't make easy today?
+      placeholder: As a gateway admin I want to ... because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What should it look like? A config line, a rule syntax, a UI control?
+      placeholder: |
+        e.g. a new rule form:
+          allow out tcp 443 europe on eth0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Engine (rules / geo / abuse / NAT / zones)
+        - Operator CLI (nftgeo)
+        - Dashboard (nftgeo-ui)
+        - Packaging / systemd
+        - Docs
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use now, or other approaches you weighed.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This keeps nftgeo declarative and safe-by-default (validate + deadman still apply)
+          required: false
+        - label: I'd be willing to help test or implement it
+          required: false
