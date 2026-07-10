@@ -1082,6 +1082,70 @@ func topIPs(from, to int64, limit int) []map[string]interface{} {
 	return out
 }
 
+// ipHistogram returns the top-N source IPs over [from,now] with per-bucket
+// drop counts (for the per-IP mini-histograms on the SOC overview). buckets
+// counts are oldest-first.
+func ipHistogram(from int64, buckets, limit int) map[string]interface{} {
+	if limit <= 0 {
+		limit = 10
+	}
+	if buckets <= 0 {
+		buckets = 30
+	}
+	now := time.Now().Unix()
+	if from <= 0 || from >= now {
+		from = now - 3600
+	}
+	span := now - from
+	statsMu.Lock()
+	type acc struct {
+		n    int
+		cc   string
+		b    []int
+		last int64
+	}
+	m := map[string]*acc{}
+	for _, e := range statsData {
+		if e.Ts < from || e.Ts > now {
+			continue
+		}
+		a, ok := m[e.Src]
+		if !ok {
+			a = &acc{cc: e.CC, b: make([]int, buckets)}
+			m[e.Src] = a
+		}
+		a.n++
+		if e.Ts > a.last {
+			a.last = e.Ts
+		}
+		bi := int((e.Ts - from) * int64(buckets) / span)
+		if bi >= buckets {
+			bi = buckets - 1
+		}
+		a.b[bi]++
+	}
+	statsMu.Unlock()
+	type row struct {
+		ip string
+		a  *acc
+	}
+	var all []row
+	for ip, a := range m {
+		all = append(all, row{ip, a})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].a.n > all[j].a.n })
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	out := make([]map[string]interface{}, len(all))
+	for i, r := range all {
+		out[i] = map[string]interface{}{
+			"ip": r.ip, "hits": r.a.n, "cc": r.a.cc, "last": r.a.last, "buckets": r.a.b,
+		}
+	}
+	return map[string]interface{}{"from": from, "to": now, "buckets": buckets, "ips": out}
+}
+
 // dumpStats writes the in-memory stats to disk.
 func dumpStats() {
 	statsMu.Lock()
@@ -3942,6 +4006,10 @@ func main() {
 
 	reconcileCommit()
 
+	// Interface utilization sampler for the SOC overview (one /proc/net/dev
+	// read per tick, in-memory ring only).
+	startIfSampler()
+
 	// Load persisted stats and start the ingest+dump ticker. Only write to disk
 	// when new drops were actually ingested (no churn when the box is idle).
 	loadStats()
@@ -4116,6 +4184,18 @@ func main() {
 			from = time.Now().Add(-24 * time.Hour).Unix()
 		}
 		writeJSON(w, map[string]interface{}{"ips": topIPs(from, to, limit)})
+	})
+	// SOC overview: per-interface utilization/error series from the in-memory
+	// /proc/net/dev ring, plus the conntrack gauge.
+	api("/api/ifstats", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, ifStats())
+	})
+	// SOC overview: top source IPs with time-bucketed drop counts.
+	api("/api/ip-histogram", func(w http.ResponseWriter, r *http.Request) {
+		from, _ := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
+		buckets, _ := strconv.Atoi(r.URL.Query().Get("buckets"))
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		writeJSON(w, ipHistogram(from, buckets, limit))
 	})
 	api("/api/objects", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, objects())

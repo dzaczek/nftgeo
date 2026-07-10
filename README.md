@@ -457,7 +457,12 @@ embedded frontend, serving `127.0.0.1:8787`:
 - **World map of drops** — geolocated source IPs of dropped packets (needs
   `LOG_DROPS="1"`)
 - **Live stats** — per-rule hit counters, top source countries, top blocked
-  ports, drops-over-time chart, top source IPs by drop count
+  ports, drops-over-time chart, top source IPs with per-IP drop histograms
+- **Interface monitoring (SOC view)** — per-NIC in/out throughput area charts
+  (last hour, sampled from `/proc/net/dev` every 10 s into RAM — no agents, no
+  disk writes), link speed %, up/down state, and per-type error counters
+  (errors/drops/fifo/frame/collisions/carrier); plus live conntrack usage and
+  total net throughput KPIs
 - **Visual policy editor** — Palo-Alto-style table with drag-and-drop
   reordering, per-rule enable/disable, inline quick-edit, and a rule editor
   drawer (action, direction, protocol, port, target with autocomplete, interface
