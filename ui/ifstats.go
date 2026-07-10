@@ -214,6 +214,14 @@ func ifStats() map[string]interface{} {
 				"rx_bytes": last.RxBytes, "tx_bytes": last.TxBytes,
 				"rx_packets": last.RxPackets, "tx_packets": last.TxPackets,
 			},
+			// cumulative since boot, for the error summary table
+			"errors_total": map[string]uint64{
+				"rx_errs": last.RxErrs, "rx_drop": last.RxDrop,
+				"rx_fifo": last.RxFifo, "rx_frame": last.RxFrame,
+				"tx_errs": last.TxErrs, "tx_drop": last.TxDrop,
+				"tx_fifo": last.TxFifo, "tx_colls": last.TxColls,
+				"tx_carrier": last.TxCarrier,
+			},
 		})
 	}
 	var ts []int64

@@ -8,6 +8,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.66.1] - 2026-07-10
+
+### Changed
+- **Interface errors are always visible.** Every error type (RX/TX err, drop,
+  fifo, frame, colls, carrier) now shows as a chip on each interface card —
+  zeros muted, actively-growing counters red with the 1h delta; hover shows
+  the since-boot total. New **Interface errors** summary card in the right
+  column under Top blocked ports (fills the empty space beside the map):
+  rows per error type, one column per interface, since-boot totals with (Δ 1h)
+  highlighted. `/api/ifstats` additionally reports `errors_total` (cumulative
+  since boot).
+
 ## [1.66.0] - 2026-07-10
 
 ### Added

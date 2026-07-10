@@ -286,6 +286,7 @@
           <div class="card"><h3>Top source countries (ingress)</h3><div id="cc-in"></div></div>
           <div class="card" style="margin-top:14px"><h3>Top destination countries (egress)</h3><div id="cc-out"></div></div>
           <div class="card" style="margin-top:14px"><h3>Top blocked ports</h3><div id="ports"></div></div>
+          <div class="card" style="margin-top:14px;display:none" id="iferrcard"><h3>Interface errors <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— since boot (Δ 1h)</span></h3><div id="iferr"></div></div>
         </div>
       </div>
       <!-- SOC: per-interface utilization + errors (last hour, sampled by the UI) -->
@@ -639,12 +640,28 @@ document.addEventListener('mousemove',e=>{
 });
 function sparkline(el,data){data=data||[];
   el.innerHTML=areaChart('spark-drops',{series:[{data,color:'var(--drop)',label:'drops/h'}],tleft:'-24h',h:64});}
+// Error summary table in the right column (fills the space under the map):
+// rows = error types, one column per interface; since-boot total with the
+// 1h delta in red when a counter is actively growing.
+function renderIfErrTable(ifs,labels,keys){
+  const card=$('#iferrcard');if(!card)return;
+  if(!ifs.length){card.style.display='none';return;}
+  card.style.display='block';
+  const head='<tr><th></th>'+ifs.map(f=>`<th style="text-align:right">${esc(f.name)}</th>`).join('')+'</tr>';
+  const rows=keys.map(k=>'<tr><td class="muted">'+labels[k]+'</td>'+ifs.map(f=>{
+    const tot=(f.errors_total||{})[k]||0,d=(f.errors||{})[k]||0;
+    const val=d>0?`<b style="color:var(--drop)">${tot.toLocaleString()} (+${d})</b>`
+      :tot>0?`<span>${tot.toLocaleString()}</span>`
+      :'<span class="muted">0</span>';
+    return `<td style="text-align:right">${val}</td>`;}).join('')+'</tr>').join('');
+  $('#iferr').innerHTML=`<table style="font-size:12px">${head}${rows}</table>`;
+}
 // ---- interface utilization cards (SOC) ----
 async function loadIfstats(){
   let d;try{d=await j('/api/ifstats');}catch(e){return;}
   const ifs=(d.ifaces||[]).filter(f=>f.name!=='lo');
   const sec=$('#ifsec');if(!sec)return;
-  if(!ifs.length){sec.style.display='none';return;}
+  if(!ifs.length){sec.style.display='none';const ec=$('#iferrcard');if(ec)ec.style.display='none';return;}
   sec.style.display='block';
   // KPI: current throughput (last sample, all ifaces) + conntrack
   let rxNow=0,txNow=0;
@@ -655,14 +672,16 @@ async function loadIfstats(){
     $('#k-ct').innerHTML=`${ct.count.toLocaleString()} <small>/ ${fmtNum(ct.max)} (${pct}%)</small>`;
     $('#k-ct').style.color=pct>85?'var(--drop)':'';}
   const errLabels={rx_errs:'RX err',rx_drop:'RX drop',rx_fifo:'RX fifo',rx_frame:'RX frame',tx_errs:'TX err',tx_drop:'TX drop',tx_fifo:'TX fifo',tx_colls:'colls',tx_carrier:'carrier'};
+  const ERRKEYS=['rx_errs','rx_drop','rx_fifo','rx_frame','tx_errs','tx_drop','tx_fifo','tx_colls','tx_carrier'];
+  renderIfErrTable(ifs,errLabels,ERRKEYS);
   $('#ifgrid').innerHTML=ifs.map(f=>{
     const rxN=f.rx_bps[f.rx_bps.length-1]||0,txN=f.tx_bps[f.tx_bps.length-1]||0;
     const speed=f.speed_mbps>0?f.speed_mbps*1e6:0;
     const util=speed?` · ${Math.max(rxN,txN)/speed*100<0.1?'<0.1':(Math.max(rxN,txN)/speed*100).toFixed(1)}% of ${f.speed_mbps>=1000?(f.speed_mbps/1000)+' Gb':f.speed_mbps+' Mb'}`:'';
-    const errsAll=Object.entries(f.errors||{});
-    const errSum=errsAll.reduce((a,[,v])=>a+v,0);
-    const chips=errSum?errsAll.filter(([,v])=>v>0).map(([k,v])=>`<span class="errchip bad">${errLabels[k]||k} +${v}</span>`).join('')
-      :'<span class="errchip">no errors (1h)</span>';
+    const errSum=ERRKEYS.reduce((a,k)=>a+((f.errors||{})[k]||0),0);
+    // every error type stays visible: zeros muted, growing counters red
+    const chips=ERRKEYS.map(k=>{const v=(f.errors||{})[k]||0;const tot=(f.errors_total||{})[k]||0;
+      return `<span class="errchip ${v>0?'bad':''}" title="${errLabels[k]}: +${v} in the last hour · ${tot.toLocaleString()} since boot">${errLabels[k]} ${v>0?'+'+v:tot>0?tot.toLocaleString():'0'}</span>`;}).join('');
     const errChart=errSum?areaChart('ifer-'+f.name,{series:[{data:f.err_series||[],color:'var(--warnc)',label:'errors+drops / sample'}],ts:d.ts,tleft:'-1h',h:36}):'';
     return `<div class="card">
       <h3 class="ifhead"><span class="dot" style="background:${f.up?'var(--ok)':'var(--drop)'}" title="${f.up?'up':'down'}"></span>${esc(f.name)}
