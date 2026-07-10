@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.69.3"
+NFTGEO_VERSION="1.70.0"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -1549,7 +1549,12 @@ emit_chain() {
 	# Stateful: replies to connections you initiated are always allowed.
 	printf '\t\tct state established,related counter accept\n'
 	# Keep IPv6 working: NDP and essential ICMPv6 must pass even when v6 is fenced.
-	[ -n "$HARDEN" ] && printf '\t\ticmpv6 type { %s } counter accept\n' "$ICMPV6_ESSENTIAL"
+	# Always with HARDEN; and unconditionally under a default-deny input policy
+	# even without HARDEN — otherwise DEFAULT_INPUT=drop silently kills IPv6
+	# Neighbor Discovery (SLAAC/RA/RS) and breaks IPv6 connectivity entirely.
+	if [ -n "$HARDEN" ] || { [ "$hook" = input ] && [ "$DEFAULT_INPUT" = drop ]; }; then
+		printf '\t\ticmpv6 type { %s } counter accept\n' "$ICMPV6_ESSENTIAL"
+	fi
 
 	# Anti-spoofing (ANTISPOOF): drop packets whose source is not routable
 	# back through the arrival interface (reverse-path filter in the firewall).

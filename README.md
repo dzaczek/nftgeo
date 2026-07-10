@@ -593,6 +593,28 @@ Before geo-fencing the port you use for SSH:
 
 ---
 
+## Limitations & compatibility
+
+- **Hairpin NAT / NAT reflection is not emitted.** A `dnat` port-forward works
+  for traffic arriving from the WAN, but LAN clients reaching the server via the
+  *public* IP are not hairpinned. Access internal servers by their internal IP
+  from inside the LAN, or add a hairpin SNAT rule to your own nftables.
+- **Docker / Podman coexistence.** Docker manages its own NAT (`ip` family,
+  prerouting/postrouting). nftgeo's NAT lives in the `inet` family at the
+  standard `dstnat`/`srcnat` priorities, so on a box that also runs Docker the
+  relative order of the two NAT hooks is not defined — if you port-forward with
+  both, test the result. Filtering (input/forward) coexists fine.
+- **Dynamic blocks run before the whitelist by design.** `nftgeo block` drops in
+  a separate table at priority `-150`, ahead of the main table (`-100`) and its
+  whitelist, so an explicit manual block wins even over a whitelisted address
+  (which is why `block` refuses a whitelisted IP unless you pass `--force`).
+- **Reboot during a pending `apply --confirm`.** The deadman auto-rollback is a
+  live process; it does not survive a reboot. If the box reboots inside the
+  confirm window the newly-applied (still-unconfirmed) `rules.conf` is what boots.
+  Keep the emergency console handy, and prefer confirming promptly.
+
+---
+
 ## Operator CLI
 
 ```sh

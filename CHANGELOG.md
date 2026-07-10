@@ -8,6 +8,22 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.70.0] - 2026-07-10
+
+### Fixed
+- **IPv6 no longer breaks under `DEFAULT_INPUT=drop` without `HARDEN`.** Essential
+  ICMPv6 (Neighbor Discovery, RS/RA, PMTU) is now accepted on the input chain
+  whenever the input policy is default-deny, not only when `HARDEN` is set —
+  previously a default-deny input without `HARDEN` silently dropped NDP and killed
+  IPv6 connectivity. (Reported by the Jules audit; test:
+  `tests/render/cases/ipv6-icmp-defdeny`.)
+
+### Docs
+- New **Limitations & compatibility** section in the README: hairpin NAT is not
+  emitted; Docker/Podman NAT-hook ordering caveat; dynamic blocks intentionally
+  run ahead of the whitelist (hence `block` refuses whitelisted IPs without
+  `--force`); the deadman does not survive a reboot inside the confirm window.
+
 ## [1.69.3] - 2026-07-10
 
 ### Changed
