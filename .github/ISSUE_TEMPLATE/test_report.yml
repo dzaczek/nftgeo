@@ -1,0 +1,91 @@
+name: Test report
+description: Share the result of testing nftgeo on a lab host
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing nftgeo. Test on a disposable or non-critical host
+        and redact API keys, credentials, hostnames, and real IP inventories.
+        Report security vulnerabilities privately through SECURITY.md.
+
+  - type: input
+    id: version
+    attributes:
+      label: nftgeo version
+      description: Output of `nftgeo version`
+      placeholder: nftgeo-update 1.72.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation method
+      options:
+        - Debian package
+        - RPM package
+        - install.sh from source
+        - Upgrade from an older release
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS, kernel, and architecture
+      placeholder: Ubuntu 24.04, Linux 6.8, amd64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Virtual machine or cloud VPS
+        - LXC or OpenVZ container
+        - Bare metal
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: What did you test?
+      description: Include the feature, commands, and relevant scenario.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: State clearly whether the test passed, failed, or exposed an unclear behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted config and logs
+      description: Remove API keys, credentials, private hostnames, and real IP addresses.
+      render: shell
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets and private infrastructure details from this report.
+          required: true
+        - label: I tested on a non-critical host or had emergency console access available.
+          required: true

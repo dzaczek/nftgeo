@@ -1,0 +1,91 @@
+name: Raport z testów (PL)
+description: Przekaż wyniki testów nftgeo na hoście laboratoryjnym
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Dziękuję za testowanie nftgeo. Testuj na jednorazowym lub niekrytycznym
+        hoście. Usuń klucze API, dane logowania, nazwy hostów i prawdziwe adresy
+        IP. Luki bezpieczeństwa zgłaszaj prywatnie według SECURITY.md.
+
+  - type: input
+    id: version
+    attributes:
+      label: Wersja nftgeo
+      description: Wynik `nftgeo version`
+      placeholder: nftgeo-update 1.72.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Sposób instalacji
+      options:
+        - Paczka Debian
+        - Paczka RPM
+        - install.sh ze źródeł
+        - Aktualizacja starszego wydania
+        - Inny
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: System, kernel i architektura
+      placeholder: Ubuntu 24.04, Linux 6.8, amd64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Środowisko
+      options:
+        - Maszyna wirtualna albo VPS w chmurze
+        - Kontener LXC albo OpenVZ
+        - Bare metal
+        - Inne
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Co zostało przetestowane?
+      description: Podaj funkcję, komendy i istotny scenariusz.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Oczekiwany wynik
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Rzeczywisty wynik
+      description: Napisz jasno, czy test przeszedł, nie przeszedł, czy ujawnił niejasne zachowanie.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Oczyszczona konfiguracja i logi
+      description: Usuń klucze API, dane logowania, prywatne nazwy hostów i prawdziwe adresy IP.
+      render: shell
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Kontrola bezpieczeństwa
+      options:
+        - label: Usunąłem sekrety i dane prywatnej infrastruktury z tego raportu.
+          required: true
+        - label: Testowałem na hoście niekrytycznym albo miałem dostęp do konsoli awaryjnej.
+          required: true
