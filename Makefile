@@ -52,7 +52,9 @@ tarball:
 	@mkdir -p $(DIST)
 	@tar -czf $(DIST)/nftgeo-$(VERSION).tar.gz \
 	  bin systemd etc man examples tests install.sh uninstall.sh \
-	  README.md CHANGELOG.md CHEATSHEET.md ROADMAP.md LICENSE Makefile
+	  docs README.md CHANGELOG.md CHEATSHEET.md ROADMAP.md TESTING.md \
+	  TESTING_PL.md TEST_REQUEST.md TEST_REQUEST_PL.md CONTRIBUTING.md \
+	  CONTRIBUTING_PL.md LICENSE Makefile
 	@echo "wrote $(DIST)/nftgeo-$(VERSION).tar.gz"
 
 clean:
