@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.66.2"
+NFTGEO_VERSION="1.67.0"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -974,8 +974,17 @@ parse_rules() {
 	fi
 
 	if [ ! -s "$RULES_NORM" ] && [ ! -s "$INGRESS_NORM" ] && [ ! -s "$THROTTLE_NORM" ] && [ ! -s "$SYNPROXY_NORM" ] && [ ! -s "$NAT_NORM" ] && [ ! -s "$ZONE_NORM" ]; then
-		echo "No rules found in ${RULES_FILE} or ${RULES_DIR}/*.conf" >&2
-		exit 1
+		# No rules at all. With DEFAULT_INPUT=drop this would silently load a
+		# default-deny table and lock everyone out, so keep the hard abort there.
+		# With DEFAULT_INPUT=accept (the default) an empty ruleset accepts
+		# everything — it blocks nothing, so start gracefully and just warn.
+		# This lets a fresh install boot cleanly (service active, panel usable)
+		# before any rules are added, instead of failing on the empty example.
+		if [ "$DEFAULT_INPUT" = drop ]; then
+			echo "No rules found in ${RULES_FILE} or ${RULES_DIR}/*.conf, and DEFAULT_INPUT=drop would lock everyone out. Add an allow/whitelist rule, or set DEFAULT_INPUT=accept." >&2
+			exit 1
+		fi
+		warn "No rules configured in ${RULES_FILE} or ${RULES_DIR}/*.conf; loading a permissive baseline (DEFAULT_INPUT=accept) that blocks nothing. Add rules and re-apply to enforce a policy."
 	fi
 
 	sort -u "$GEO_TOKENS" -o "$GEO_TOKENS"

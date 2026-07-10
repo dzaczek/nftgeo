@@ -8,6 +8,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.67.0] - 2026-07-10
+
+### Changed
+- **Graceful start with no rules configured.** A fresh install whose
+  `rules.conf` is still the fully-commented example no longer fails to start
+  (`No rules found` → `exit 1`). With `DEFAULT_INPUT=accept` (the default) an
+  empty ruleset accepts everything — it blocks nothing — so the engine now
+  loads a permissive baseline, warns (in the journal and the dashboard's
+  `status.json`), and exits 0. The service comes up and the panel is usable
+  before any policy is written; add rules and re-apply to enforce one. The hard
+  abort is kept for `DEFAULT_INPUT=drop`, where an empty ruleset would be a
+  default-deny lockout.
+
 ## [1.66.2] - 2026-07-10
 
 ### Changed

@@ -669,6 +669,7 @@ sudo systemctl start nftgeo.service
 | Country zone download fails | The engine uses the cached copy. If no cache exists and the country is in an `allow` rule, the update aborts safely. |
 | Port still open after `allow` | An `allow` on its own doesn't close the port — add a catch-all `deny ... any` below it. `validate` warns about this. |
 | Egress geo-fencing breaks updates | If you restrict outbound 80/443, make sure the allowed regions cover ipdeny.com and AbuseIPDB, or add their IPs to `WHITELIST`. |
+| Service won't start on a fresh install | If `rules.conf` is still the empty example, the engine loads a permissive baseline and warns (with `DEFAULT_INPUT=accept`); it only aborts if `DEFAULT_INPUT=drop`, where an empty ruleset would lock you out. Add rules and re-apply. |
 
 ---
 
