@@ -8,6 +8,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.69.2] - 2026-07-10
+
+### Changed
+- **Interface graphs separate real uplinks from virtual plumbing.** Docker
+  bridges, `veth*`, `br-*`, libvirt/CNI/OVS interfaces are demoted to a
+  collapsed "virtual / bridge interfaces" section below the physical NICs, so
+  the SOC graphs aren't drowned out by dozens of idle veth pairs (common when
+  Docker runs inside an LXC container — on a container these are noted as its
+  own, not the physical host's). The net-throughput KPI now sums only the real
+  uplinks (bridges/veth carry the same bytes as `eth0`, so summing them
+  double-counts). The error table shows the uplinks plus any virtual interface
+  that actually has errors.
+
 ## [1.69.1] - 2026-07-10
 
 ### Changed

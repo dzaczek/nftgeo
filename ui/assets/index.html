@@ -292,6 +292,10 @@
       <!-- SOC: per-interface utilization + errors (last hour, sampled by the UI) -->
       <div id="ifsec" style="display:none;margin-top:14px">
         <div class="grid g2" id="ifgrid"></div>
+        <div id="ifvirtwrap" style="display:none;margin-top:12px">
+          <div class="muted" style="font-size:12px;cursor:pointer;user-select:none;padding:4px 0" id="ifvirthead" onclick="toggleVirtIf()"></div>
+          <div class="grid g2" id="ifvirtgrid" style="display:none"></div>
+        </div>
       </div>
       <div class="card" style="margin-top:14px">
         <h3>Top source IPs <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— with drop activity histogram</span> <select id="topip-range" onchange="loadTopIPs()" style="float:right;font-size:12px;background:var(--bg);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:2px 6px">
@@ -657,40 +661,64 @@ function renderIfErrTable(ifs,labels,keys){
   $('#iferr').innerHTML=`<table style="font-size:12px">${head}${rows}</table>`;
 }
 // ---- interface utilization cards (SOC) ----
+const IF_ERRLABELS={rx_errs:'RX err',rx_drop:'RX drop',rx_fifo:'RX fifo',rx_frame:'RX frame',tx_errs:'TX err',tx_drop:'TX drop',tx_fifo:'TX fifo',tx_colls:'colls',tx_carrier:'carrier'};
+const IF_ERRKEYS=['rx_errs','rx_drop','rx_fifo','rx_frame','tx_errs','tx_drop','tx_fifo','tx_colls','tx_carrier'];
+// Virtual plumbing (Docker bridges/veth, libvirt, k8s CNI, OVS…): lots of them,
+// mostly idle, and on a container these live in the container's own netns. Demote
+// them below the real uplinks so the graphs aren't drowned out.
+function isVirtualIface(n){return n==='docker0'||/^(veth|docker|br-|virbr|cni|cali|flannel|vnet|nomad|kube|weave|ovs-|dummy|lxcbr)/.test(n);}
+function ifCardHTML(f,ts){
+  const rxN=f.rx_bps[f.rx_bps.length-1]||0,txN=f.tx_bps[f.tx_bps.length-1]||0;
+  const speed=f.speed_mbps>0?f.speed_mbps*1e6:0;
+  const util=speed?` · ${Math.max(rxN,txN)/speed*100<0.1?'<0.1':(Math.max(rxN,txN)/speed*100).toFixed(1)}% of ${f.speed_mbps>=1000?(f.speed_mbps/1000)+' Gb':f.speed_mbps+' Mb'}`:'';
+  const errSum=IF_ERRKEYS.reduce((a,k)=>a+((f.errors||{})[k]||0),0);
+  const chips=IF_ERRKEYS.map(k=>{const v=(f.errors||{})[k]||0;const tot=(f.errors_total||{})[k]||0;
+    return `<span class="errchip ${v>0?'bad':''}" title="${IF_ERRLABELS[k]}: +${v} in the last hour · ${tot.toLocaleString()} since boot">${IF_ERRLABELS[k]} ${v>0?'+'+v:tot>0?tot.toLocaleString():'0'}</span>`;}).join('');
+  const errChart=errSum?areaChart('ifer-'+f.name,{series:[{data:f.err_series||[],color:'var(--warnc)',label:'errors+drops / sample'}],ts:ts,tleft:'-1h',h:36}):'';
+  return `<div class="card">
+    <h3 class="ifhead"><span class="dot" style="background:${f.up?'var(--ok)':'var(--drop)'}" title="${f.up?'up':'down'}"></span>${esc(f.name)}
+      <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400;font-size:11.5px">${esc(fmtBits(rxN))} in · ${esc(fmtBits(txN))} out${util}</span>
+      <span class="muted" style="margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400;font-size:11px" title="cumulative since boot">Σ ${esc(fmtBytes(f.totals.rx_bytes))} / ${esc(fmtBytes(f.totals.tx_bytes))}</span></h3>
+    ${areaChart('ifc-'+f.name,{series:[{data:f.rx_bps,color:'var(--acc2)',label:'in'},{data:f.tx_bps,color:'var(--acc)',label:'out'}],fmt:fmtBits,ts:ts,tleft:'-1h',h:96})}
+    <div style="margin-top:6px">${chips}</div>${errChart}
+  </div>`;
+}
+let VIRT_IF_OPEN=false;
+function toggleVirtIf(){VIRT_IF_OPEN=!VIRT_IF_OPEN;const g=$('#ifvirtgrid');if(g)g.style.display=VIRT_IF_OPEN?'':'none';const h=$('#ifvirthead');if(h)h.dataset.open=VIRT_IF_OPEN?'1':'';loadIfstats();}
 async function loadIfstats(){
   let d;try{d=await j('/api/ifstats');}catch(e){return;}
-  const ifs=(d.ifaces||[]).filter(f=>f.name!=='lo');
+  const all=(d.ifaces||[]).filter(f=>f.name!=='lo');
   const sec=$('#ifsec');if(!sec)return;
-  if(!ifs.length){sec.style.display='none';const ec=$('#iferrcard');if(ec)ec.style.display='none';return;}
+  if(!all.length){sec.style.display='none';const ec=$('#iferrcard');if(ec)ec.style.display='none';return;}
   sec.style.display='block';
-  // KPI: current throughput (last sample, all ifaces) + conntrack
+  const primary=all.filter(f=>!isVirtualIface(f.name));
+  const virtual=all.filter(f=>isVirtualIface(f.name));
+  // If everything is "virtual" (unusual), treat them as primary so something shows.
+  const mainIfs=primary.length?primary:virtual, extraIfs=primary.length?virtual:[];
+  // KPI: sum the real uplinks only — summing bridges/veth would double-count the
+  // same traffic that also crosses eth0.
   let rxNow=0,txNow=0;
-  for(const f of ifs){rxNow+=f.rx_bps[f.rx_bps.length-1]||0;txNow+=f.tx_bps[f.tx_bps.length-1]||0;}
+  for(const f of mainIfs){rxNow+=f.rx_bps[f.rx_bps.length-1]||0;txNow+=f.tx_bps[f.tx_bps.length-1]||0;}
   $('#k-net').innerHTML=`${esc(fmtBits(rxNow))} <small>/ ${esc(fmtBits(txNow))}</small>`;
   const ct=d.conntrack||{};
   if(ct.max>0){const pct=Math.round(100*ct.count/ct.max);
     $('#k-ct').innerHTML=`${ct.count.toLocaleString()} <small>/ ${fmtNum(ct.max)} (${pct}%)</small>`;
     $('#k-ct').style.color=pct>85?'var(--drop)':'';}
-  const errLabels={rx_errs:'RX err',rx_drop:'RX drop',rx_fifo:'RX fifo',rx_frame:'RX frame',tx_errs:'TX err',tx_drop:'TX drop',tx_fifo:'TX fifo',tx_colls:'colls',tx_carrier:'carrier'};
-  const ERRKEYS=['rx_errs','rx_drop','rx_fifo','rx_frame','tx_errs','tx_drop','tx_fifo','tx_colls','tx_carrier'];
-  renderIfErrTable(ifs,errLabels,ERRKEYS);
-  $('#ifgrid').innerHTML=ifs.map(f=>{
-    const rxN=f.rx_bps[f.rx_bps.length-1]||0,txN=f.tx_bps[f.tx_bps.length-1]||0;
-    const speed=f.speed_mbps>0?f.speed_mbps*1e6:0;
-    const util=speed?` · ${Math.max(rxN,txN)/speed*100<0.1?'<0.1':(Math.max(rxN,txN)/speed*100).toFixed(1)}% of ${f.speed_mbps>=1000?(f.speed_mbps/1000)+' Gb':f.speed_mbps+' Mb'}`:'';
-    const errSum=ERRKEYS.reduce((a,k)=>a+((f.errors||{})[k]||0),0);
-    // every error type stays visible: zeros muted, growing counters red
-    const chips=ERRKEYS.map(k=>{const v=(f.errors||{})[k]||0;const tot=(f.errors_total||{})[k]||0;
-      return `<span class="errchip ${v>0?'bad':''}" title="${errLabels[k]}: +${v} in the last hour · ${tot.toLocaleString()} since boot">${errLabels[k]} ${v>0?'+'+v:tot>0?tot.toLocaleString():'0'}</span>`;}).join('');
-    const errChart=errSum?areaChart('ifer-'+f.name,{series:[{data:f.err_series||[],color:'var(--warnc)',label:'errors+drops / sample'}],ts:d.ts,tleft:'-1h',h:36}):'';
-    return `<div class="card">
-      <h3 class="ifhead"><span class="dot" style="background:${f.up?'var(--ok)':'var(--drop)'}" title="${f.up?'up':'down'}"></span>${esc(f.name)}
-        <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400;font-size:11.5px">${esc(fmtBits(rxN))} in · ${esc(fmtBits(txN))} out${util}</span>
-        <span class="muted" style="margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400;font-size:11px" title="cumulative since boot">Σ ${esc(fmtBytes(f.totals.rx_bytes))} / ${esc(fmtBytes(f.totals.tx_bytes))}</span></h3>
-      ${areaChart('ifc-'+f.name,{series:[{data:f.rx_bps,color:'var(--acc2)',label:'in'},{data:f.tx_bps,color:'var(--acc)',label:'out'}],fmt:fmtBits,ts:d.ts,tleft:'-1h',h:96})}
-      <div style="margin-top:6px">${chips}</div>${errChart}
-    </div>`;
-  }).join('');
+  // Error table: real uplinks always, plus any virtual iface that actually has
+  // errors (so a broken veth still surfaces without widening the table for idle ones).
+  const errKeys=IF_ERRKEYS;
+  const virtWithErr=extraIfs.filter(f=>errKeys.reduce((a,k)=>a+((f.errors_total||{})[k]||0),0)>0);
+  renderIfErrTable(mainIfs.concat(virtWithErr),IF_ERRLABELS,errKeys);
+  $('#ifgrid').innerHTML=mainIfs.map(f=>ifCardHTML(f,d.ts)).join('');
+  // Virtual/bridge interfaces: collapsed section below, labeled.
+  const wrap=$('#ifvirtwrap');
+  if(!extraIfs.length){if(wrap)wrap.style.display='none';}
+  else{
+    wrap.style.display='block';
+    const cont=d.container?' (this host is a container — these are its Docker/bridge interfaces, not the physical host\'s)':'';
+    $('#ifvirthead').innerHTML=`${VIRT_IF_OPEN?'▾':'▸'} ${extraIfs.length} virtual / bridge interface${extraIfs.length!==1?'s':''} — Docker, veth, bridges${cont}`;
+    $('#ifvirtgrid').innerHTML=VIRT_IF_OPEN?extraIfs.map(f=>ifCardHTML(f,d.ts)).join(''):'';
+  }
 }
 
 function ipHistBar(b){const m=Math.max(1,...b);
