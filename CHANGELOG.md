@@ -8,6 +8,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.71.1] - 2026-07-10
+
+### Changed
+- **Overview layout rebalanced.** The drop map, top-countries and stats cards are
+  now spread across two balanced columns instead of leaving a tall empty gap
+  under the (short) map.
+- **Ingress interface is editable from the UI.** The ingress rule drawer now has
+  an "Ingress interface(s)" control that reads/writes `INGRESS_DEV` (new
+  `GET`/`POST /api/ingress-dev`) with an interface picker from live NICs. Since
+  the ingress hook is per-device, it's labeled clearly as applying to all ingress
+  rules; blank = auto-detect the default-route interface.
+
 ## [1.71.0] - 2026-07-10
 
 ### Added

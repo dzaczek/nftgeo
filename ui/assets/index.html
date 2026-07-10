@@ -275,17 +275,17 @@
         <div class="kpi" title="Live network throughput, all interfaces (sum RX / sum TX)"><b id="k-net">—</b><span>net rx / tx</span></div>
         <div class="kpi" title="Tracked connections vs kernel limit (nf_conntrack)"><b id="k-ct">—</b><span>conntrack</span></div>
       </div>
-      <div class="grid g2" style="margin-bottom:14px">
-        <div class="card"><h3>System</h3><div id="health"></div></div>
-        <div class="card"><h3>Drops over time (24h)</h3><div id="spark"></div></div>
-      </div>
       <div class="grid g2">
-        <div class="card" style="align-self:start"><h3>Where drops come from (ingress) <span id="geonote" class="muted" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h3><div id="map"></div>
-          <div id="mapfallback" class="muted" style="display:none;font-size:12px">Map library unavailable — see the country list.</div></div>
         <div>
-          <div class="card"><h3>Top source countries (ingress)</h3><div id="cc-in"></div></div>
-          <div class="card" style="margin-top:14px"><h3>Top destination countries (egress)</h3><div id="cc-out"></div></div>
+          <div class="card"><h3>Where drops come from (ingress) <span id="geonote" class="muted" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h3><div id="map"></div>
+            <div id="mapfallback" class="muted" style="display:none;font-size:12px">Map library unavailable — see the country list.</div></div>
+          <div class="card" style="margin-top:14px"><h3>Top source countries (ingress)</h3><div id="cc-in"></div></div>
           <div class="card" style="margin-top:14px"><h3>Top blocked ports</h3><div id="ports"></div></div>
+        </div>
+        <div>
+          <div class="card"><h3>System</h3><div id="health"></div></div>
+          <div class="card" style="margin-top:14px"><h3>Drops over time (24h)</h3><div id="spark"></div></div>
+          <div class="card" style="margin-top:14px"><h3>Top destination countries (egress)</h3><div id="cc-out"></div></div>
           <div class="card" style="margin-top:14px;display:none" id="iferrcard"><h3>Interface errors <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— since boot (Δ 1h)</span></h3><div id="iferr"></div></div>
         </div>
       </div>
@@ -1598,12 +1598,35 @@ function ingressDrawer(file,id){
     <label class="fld"><span>Target (source)</span><input id="ig-target" list="tgtlist" value="${esc(v.target)}" placeholder="abuse / country / region / group / IP / CIDR / any" autocomplete="off"></label>
     <label class="fld"><span>Port / service</span><input id="ig-port" list="svclist" value="${esc(v.port)}" placeholder="blank = all ports"></label>
     <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="ig-log" style="width:auto"${v.log?' checked':''}><span style="margin:0">Log matches (nftgeo-accept/nftgeo-drop:&lt;name&gt;)</span></label>
+    <div class="card" style="padding:8px 10px;margin-top:4px;background:var(--bg)">
+      <div style="font-size:12px;margin-bottom:4px"><b>Ingress interface(s)</b> <span class="muted">— the ingress hook is per-device; this applies to <u>all</u> ingress rules, not just this one</span></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input id="ig-dev" list="iglist" placeholder="auto (default-route interface)" autocomplete="off" style="flex:1">
+        <button class="btn-ghost" style="color:var(--fg)" onclick="saveIngressDev()">Set</button>
+      </div>
+      <datalist id="iglist"></datalist>
+      <div class="muted" style="font-size:11px;margin-top:3px">Space-separated (e.g. <code>eth0 eth1</code>). Saved to <code>/etc/nftgeo/config</code> as <code>INGRESS_DEV</code>; apply to activate. Blank = auto-detect.</div>
+    </div>
     <div style="display:flex;gap:8px;margin-top:auto">
       <button class="btn-go" onclick="saveIngress('${esc(file||'ingress.conf')}',${id!=null?id:'null'})">Save to draft</button>
       ${id!=null?`<button class="btn-rb" onclick="deleteRule('${esc(file)}',${id})">Delete</button>`:''}
       <button class="btn-ghost" style="margin-left:auto;color:var(--fg)" onclick="closeDrawer()">Cancel</button>
     </div>`;
-  igProtoChange(); openDrawer(); $('#ig-target').focus();
+  igProtoChange(); openDrawer(); loadIngressDev(); $('#ig-target').focus();
+}
+async function loadIngressDev(){
+  try{const d=await j('/api/ingress-dev');
+    const inp=$('#ig-dev');if(inp)inp.value=d.dev||'';
+    const dl=$('#iglist');if(dl)dl.innerHTML=(d.interfaces||[]).map(n=>`<option value="${esc(n)}">`).join('');
+  }catch(e){}
+}
+async function saveIngressDev(){
+  const inp=$('#ig-dev');if(!inp)return;
+  try{const r=await fetch('/api/ingress-dev',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dev:inp.value.trim()})});
+    const d=await r.json();
+    if(d.ok){toast('Ingress interface saved: '+(d.dev||'auto')+' — apply to activate');}
+    else{toast(d.error||'Failed to save');}
+  }catch(e){toast('Error: '+e.message);}
 }
 function igProtoChange(){const p=$('#ig-proto').value,pt=$('#ig-port');
   if(p==='any'||p==='icmp'||p==='icmpv6'){pt.value='';pt.disabled=true;pt.placeholder=p==='any'?'(all ports)':'(no port)';}

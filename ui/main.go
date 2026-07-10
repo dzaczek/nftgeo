@@ -236,6 +236,36 @@ func setAbuseIPDBKey(key string) error {
 	return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
 }
 
+// configValue returns the (unquoted) value of KEY= from the config file, or "".
+func configValue(key string) string {
+	data, _ := os.ReadFile(configFile)
+	for _, line := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, key+"=") {
+			return strings.Trim(strings.TrimSpace(t[len(key)+1:]), `"`)
+		}
+	}
+	return ""
+}
+
+// setConfigValue writes (or replaces) KEY="val" in the config file.
+func setConfigValue(key, val string) error {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	repl := key + "=\"" + val + "\""
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), key+"=") {
+			lines[i] = repl
+			return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
+		}
+	}
+	lines = append(lines, repl)
+	return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
+}
+
 // health gathers the status widgets: next scheduled run, last load, feed
 // freshness, and the established-connection counter.
 func health(ch []Chain) map[string]interface{} {
@@ -4269,6 +4299,42 @@ func main() {
 	})
 	api("/api/interfaces", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"interfaces": hostInterfaces()})
+	})
+	// INGRESS_DEV: which interface(s) the ingress hook attaches to (the hook is
+	// per-device; nftgeo emits one base chain per device, all jumping to the
+	// shared ingress_rules). Applies to every ingress rule. GET reads it; POST
+	// (rw sessions) writes it to /etc/nftgeo/config. Blank = auto-detect the
+	// default-route interface.
+	api("/api/ingress-dev", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var req struct {
+				Dev string `json:"dev"`
+			}
+			body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<12))
+			if json.Unmarshal(body, &req) != nil {
+				http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+				return
+			}
+			dev := strings.Join(strings.Fields(req.Dev), " ") // collapse whitespace
+			// Interface names only (space-separated); reject anything that could
+			// break out of the quoted config value.
+			for _, tok := range strings.Fields(dev) {
+				for _, c := range tok {
+					if !(c == '.' || c == '_' || c == '-' || c == '@' || c == ':' ||
+						(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+						http.Error(w, `{"error":"invalid interface name"}`, http.StatusBadRequest)
+						return
+					}
+				}
+			}
+			if err := setConfigValue("INGRESS_DEV", dev); err != nil {
+				http.Error(w, `{"error":"cannot write config"}`, http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]interface{}{"ok": true, "dev": dev})
+			return
+		}
+		writeJSON(w, map[string]interface{}{"dev": configValue("INGRESS_DEV"), "interfaces": hostInterfaces()})
 	})
 	// Built-in well-known services for the port/service autocomplete. Sourced
 	// from the engine (`--services`) so the list never drifts from what resolves.
