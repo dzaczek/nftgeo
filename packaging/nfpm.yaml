@@ -48,6 +48,18 @@ contents:
     dst: /usr/share/doc/nftgeo/README.md
   - src: CHEATSHEET.md
     dst: /usr/share/doc/nftgeo/CHEATSHEET.md
+  - src: docs/REFERENCE.md
+    dst: /usr/share/doc/nftgeo/REFERENCE.md
+  - src: TESTING.md
+    dst: /usr/share/doc/nftgeo/TESTING.md
+  - src: TESTING_PL.md
+    dst: /usr/share/doc/nftgeo/TESTING_PL.md
+  - src: CONTRIBUTING.md
+    dst: /usr/share/doc/nftgeo/CONTRIBUTING.md
+  - src: CONTRIBUTING_PL.md
+    dst: /usr/share/doc/nftgeo/CONTRIBUTING_PL.md
+  - src: examples/*
+    dst: /usr/share/doc/nftgeo/examples/
   - src: man/nftgeo.8
     dst: /usr/share/man/man8/nftgeo.8
   - dst: /etc/nftgeo/rules.d
