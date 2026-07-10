@@ -188,6 +188,54 @@ func feedLabels() map[string]string {
 	return m
 }
 
+// runStatus reads the status.json file written by the engine after each run.
+// It reports abuse API key state, fetch timestamps, and collected warnings.
+// Returns nil if the file is missing (e.g. first boot before the service runs).
+func runStatus() map[string]interface{} {
+	b, err := os.ReadFile(filepath.Join(stateDir, "status.json"))
+	if err != nil {
+		return nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+// setAbuseIPDBKey writes (or replaces) ABUSEIPDB_API_KEY in the config file.
+// The engine reads it on the next run. Empty string clears the key.
+func setAbuseIPDBKey(key string) error {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "ABUSEIPDB_API_KEY=") {
+			lines[i] = "ABUSEIPDB_API_KEY=\"" + key + "\""
+			found = true
+			break
+		}
+	}
+	if !found {
+		// Insert before the first non-comment line, or at the top if none.
+		insertAt := 0
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+				insertAt = i
+				break
+			}
+			insertAt = i + 1
+		}
+		lines = append(lines[:insertAt], append([]string{"ABUSEIPDB_API_KEY=\"" + key + "\""}, lines[insertAt:]...)...)
+	}
+	return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
+}
+
 // health gathers the status widgets: next scheduled run, last load, feed
 // freshness, and the established-connection counter.
 func health(ch []Chain) map[string]interface{} {
@@ -222,6 +270,7 @@ func health(ch []Chain) map[string]interface{} {
 	// matches the Reference tab instead of silently omitting AbuseIPDB.
 	h["feeds"] = abuseSources()
 	h["abuseLoaded"] = abuseLoadedCount()
+	h["status"] = runStatus()
 	return h
 }
 
@@ -4017,6 +4066,44 @@ func main() {
 	})
 	api("/api/abuse-load", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, abuseLoadStatus())
+	})
+	api("/api/abuseipdb-config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			var req struct {
+				APIKey string `json:"api_key"`
+			}
+			if err := json.Unmarshal(body, &req); err != nil {
+				http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+				return
+			}
+			if err := setAbuseIPDBKey(req.APIKey); err != nil {
+				http.Error(w, `{"error":"cannot write config: `+err.Error()+`"}`, http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]interface{}{"ok": true, "message": "API key saved. Run nftgeo (systemctl start nftgeo or apply via dashboard) to activate."})
+			return
+		}
+		// GET: report current status from status.json + config file
+		st := runStatus()
+		if st == nil {
+			st = map[string]interface{}{}
+		}
+		// Also check the config file directly for the key presence
+		data, _ := os.ReadFile(configFile)
+		keyPresent := false
+		for _, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "ABUSEIPDB_API_KEY=") {
+				val := strings.Trim(strings.TrimSpace(trimmed[len("ABUSEIPDB_API_KEY="):]), `"`)
+				if val != "" {
+					keyPresent = true
+				}
+				break
+			}
+		}
+		st["api_key_present"] = keyPresent
+		writeJSON(w, st)
 	})
 	api("/api/top-ips", func(w http.ResponseWriter, r *http.Request) {
 		fromStr := r.URL.Query().Get("from")

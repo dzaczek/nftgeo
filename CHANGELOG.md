@@ -8,6 +8,31 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.65.0] - 2026-07-10
+
+### Added
+- **Run status for the dashboard (`status.json`).** After every run — including
+  the "unchanged, not reloaded" fast path — the engine writes
+  `/var/lib/nftgeo/status.json` with: AbuseIPDB API key presence, whether any
+  rule targets `abuse`, last successful AbuseIPDB and geo-zone fetch timestamps
+  (persisted across runs in `abuse_last_fetch` / `geo_last_fetch`), and all
+  warnings collected during the run.
+- **`warn()` helper in the engine.** Warnings (missing API key, zone download
+  failures, retained abuse state) go to stderr (journal) *and* into
+  `status.json`, so the panel shows the same messages as the logs.
+- **AbuseIPDB status card in the panel (Reference tab).** Shows whether the API
+  key is configured, the last fetch time, engine warnings, and alerts when a
+  `deny … abuse` rule is active with no key (the set would be empty). Includes
+  a password-type field to save or clear `ABUSEIPDB_API_KEY` directly to
+  `/etc/nftgeo/config` (new `GET`/`POST /api/abuseipdb-config`).
+- **Geo data freshness in the health panel.** Green when zones were fetched
+  <24 h ago, red otherwise.
+
+### Fixed
+- Startup without an AbuseIPDB key or with unreachable feeds is warned about
+  visibly (panel + journal) instead of only a stderr line lost in the noise.
+  (Fetch failures were already non-fatal; now they are observable.)
+
 ## [1.64.1] - 2026-07-09
 
 ### Fixed

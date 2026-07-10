@@ -349,7 +349,7 @@ order.
 |--------|---------|---------|
 | `WHITELIST` | `""` | Always-allow IPs (bypasses all rules + abuse) |
 | `WHITELIST_HOSTS` | `""` | Hostnames to whitelist (re-resolved each run) |
-| `ABUSEIPDB_API_KEY` | `""` | AbuseIPDB API key (only needed for `abuse` target) |
+| `ABUSEIPDB_API_KEY` | `""` | AbuseIPDB API key (only needed for `abuse` target; can also be saved from the dashboard's Reference tab) |
 | `ABUSE_FEEDS` | `""` | Extra plaintext IP/CIDR blocklists (FireHOL, Spamhaus, etc.) |
 | `DEFAULT_INPUT` | `accept` | Input chain policy: `accept` (selective) or `drop` (default-deny) |
 | `LOG_DROPS` | `""` (off) | Log dropped packets to kernel log / journald |
@@ -472,6 +472,11 @@ embedded frontend, serving `127.0.0.1:8787`:
   jump-start a common policy
 - **Alerts banner** — drop spikes, stale feeds, failed runs, disabled IP
   forwarding
+- **Run status & AbuseIPDB card** — the engine writes
+  `/var/lib/nftgeo/status.json` after every run (API key presence, last
+  AbuseIPDB/geo fetch times, warnings); the Reference tab shows it and lets you
+  save the `ABUSEIPDB_API_KEY` straight into `/etc/nftgeo/config`. The health
+  panel shows geo-data freshness (green <24 h)
 
 ### Starting the dashboard
 
