@@ -208,6 +208,130 @@ sudo nftgeo-ui token    # get a one-time login link
 
 ---
 
+## 🚀 Fast track / Schnellstart / Szybki start
+
+Three steps from zero to a running geo-firewall. **Before you start:** know your
+own public IP address and be physically near the machine or have console access.
+
+### English
+
+```sh
+# 1. Install
+git clone https://github.com/dzaczek/nftgeo.git && cd nftgeo && sudo ./install.sh
+
+# 2. Whitelist YOUR IP first — prevents lockout
+echo 'WHITELIST="YOUR.PUBLIC.IP"' | sudo tee -a /etc/nftgeo/config
+
+# 3. Add your first rules
+cat <<'EOF' | sudo tee /etc/nftgeo/rules.conf
+allow in tcp 22 YOUR.PUBLIC.IP   # SSH from your IP only
+deny  in tcp 22 any              # close SSH to everyone else
+deny  in any - abuse             # block known-bad IPs
+allow out udp 53 any             # outbound DNS
+EOF
+
+# 4. Add AbuseIPDB key + custom blocklists (optional but recommended)
+sudoedit /etc/nftgeo/config
+#   ABUSEIPDB_API_KEY="your-key-from-abuseipdb.com"
+#   ABUSE_FEEDS="https://blocklist.greensnow.co/greensnow.txt
+#   https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/refs/heads/main/abuseipdb-s100-3d.ipv4
+#   https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Threats
+#   https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Probes
+#   https://raw.githubusercontent.com/duggytuxy/Data-Shield_IPv4_Blocklist/refs/heads/main/prod_data-shield_ipv4_blocklist.txt"
+
+# 5. Validate & apply safely
+sudo nftgeo validate && sudo nftgeo apply --confirm
+# ... verify you still have SSH ...
+sudo nftgeo apply --commit
+
+# 6. Enable auto-refresh (twice-daily geo + blocklist updates)
+sudo systemctl enable --now nftgeo.timer
+
+# 7. Start the web dashboard
+sudo systemctl enable --now nftgeo-ui.service
+sudo nftgeo-ui token       # → open the link in your browser
+```
+
+### Deutsch
+
+```sh
+# 1. Installation
+git clone https://github.com/dzaczek/nftgeo.git && cd nftgeo && sudo ./install.sh
+
+# 2. Eigene IP ZUERST whitelisten — verhindert Aussperrung
+echo 'WHITELIST="DEINE.ÖFFENTLICHE.IP"' | sudo tee -a /etc/nftgeo/config
+
+# 3. Erste Regeln eintragen
+cat <<'EOF' | sudo tee /etc/nftgeo/rules.conf
+allow in tcp 22 DEINE.ÖFFENTLICHE.IP   # SSH nur von deiner IP
+deny  in tcp 22 any                    # SSH für alle anderen schließen
+deny  in any - abuse                   # bekannte schädliche IPs blocken
+allow out udp 53 any                   # ausgehendes DNS
+EOF
+
+# 4. AbuseIPDB-Key + eigene Blocklisten (optional, aber empfohlen)
+sudoedit /etc/nftgeo/config
+#   ABUSEIPDB_API_KEY="dein-key-von-abuseipdb.com"
+#   ABUSE_FEEDS="https://blocklist.greensnow.co/greensnow.txt
+#   https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/refs/heads/main/abuseipdb-s100-3d.ipv4
+#   https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Threats
+#   https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Probes
+#   https://raw.githubusercontent.com/duggytuxy/Data-Shield_IPv4_Blocklist/refs/heads/main/prod_data-shield_ipv4_blocklist.txt"
+
+# 5. Validieren & sicher anwenden
+sudo nftgeo validate && sudo nftgeo apply --confirm
+# ... prüfen, ob SSH noch funktioniert ...
+sudo nftgeo apply --commit
+
+# 6. Automatische Aktualisierung aktivieren
+sudo systemctl enable --now nftgeo.timer
+
+# 7. Web-Dashboard starten
+sudo systemctl enable --now nftgeo-ui.service
+sudo nftgeo-ui token       # → Link im Browser öffnen
+```
+
+### Polski
+
+```sh
+# 1. Instalacja
+git clone https://github.com/dzaczek/nftgeo.git && cd nftgeo && sudo ./install.sh
+
+# 2. NAJPIERW dodaj własne IP do whitelisty — zapobiega zablokowaniu się
+echo 'WHITELIST="TWOJE.PUBLICZNE.IP"' | sudo tee -a /etc/nftgeo/config
+
+# 3. Dodaj pierwsze reguły
+cat <<'EOF' | sudo tee /etc/nftgeo/rules.conf
+allow in tcp 22 TWOJE.PUBLICZNE.IP   # SSH tylko z Twojego IP
+deny  in tcp 22 any                  # zamknij SSH dla całej reszty
+deny  in any - abuse                 # blokuj znane złośliwe IP
+allow out udp 53 any                 # wychodzący DNS
+EOF
+
+# 4. Klucz AbuseIPDB + własne listy blokowanych IP (opcjonalne, zalecane)
+sudoedit /etc/nftgeo/config
+#   ABUSEIPDB_API_KEY="twój-klucz-z-abuseipdb.com"
+#   ABUSE_FEEDS="https://blocklist.greensnow.co/greensnow.txt
+#   https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/refs/heads/main/abuseipdb-s100-3d.ipv4
+#   https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Threats
+#   https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Probes
+#   https://raw.githubusercontent.com/duggytuxy/Data-Shield_IPv4_Blocklist/refs/heads/main/prod_data-shield_ipv4_blocklist.txt"
+
+# 5. Zweryfikuj i zastosuj bezpiecznie
+sudo nftgeo validate && sudo nftgeo apply --confirm
+# ... sprawdź, czy SSH nadal działa ...
+sudo nftgeo apply --commit
+
+# 6. Włącz automatyczne odświeżanie (dwa razy dziennie)
+sudo systemctl enable --now nftgeo.timer
+
+# 7. Uruchom dashboard webowy
+sudo systemctl enable --now nftgeo-ui.service
+sudo nftgeo-ui token       # → otwórz link w przeglądarce
+```
+
+---
+
 ## Rule model
 
 Rules are evaluated top-to-bottom, **first match wins** — like a classic
@@ -360,6 +484,34 @@ order.
 | `ZONE_CACHE_HOURS` | `20` | How long downloaded country zones are reused |
 | `SEGMENT_DEFAULT` | `""` | `deny` = default-deny between zones (micro-segmentation) |
 
+### Custom blocklist feeds
+
+`ABUSE_FEEDS` takes a space- or newline-separated list of URLs pointing to
+plain-text IP/CIDR blocklists. Any feed format that's one address per line with
+optional comments (`#` or `;`) works: FireHOL, Spamhaus DROP, blocklist.de,
+GreenSnow, ShadowWhisperer, duggytuxy, etc.
+
+```sh
+ABUSE_FEEDS="https://blocklist.greensnow.co/greensnow.txt
+https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/refs/heads/main/abuseipdb-s100-3d.ipv4
+https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Threats
+https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Probes
+https://raw.githubusercontent.com/duggytuxy/Data-Shield_IPv4_Blocklist/refs/heads/main/prod_data-shield_ipv4_blocklist.txt"
+```
+
+- Feeds are only downloaded when a `deny … abuse` rule exists — no rule, no fetch.
+- Bogon/private/reserved ranges are stripped automatically (RFC1918, loopback, CGNAT, multicast, documentation).
+- Each feed's last good copy is cached under `/var/lib/nftgeo/feeds` — a download failure reuses the cache, so a feed outage never shrinks your blocklist.
+- `ABUSE_FEEDS_MAX` (default 200000) caps entries per feed so a runaway list can't build a giant slow set.
+- `ABUSE_FEEDS_AGGREGATE` (default on) collapses IPs into CIDR ranges before loading.
+- `ABUSE_FEEDS_BATCH` (default 0, off) loads a huge set in paced chunks to keep load low.
+- Feeds work with or without an `ABUSEIPDB_API_KEY` — they're merged into the same `abuse4`/`abuse6` sets.
+- The WHITELIST always wins over abuse — your own addresses are never blocked.
+
+You can also add/edit feeds from the dashboard: **Objects → Reference → Custom
+abuse feeds → + New feed**. Changes are deployed through the same Commit pipeline
+as rules.
+
 After editing any file, apply: `sudo systemctl start nftgeo.service`
 
 ---
@@ -389,16 +541,29 @@ allow in tcp 80,443 any          # open to the world
 ### Block AbuseIPDB + custom feeds everywhere
 
 ```sh
-# config
+# /etc/nftgeo/config — add your key and any custom blocklists
 ABUSEIPDB_API_KEY="your-key"
-ABUSE_FEEDS="https://iplists.firehol.org/files/firehol_level1.netset
-https://www.spamhaus.org/drop/drop.txt"
+ABUSE_FEEDS="https://blocklist.greensnow.co/greensnow.txt
+https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/refs/heads/main/abuseipdb-s100-3d.ipv4
+https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Threats
+https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Probes
+https://raw.githubusercontent.com/duggytuxy/Data-Shield_IPv4_Blocklist/refs/heads/main/prod_data-shield_ipv4_blocklist.txt"
 ```
 ```text
-# rules.conf
+# /etc/nftgeo/rules.conf
 deny in  any - abuse             # block all inbound from abuse IPs
 deny out any - abuse             # never talk to blocklisted hosts outbound
 ```
+
+Custom feeds are plain-text IP/CIDR lists — one per line, comments stripped
+automatically. Bogon/private/reserved ranges (RFC1918, loopback, CGNAT, …) are
+filtered out so feeds can't accidentally block your LAN. Each feed's last good
+copy is cached under `/var/lib/nftgeo/feeds` and reused if a download fails.
+Feeds work with or without an `ABUSEIPDB_API_KEY`.
+
+You can also manage feeds from the dashboard: **Objects → Reference → Custom
+abuse feeds → + New feed**. See the [CHEATSHEET](CHEATSHEET.md) for feed tuning
+knobs (`ABUSE_FEEDS_MAX`, `ABUSE_FEEDS_AGGREGATE`, `ABUSE_FEEDS_BATCH`).
 
 ### Allow outbound DNS
 
