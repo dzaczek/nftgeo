@@ -355,7 +355,8 @@ order.
 | `LOG_DROPS` | `""` (off) | Log dropped packets to kernel log / journald |
 | `LOG_WHITELIST` | `""` (off) | Log whitelist hits as `nftgeo-accept:whitelist` |
 | `NFLOG_GROUP` | `5` | Also deliver `log` packets to this NFLOG group so the dashboard sees drops inside containers (LXC/OpenVZ). `0` = kernel log only |
-| `HARDEN` | `""` (off) | Baseline: accept loopback, drop invalid, permit essential ICMPv6 |
+| `HARDEN` | `""` (off) | Baseline: accept loopback, drop invalid, permit essential ICMPv6, rate-limit ping |
+| `ICMP_RATE` / `ICMP_BURST` | `1/second` / `5` | With `HARDEN`, rate-limit inbound ping (echo-request); `0` disables |
 | `ANTISPOOF` | `""` | Interfaces to protect with strict uRPF (reverse-path filter) |
 | `ZONE_CACHE_HOURS` | `20` | How long downloaded country zones are reused |
 | `SEGMENT_DEFAULT` | `""` | `deny` = default-deny between zones (micro-segmentation) |

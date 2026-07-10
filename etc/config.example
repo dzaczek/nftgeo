@@ -115,6 +115,12 @@ NFLOG_GROUP="5"
 # types IPv6 needs (so fencing v6 cannot break Neighbor Discovery). Off by default.
 HARDEN=""
 
+# With HARDEN, rate-limit inbound ping (ICMP/ICMPv6 echo-request) so a flood
+# can't drown the host. Excess is dropped; normal pings still answered; NDP and
+# other essential ICMPv6 are never rate-limited. Set ICMP_RATE="0" to disable.
+ICMP_RATE="1/second"
+ICMP_BURST="5"
+
 # Anti-spoofing: drop packets whose source address is not routable back
 # through the interface they arrived on (reverse-path filter, like rp_filter
 # but in the firewall). Space-separated list of interfaces to protect.

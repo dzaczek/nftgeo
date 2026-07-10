@@ -1,0 +1,2 @@
++ icmp type echo-request limit rate over 1/second
++ icmpv6 type echo-request limit rate over 1/second

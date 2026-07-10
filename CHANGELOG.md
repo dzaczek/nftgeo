@@ -8,6 +8,15 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.70.1] - 2026-07-10
+
+### Added
+- **Ping rate-limiting under `HARDEN`.** Inbound ICMP/ICMPv6 echo-request is
+  rate-limited (`ICMP_RATE`, default `1/second`, `ICMP_BURST` `5`) so a ping
+  flood can't drown the host; excess is dropped, normal pings still answered,
+  and NDP / essential ICMPv6 are never rate-limited. `ICMP_RATE="0"` disables it.
+  (Jules audit M1.)
+
 ## [1.70.0] - 2026-07-10
 
 ### Fixed

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.70.0"
+NFTGEO_VERSION="1.70.1"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -68,6 +68,11 @@ THROTTLE_BAN="${THROTTLE_BAN:-1h}"
 HARDEN="${HARDEN:-}"
 ANTISPOOF="${ANTISPOOF:-}"
 ICMPV6_ESSENTIAL="${ICMPV6_ESSENTIAL:-nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert, echo-request, echo-reply, packet-too-big, destination-unreachable, time-exceeded, parameter-problem}"
+# With HARDEN, rate-limit inbound ping (ICMP/ICMPv6 echo-request) so a flood
+# can't drown the host; excess is dropped, normal pings still answered. NDP and
+# other essential ICMPv6 are never rate-limited. Set ICMP_RATE="0" to disable.
+ICMP_RATE="${ICMP_RATE:-1/second}"
+ICMP_BURST="${ICMP_BURST:-5}"
 
 # Input chain default policy: "accept" (selective blocklist, the default) or
 # "drop" (default-deny - only established/related, loopback, whitelist and your
@@ -1548,6 +1553,12 @@ emit_chain() {
 	fi
 	# Stateful: replies to connections you initiated are always allowed.
 	printf '\t\tct state established,related counter accept\n'
+	# HARDEN: rate-limit inbound ping so a flood can't drown the host. Drops only
+	# the excess (over the rate); NDP/essential ICMPv6 below stay unlimited.
+	if [ -n "$HARDEN" ] && [ "$hook" = input ] && [ "$ICMP_RATE" != 0 ]; then
+		printf '\t\ticmp type echo-request limit rate over %s burst %s packets counter drop\n' "$ICMP_RATE" "$ICMP_BURST"
+		printf '\t\ticmpv6 type echo-request limit rate over %s burst %s packets counter drop\n' "$ICMP_RATE" "$ICMP_BURST"
+	fi
 	# Keep IPv6 working: NDP and essential ICMPv6 must pass even when v6 is fenced.
 	# Always with HARDEN; and unconditionally under a default-deny input policy
 	# even without HARDEN — otherwise DEFAULT_INPUT=drop silently kills IPv6
