@@ -147,7 +147,9 @@ https://www.spamhaus.org/drop/drop.txt"
 ```
 Bogon/private/reserved ranges are stripped automatically, so feeds can't block
 your own LAN/VPN/DNS. Add your own feed URLs from the dashboard (Objects →
-Reference → Custom abuse feeds).
+Reference → Custom abuse feeds). The AbuseIPDB API key can also be saved from
+the dashboard (Reference tab → AbuseIPDB card); the same card shows last fetch
+times and engine warnings from `/var/lib/nftgeo/status.json`.
 ```sh
 ABUSE_FEEDS_MAX="200000"               # cap per feed (0 = no cap)
 ABUSE_FEEDS_AGGREGATE="1"              # collapse abuse IPs into CIDRs before loading

@@ -1,5 +1,5 @@
 .\" nftgeo(8) manual page
-.TH NFTGEO 8 "2026-07-09" "nftgeo 1.64.0" "System Administration"
+.TH NFTGEO 8 "2026-07-10" "nftgeo 1.65.0" "System Administration"
 .SH NAME
 nftgeo \- declarative geo / abuse / segmentation firewall for nftables
 .SH SYNOPSIS
@@ -356,6 +356,11 @@ The generated, loaded ruleset.
 .TP
 .I /var/lib/nftgeo/
 State: cached country zones, feeds, dynamic blocks, and ruleset generations.
+.TP
+.I /var/lib/nftgeo/status.json
+Run status written after every run: AbuseIPDB API key presence, last
+AbuseIPDB/geo fetch timestamps, and warnings collected during the run. Read by
+the dashboard.
 .SH EXAMPLES
 Allow inbound SSH only from Poland and one admin IP:
 .PP

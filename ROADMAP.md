@@ -29,6 +29,8 @@ nftgeo warns about (but does not flip) `ip_forward`/`forwarding` sysctls.
   create `rules.d/*.conf` files from the dashboard *(1.62.0)*.
 - Ingress hook — early stateless drop via `ingress.conf`/`ingress.d/` (`<accept|drop>
   <target> [proto] [port] [log]`), whitelist auto-first; opt-in *(1.64.0)*.
+- Run status `status.json` (API key presence, fetch timestamps, warnings) +
+  AbuseIPDB card with in-panel API key editing + geo freshness *(1.65.0)*.
 - **P1 — HARDEN**: loopback accept, `ct state invalid` drop, essential ICMPv6.
 - **P2 — Interfaces**: `on <iface>` on any rule, arbitrary interface names
   (VLANs, tunnels, bridges) with an unknown-interface warning.

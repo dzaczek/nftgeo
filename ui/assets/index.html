@@ -1511,6 +1511,7 @@ async function loadObjects(){
   const auniq=o.abuseLoaded||0;
   const ahead=asrc.length?`<div class="row" style="border-bottom:1px solid var(--line);margin-bottom:6px;padding-bottom:6px" title="One IP can appear on several lists. Sources are merged and deduplicated (plus CIDR-aggregated) before loading, so the unique total is smaller than the sum of the sources."><span><b>Unique loaded</b> <span class="muted">(deduplicated)</span></span><span><b style="color:var(--ok)">${auniq.toLocaleString()}</b> IPs <span class="muted">· sources sum ${asum.toLocaleString()}</span></span></div>`:'';
   $('#o-feeds').innerHTML=asrc.length?ahead+asrc.map(s=>`<div class="row"><span><span class="dot" style="background:${s.fresh?'var(--ok)':'var(--drop)'}"></span> ${esc(s.name)}</span><span><b>${(s.count||0).toLocaleString()}</b> IPs <span class="muted">· ${s.ageHours}h old</span></span></div>`).join(''):'<span class="muted">none — add a <code>deny … abuse</code> rule and apply to populate</span>';
+  renderAbuseIPDBStatus();
   try{window.SETS=await j('/api/sets');}catch(e){window.SETS=[];}
   $('#o-sets').innerHTML=(window.SETS||[]).map(x=>`<div class="row"><span>${esc(x.name)}</span><span>${x.count<0?'<span class="muted" title="not counted — see abuse sources">—</span>':x.count.toLocaleString()}</span></div>`).join('')||'<span class="muted">none</span>';
   const d=await j('/api/objects/draft'); OBJ={groups:d.groups||[],regions:d.regions||[],services:d.services||[],hosts:d.hosts||[],zones:d.zones||[],lists:d.lists||[],feeds:d.feeds||[]}; renderManaged();
