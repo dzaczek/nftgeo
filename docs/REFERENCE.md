@@ -1,7 +1,10 @@
 # nftgeo full reference
 
-This is the extended nftgeo reference. The shorter project overview lives in
-the top-level [README](../README.md).
+This is the extended nftgeo reference for the current `main` branch. The
+shorter project overview lives in the top-level [README](../README.md).
+For package installation and first use, follow [Quick Start](../QUICK_START.md)
+or [Quick Start PL](../QUICK_START_PL.md); those guides intentionally stay
+short while this file documents the complete operator surface.
 
 ---
 
@@ -188,8 +191,8 @@ plus empty `rules.d/` and `groups.d/`, installs `nftgeo.service` +
 # 1. Install (package or install.sh — see above)
 
 # 2. Add your admin IP to the whitelist FIRST (prevents lockout)
-sudoedit /etc/nftgeo/config
-#   WHITELIST="YOUR.IP.ADDRESS.HERE"
+sudoedit /etc/nftgeo/whitelist.conf
+#   YOUR.IP.ADDRESS.HERE
 
 # 3. Write your rules
 sudoedit /etc/nftgeo/rules.conf
@@ -215,7 +218,12 @@ sudo nftgeo-ui token    # get a one-time login link
 
 ---
 
-## 🚀 Fast track / Schnellstart / Szybki start
+## Historical multilingual quick-start examples
+
+> **Not maintained as an installation source.** Use [Quick Start](../QUICK_START.md)
+> or [Quick Start PL](../QUICK_START_PL.md) for current package installation,
+> current feed examples, and safe first deployment. The blocks below are kept
+> only as translated policy illustrations.
 
 Three steps from zero to a running geo-firewall. **Before you start:** know your
 own public IP address and be physically near the machine or have console access.
@@ -426,8 +434,8 @@ replacement for `deny … abuse` filter rules. The whitelist is always accepted
 first and can never be dropped here. Opt-in: no `ingress.conf` means no ingress
 chain at all. Requires Linux ≥ 5.10 (inet ingress); `validate` + the deadman catch
 an unsupported kernel safely. The ingress hook is **per-interface** — set
-`INGRESS_DEV` (space-separated) in the config, or the default-route interface is
-auto-detected.
+`INGRESS_DEV` (space- or comma-separated) in the config, or the default-route
+interface is auto-detected.
 
 ### Config objects
 
@@ -478,18 +486,22 @@ order.
 
 | Option | Default | Purpose |
 |--------|---------|---------|
-| `WHITELIST` | `""` | Always-allow IPs (bypasses all rules + abuse) |
-| `WHITELIST_HOSTS` | `""` | Hostnames to whitelist (re-resolved each run) |
-| `ABUSEIPDB_API_KEY` | `""` | AbuseIPDB API key (only needed for `abuse` target; can also be saved from the dashboard's Reference tab) |
-| `ABUSE_FEEDS` | `""` | Extra plaintext IP/CIDR blocklists (FireHOL, Spamhaus, etc.) |
+| `WHITELIST` / `WHITELIST_HOSTS` | `""` | Legacy inline IPs/hostnames. Prefer `whitelist.conf` and `whitelist-hosts.conf`; non-empty files take precedence. |
+| `WHITELIST_HOSTS_RETENTION_DAYS` / `RESOLVERS` / `RESOLVE_TIMEOUT` | `7` / `local` / `5` | Retain last-known hostname addresses after lookup failures; configure resolver order and per-lookup timeout. |
+| `ABUSEIPDB_API_KEY` | `""` | AbuseIPDB API key, used only when a rule targets `abuse`; the dashboard can save it to `config`. |
+| `ABUSEIPDB_CONFIDENCE_MINIMUM` / `LIMIT` / `DAYS` / `RETENTION_DAYS` | `90` / `10000` / `30` / `DAYS` | AbuseIPDB request filters and retention of entries absent from later successful responses. |
+| `ABUSE_FEEDS` | `""` | Extra plaintext IP/CIDR blocklists merged with AbuseIPDB into `abuse` sets. |
+| `ABUSE_FEEDS_MAX` / `AGGREGATE` / `BATCH` / `BATCH_SLEEP` | `200000` / `1` / `0` / `1` | Per-feed cap, CIDR aggregation, and optional paced loading for large sets. |
 | `DEFAULT_INPUT` | `accept` | Input chain policy: `accept` (selective) or `drop` (default-deny) |
 | `DEFAULT_OUTPUT` / `DEFAULT_FORWARD` | `accept` | Output/forward chain policy; `drop` = strict egress/routing (only established, loopback, essential ICMPv6, and your `allow out`/`allow fwd-*` rules pass). Deploy behind the deadman |
-| `LOG_DROPS` | `""` (off) | Log dropped packets to kernel log / journald |
-| `LOG_WHITELIST` | `""` (off) | Log whitelist hits as `nftgeo-accept:whitelist` |
-| `NFLOG_GROUP` | `5` | Also deliver `log` packets to this NFLOG group so the dashboard sees drops inside containers (LXC/OpenVZ). `0` = kernel log only |
+| `LOG_DROPS` / `LOG_WHITELIST` | `""` (off) | Log drops and, independently, whitelist hits. |
+| `LOG_PREFIX` / `LOG_LIMIT` | `nftgeo-drop ` / `limit rate 10/second` | Drop-log prefix and nftables rate expression. |
+| `NFLOG_GROUP` | `5` | Deliver log packets to this NFLOG group for the dashboard in containers. Valid range: `0..65535`; `0` = kernel log only. |
 | `HARDEN` | `""` (off) | Baseline: accept loopback, drop invalid, permit essential ICMPv6, rate-limit ping |
 | `ICMP_RATE` / `ICMP_BURST` | `1/second` / `5` | With `HARDEN`, rate-limit inbound ping (echo-request); `0` disables |
 | `ANTISPOOF` | `""` | Interfaces to protect with strict uRPF (reverse-path filter) |
+| `THROTTLE_BAN` | `1h` | Default ban duration for `throttle` rules; a rule may override it with `ban <duration>`. |
+| `INGRESS_DEV` | auto-detect | Space- or comma-separated devices carrying ingress-hook rules. |
 | `ZONE_CACHE_HOURS` | `20` | How long downloaded country zones are reused |
 | `SEGMENT_DEFAULT` | `""` | `deny` = default-deny between zones (micro-segmentation) |
 
@@ -501,11 +513,8 @@ optional comments (`#` or `;`) works: FireHOL, Spamhaus DROP, blocklist.de,
 GreenSnow, ShadowWhisperer, duggytuxy, etc.
 
 ```sh
-ABUSE_FEEDS="https://blocklist.greensnow.co/greensnow.txt
-https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/refs/heads/main/abuseipdb-s100-3d.ipv4
-https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Threats
-https://raw.githubusercontent.com/ShadowWhisperer/IPs/refs/heads/master/Lists/Probes
-https://raw.githubusercontent.com/duggytuxy/Data-Shield_IPv4_Blocklist/refs/heads/main/prod_data-shield_ipv4_blocklist.txt"
+ABUSE_FEEDS="https://iplists.firehol.org/files/firehol_level1.netset
+https://www.spamhaus.org/drop/drop.txt"
 ```
 
 - Feeds are only downloaded when a `deny … abuse` rule exists — no rule, no fetch.
@@ -521,13 +530,14 @@ You can also add/edit feeds from the dashboard: **Objects → Reference → Cust
 abuse feeds → + New feed**. Changes are deployed through the same Commit pipeline
 as rules.
 
-After editing any file, apply: `sudo systemctl start nftgeo.service`
+After editing any file, validate and apply safely:
+`sudo nftgeo validate && sudo nftgeo apply --confirm`.
 
 ---
 
 ## Examples
 
-The [`examples/`](examples/) directory has ready-to-adapt rule fragments for
+The [`examples/`](../examples/) directory has ready-to-adapt rule fragments for
 common services. Copy the ones you need into `/etc/nftgeo/rules.d/` and edit
 the countries/IPs.
 
@@ -571,7 +581,7 @@ copy is cached under `/var/lib/nftgeo/feeds` and reused if a download fails.
 Feeds work with or without an `ABUSEIPDB_API_KEY`.
 
 You can also manage feeds from the dashboard: **Objects → Reference → Custom
-abuse feeds → + New feed**. See the [CHEATSHEET](CHEATSHEET.md) for feed tuning
+abuse feeds → + New feed**. See the [CHEATSHEET](../CHEATSHEET.md) for feed tuning
 knobs (`ABUSE_FEEDS_MAX`, `ABUSE_FEEDS_AGGREGATE`, `ABUSE_FEEDS_BATCH`).
 
 ### Allow outbound DNS
@@ -647,16 +657,16 @@ embedded frontend, serving `127.0.0.1:8787`:
 - **Draft → Commit pipeline** — edits stage to a server-side draft; the live
   firewall is untouched until you press Commit, which runs `validate → plan →
   apply --confirm` with a deadman countdown and one-click rollback
-- **Templates** — 21 built-in presets (`nginx`, `postgres`, `mail-server`,
-  `wireguard`, `ssh-lockdown`, `safe-web`, `abuse-block`, `geo-drop`, …) to
-  jump-start a common policy
+- **Templates** — 20 built-in presets, including `nginx`, `postgres`,
+  `mail-server`, `wireguard`, `ssh-lockdown`, `safe-web`, `abuse-block`, and
+  `geo-drop`, plus locally saved templates.
 - **Alerts banner** — drop spikes, stale feeds, failed runs, disabled IP
   forwarding
 - **Run status & AbuseIPDB card** — the engine writes
   `/var/lib/nftgeo/status.json` after every run (API key presence, last
-  AbuseIPDB/geo fetch times, warnings); the Reference tab shows it and lets you
-  save the `ABUSEIPDB_API_KEY` straight into `/etc/nftgeo/config`. The health
-  panel shows geo-data freshness (green <24 h)
+  AbuseIPDB/geo fetch times, warnings); the dashboard can save the
+  `ABUSEIPDB_API_KEY` straight into `/etc/nftgeo/config`. The health panel
+  shows geo-data freshness (green <24 h)
 
 ### Starting the dashboard
 
@@ -693,9 +703,12 @@ marked `Secure` and is not sent over HTTP.
 
 ### JSON API
 
-The dashboard serves a read-only JSON API: `/api/status`, `/api/sets`,
-`/api/rules`, `/api/objects`, `/api/drops`, `/api/lookup`, `/api/geo`,
-`/api/alerts`, `/api/top-ips`, `/api/rule-stats`.
+The dashboard API is session-protected. Read endpoints include `/api/status`,
+`/api/sets`, `/api/rules`, `/api/objects`, `/api/drops`, `/api/lookup`,
+`/api/geo`, `/api/alerts`, `/api/top-ips`, `/api/ip-histogram`,
+`/api/ifstats`, and `/api/rule-stats`. Draft, template, whitelist, and commit
+endpoints are implementation details used by the bundled UI; write requests
+require a read-write session.
 
 ---
 
@@ -812,7 +825,7 @@ nftgeo version                # print the nftgeo version
 ```
 
 For a one-page reference of every command, see
-[CHEATSHEET.md](CHEATSHEET.md). The commands, rule grammar and config keys are
+[CHEATSHEET.md](../CHEATSHEET.md). The commands, rule grammar and config keys are
 also in the `nftgeo(8)` man page (`man nftgeo`).
 
 ---
@@ -882,16 +895,21 @@ sudo systemctl start nftgeo.service
 CI (`.github/workflows/ci.yml`) runs on every push:
 
 - `shellcheck` on all shell tools
-- `gofmt` / `go vet` / `go test` / build for the dashboard
-- Offline render tests + migrate-sequential tests
-- Real `nft -c` over every render fixture
+- `gofmt` / `go vet` / `go test -race` / build for the dashboard
+- Offline render tests, migrate-sequential tests, and every shipped example
+- Real `nft -c` over every render fixture plus `apply --confirm` rollback/commit
+  in an isolated network namespace
+- DEB installation on Debian and RPM installation on Fedora, including a
+  reinstall that verifies operator config/rules are preserved
 
 Run them locally:
 
 ```sh
 sh tests/render/run.sh              # offline: render fixtures, assert on output
+sh tests/examples/run.sh            # render every examples/*.conf fragment
 go test ./ui/                       # dashboard parser tests
 sudo sh tests/render/nft-check.sh   # optional: real nft -c over every fixture
+sudo sh tests/integration/apply-confirm.sh  # isolated apply/deadman integration
 make test                           # go vet + go test + render tests
 make lint                           # shellcheck + gofmt check
 make build                          # cross-compile nftgeo-ui for amd64 + arm64
@@ -955,4 +973,4 @@ not manage the sysctl.
 
 ## License
 
-[MIT](LICENSE) — Copyright (c) 2026 dzaczek
+[MIT](../LICENSE) — Copyright (c) 2026 dzaczek

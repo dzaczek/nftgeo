@@ -1,8 +1,9 @@
 # nftgeo cheat sheet
 
 Quick reference for every command. Rules live in `/etc/nftgeo/rules.conf` (or
-`rules.d/*.conf`); settings in `/etc/nftgeo/config`. After editing files, apply
-with `sudo systemctl start nftgeo.service` (or `sudo nftgeo apply`).
+`rules.d/*.conf`); settings live in `/etc/nftgeo/config`. After editing files,
+use `sudo nftgeo validate && sudo nftgeo apply --confirm`. For package setup,
+see [Quick Start](QUICK_START.md) or [Quick Start PL](QUICK_START_PL.md).
 
 Rule line: `<action> <dir> <proto> <port> <target> [on <iface>] [log]`
 - **action** `allow` | `deny`
@@ -146,10 +147,9 @@ ABUSE_FEEDS="https://iplists.firehol.org/files/firehol_level1.netset
 https://www.spamhaus.org/drop/drop.txt"
 ```
 Bogon/private/reserved ranges are stripped automatically, so feeds can't block
-your own LAN/VPN/DNS. Add your own feed URLs from the dashboard (Objects →
-Reference → Custom abuse feeds). The AbuseIPDB API key can also be saved from
-the dashboard (Reference tab → AbuseIPDB card); the same card shows last fetch
-times and engine warnings from `/var/lib/nftgeo/status.json`.
+your own LAN/VPN/DNS. Add feed URLs and the AbuseIPDB API key from the dashboard;
+it also shows last fetch times and engine warnings from
+`/var/lib/nftgeo/status.json`.
 ```sh
 ABUSE_FEEDS_MAX="200000"               # cap per feed (0 = no cap)
 ABUSE_FEEDS_AGGREGATE="1"              # collapse abuse IPs into CIDRs before loading
@@ -159,6 +159,11 @@ ABUSE_FEEDS_BATCH_SLEEP="1"            # seconds between chunks (progress bar in
 
 ### Whitelist (never blocked — protect your admin access)
 ```sh
+# Preferred dedicated files (one entry per line):
+sudoedit /etc/nftgeo/whitelist.conf
+sudoedit /etc/nftgeo/whitelist-hosts.conf
+
+# Legacy inline config remains supported when the dedicated files are empty:
 WHITELIST="203.0.113.10 198.51.100.0/24"
 WHITELIST_HOSTS="vpn.example.ch"       # by name, re-resolved each run
 RESOLVERS="1.1.1.1 8.8.8.8 local"      # resolve via public DNS first
@@ -215,6 +220,7 @@ HARDEN="1"                             # baseline: accept lo, drop invalid, ICMP
 LOG_DROPS="1"                          # log dropped packets to journald/dmesg
 NFLOG_GROUP="5"                        # dashboard drop map via NFLOG (works in LXC); 0=off
 LOG_WHITELIST="1"                      # log whitelist hits (nftgeo-accept:whitelist)
+INGRESS_DEV="eth0,eth1"                # ingress hook devices; blank = auto-detect
 ABUSE_FEEDS="https://..."              # extra blocklists
 WHITELIST_HOSTS="vpn.example.ch"       # hostname whitelist
 RESOLVERS="1.1.1.1 8.8.8.8 local"      # resolve whitelist hosts via public DNS first
@@ -280,16 +286,17 @@ Alerts auto-dismiss when resolved.
 drop count (`/api/top-ips`, time-range filterable), backed by an
 in-memory stats store.
 
-**Templates:** the Templates drawer now ships 21 built-in presets
+**Templates:** the Templates drawer ships 20 built-in presets
 (`nginx`, `kamailio`, `redis`, `postgres`, `mysql`, `gitlab`,
 `docker-registry`, `elasticsearch`, `grafana`, `dns-server`,
 `openvpn`, `minecraft`, `mosh`, `prometheus-stack`, plus the original
 `mail-server`, `wireguard`, `ssh-lockdown`, `safe-web`, `abuse-block`,
 `geo-drop`) — import one to jump-start a common policy.
 
-**Whitelist editor:** the Objects → Reference tab now has a **+ Add**
-button (IP/CIDR or hostname) and a **🗑** button per entry. Changes
-write to `/etc/nftgeo/config` and take effect on the next apply.
+**Whitelist editor:** add IP/CIDR entries and hostnames through the dashboard.
+It stages changes to `/etc/nftgeo/whitelist.conf` and
+`/etc/nftgeo/whitelist-hosts.conf`, then applies them through the normal
+draft/commit flow.
 
 **Rule stats:** `GET /api/rule-stats` returns a JSON breakdown of all
 rules by action and whitelist counts — useful for auditing your policy.

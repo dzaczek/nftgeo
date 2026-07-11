@@ -7,15 +7,21 @@ codes / IPs, then apply.
 ```sh
 cp examples/40-prometheus-node-exporter.conf /etc/nftgeo/rules.d/
 $EDITOR /etc/nftgeo/rules.d/40-prometheus-node-exporter.conf
-systemctl start nftgeo.service
+sudo nftgeo validate && sudo nftgeo apply --confirm
 ```
 
 The numeric prefix is also the load order (files are read in sorted name order).
+Every shipped fragment is rendered in GitHub CI; copying it is still not a
+substitute for reviewing its targets, interfaces, and catch-all denies for your
+own host.
 
 Three things to remember before you apply anything:
 
-- **Whitelist yourself first.** Put your admin/VPN IP in `WHITELIST` (or a
-  hostname in `WHITELIST_HOSTS`) in `/etc/nftgeo/config` before restricting SSH.
+- **Whitelist yourself first.** Put your admin/VPN IP in
+  `/etc/nftgeo/whitelist.conf` (or a hostname in
+  `/etc/nftgeo/whitelist-hosts.conf`) before restricting SSH. The legacy
+  `WHITELIST` / `WHITELIST_HOSTS` config keys still work when those files are
+  empty.
 - **An `allow` does not close a port.** With the default
   `DEFAULT_INPUT="accept"`, add a matching `deny ... any` below a restricted
   allow. Rules are evaluated top-to-bottom, first match wins.

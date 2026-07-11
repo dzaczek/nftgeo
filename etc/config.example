@@ -103,12 +103,25 @@ ZONE_CACHE_HOURS="20"
 # Then: systemctl restart systemd-journald
 LOG_DROPS=""
 
+# Log whitelist hits as nftgeo-accept:whitelist. This is independent of
+# LOG_DROPS, so it is useful when auditing administrative access. Off by default.
+LOG_WHITELIST=""
+
+# Optional customization for generated drop logs. Keep the trailing space in
+# LOG_PREFIX. LOG_LIMIT is an nftables rate expression.
+# LOG_PREFIX="nftgeo-drop "
+# LOG_LIMIT="limit rate 10/second"
+
 # NFLOG group for the dashboard. The engine also delivers every 'log' packet to
 # this nfnetlink_log multicast group, which nftgeo-ui listens on to build the
 # drop map/stats. NFLOG is network-namespace aware, so unlike the kernel log it
 # works inside LXC/OpenVZ containers (where 'journalctl -k' is the host's and
 # unreadable). Default 5; set to 0 to disable NFLOG and use the kernel log only.
 NFLOG_GROUP="5"
+
+# Interfaces for ingress-hook rules in ingress.conf / ingress.d/*.conf. Accepts
+# space- or comma-separated names; blank auto-detects the default-route device.
+# INGRESS_DEV="eth0 eth1"
 
 # Baseline hardening on every managed chain. Set to any non-empty value to accept
 # loopback traffic, drop invalid conntrack state, and always permit the ICMPv6
