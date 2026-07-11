@@ -18,7 +18,7 @@ docker run --rm \
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update
 	apt-get install -y "/packages/$PACKAGE_FILE"
-	test "$(dpkg-query -W -f="${Version}" nftgeo)" = "$PACKAGE_VERSION"
+	test "$(dpkg-query -W -f="\${Version}" nftgeo)" = "$PACKAGE_VERSION"
 	test -x /usr/sbin/nftgeo && test -x /usr/sbin/nftgeo-update && test -x /usr/sbin/nftgeo-ui
 	test -f /usr/share/man/man8/nftgeo.8.gz && test -f /usr/share/man/man5/nftgeo.conf.5.gz
 	printf "TEST_PRESERVE=1\n" >/etc/nftgeo/config

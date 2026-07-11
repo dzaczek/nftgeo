@@ -31,7 +31,7 @@ run_cli() {
 		STATE_DIR="$tmp/state" NFT_FILE="$tmp/nftgeo.nft" \
 		CONFIG_FILE="$tmp/config" RULES_FILE="$tmp/rules.conf" RULES_DIR="$tmp/rules.d" \
 		GROUPS_DIR="$tmp/groups.d" ZONE_DIR="$tmp/zones" \
-		NFTGEO_UPDATE="$here/bin/nftgeo-update" "$here/bin/nftgeo" "$@"
+		NFTGEO_UPDATE="$here/bin/nftgeo-update" sh "$here/bin/nftgeo" "$@"
 }
 
 run_nft() { sudo ip netns exec "$name" nft "$@"; }
