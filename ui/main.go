@@ -206,6 +206,12 @@ func runStatus() map[string]interface{} {
 // setAbuseIPDBKey writes (or replaces) ABUSEIPDB_API_KEY in the config file.
 // The engine reads it on the next run. Empty string clears the key.
 func setAbuseIPDBKey(key string) error {
+	for _, c := range key {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+			return fmt.Errorf("invalid API key format: must be alphanumeric")
+		}
+	}
+
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return err
@@ -250,6 +256,10 @@ func configValue(key string) string {
 
 // setConfigValue writes (or replaces) KEY="val" in the config file.
 func setConfigValue(key, val string) error {
+	if strings.ContainsAny(val, "\"\n\r$`\\;") {
+		return fmt.Errorf("invalid characters in config value")
+	}
+
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return err
