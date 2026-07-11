@@ -355,6 +355,33 @@ func TestFilterNewDropsDedup(t *testing.T) {
 	}
 }
 
+func TestStatsTimeline(t *testing.T) {
+	now := time.Unix(100000, 0)
+	statsMu.Lock()
+	saved := statsData
+	statsData = []statsEntry{
+		{Ts: now.Unix() - 30},          // 0h ago -> newest bucket [23]
+		{Ts: now.Unix() - 3*3600 - 10}, // 3h ago -> bucket [20]
+		{Ts: now.Unix() - 3*3600 - 20}, // 3h ago -> bucket [20]
+		{Ts: now.Unix() - 25*3600},     // older than 24h -> dropped
+		{Ts: now.Unix() + 60},          // future clock skew -> dropped
+	}
+	statsMu.Unlock()
+	defer func() { statsMu.Lock(); statsData = saved; statsMu.Unlock() }()
+
+	tl := statsTimeline(now)
+	if len(tl) != 24 || tl[23] != 1 || tl[20] != 2 {
+		t.Fatalf("timeline = %v (want 24 buckets, [23]=1, [20]=2)", tl)
+	}
+	sum := 0
+	for _, v := range tl {
+		sum += v
+	}
+	if sum != 3 {
+		t.Fatalf("timeline sum = %d (want 3: out-of-window entries must be excluded)", sum)
+	}
+}
+
 func TestBuildSynproxyBody(t *testing.T) {
 	cases := []struct {
 		dir, port, iface, want string
@@ -761,5 +788,26 @@ INVALID_LINE
 	}
 	if len(f) != 1 || f[0].Name != "MYFEED" || len(f[0].Members) != 1 || f[0].Members[0] != "https://example.com/feed.txt" {
 		t.Errorf("failed to parse FEED: %+v", f)
+	}
+}
+
+func TestParseDur(t *testing.T) {
+	def := 15 * time.Minute
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"10m", 10 * time.Minute},
+		{"1h", 1 * time.Hour},
+		{"", def},
+		{"invalid", def},
+		{"10", def}, // missing unit
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			if got := parseDur(c.in, def); got != c.want {
+				t.Errorf("parseDur(%q, %v) = %v, want %v", c.in, def, got, c.want)
+			}
+		})
 	}
 }
