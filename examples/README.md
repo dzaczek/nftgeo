@@ -12,17 +12,18 @@ systemctl start nftgeo.service
 
 The numeric prefix is also the load order (files are read in sorted name order).
 
-Two things to remember before you apply anything:
+Three things to remember before you apply anything:
 
-- **Whitelist yourself first.** The moment a port has an `allow in` rule it is
-  closed to every other source - including you. Put your admin/VPN IP in
-  `WHITELIST` (or a hostname in `WHITELIST_HOSTS`) in `/etc/nftgeo/config` so you
-  cannot lock yourself out.
+- **Whitelist yourself first.** Put your admin/VPN IP in `WHITELIST` (or a
+  hostname in `WHITELIST_HOSTS`) in `/etc/nftgeo/config` before restricting SSH.
+- **An `allow` does not close a port.** With the default
+  `DEFAULT_INPUT="accept"`, add a matching `deny ... any` below a restricted
+  allow. Rules are evaluated top-to-bottom, first match wins.
 - **`deny ... abuse` needs a source.** It only drops anything if you set an
   `ABUSEIPDB_API_KEY` and/or `ABUSE_FEEDS` in `config`; otherwise it is a no-op.
 
-Rule format: `<action> <dir> <proto> <port> <target>`. See the top-level
-[README](../README.md) for the full field reference.
+Rule format: `<action> <dir> <proto> <port> <target>`. See the
+[full reference](../docs/REFERENCE.md) for all fields and safety details.
 
 | File | Scenario |
 |------|----------|
@@ -37,11 +38,12 @@ Rule format: `<action> <dir> <proto> <port> <target>`. See the top-level
 | `75-internal-zones.conf` | Internal firewall: zones + micro-segmentation |
 | `80-ping-icmp.conf` | Allow ping / IPv6 Neighbor Discovery |
 | `90-abuse-blocklist.conf` | Drop known-bad IPs everywhere |
+| `95-ingress.conf` | Optional stateless early drops before conntrack |
 
-One rule of thumb that explains most of these: **inbound is closed only where you
-open it, outbound is open unless you restrict it, and replies to connections you
-started are always allowed.** So a pure client (it only makes outbound requests)
-usually needs no rules at all.
+One rule of thumb that explains most of these: **traffic is accepted by default,
+restricted allows need a following catch-all deny, and replies to connections
+you started are always allowed.** So a pure client (it only makes outbound
+requests) usually needs no rules at all.
 
 Two extras that apply across all of these:
 

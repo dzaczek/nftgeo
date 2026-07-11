@@ -147,9 +147,10 @@ label, the word
 only) the AbuseIPDB blacklist keyword
 .BR abuse .
 .PP
-Rules are evaluated top-to-bottom in file order, first match wins (after a fixed
-baseline: loopback, invalid-state drop, established/related, whitelist, throttle,
-synproxy). There is no automatic deny-by-default: to close a port to everyone
+Rules are evaluated top-to-bottom in file order, first match wins (after a
+fixed baseline: loopback, invalid-state drop, established/related, whitelist,
+throttle, synproxy). There is no automatic deny-by-default: to close a port to
+everyone
 except a target,
 .B allow
 the target and then add a catch-all
@@ -195,9 +196,13 @@ hook \(em before prerouting and conntrack \(em matched on the source only (no
 no connection state). Use it to shed the
 .B abuse
 set or bad geos very early under DDoS, before routing/conntrack cost. The
-whitelist is always accepted first and can never be dropped here. Opt-in: with no
+whitelist is always accepted first and can never be dropped here. The feature
+is opt-in: if neither
 .I ingress.conf
-no ingress chain is emitted. It is an extra layer, not a replacement for
+nor
+.I ingress.d/*.conf
+contains a rule, no ingress chain is emitted. It is an extra layer, not a
+replacement for
 .B "deny \(rs... abuse"
 filter rules; being stateless it drops matching packets regardless of state.
 Requires Linux \(>= 5.10 (inet ingress). Targets are the same as filter rules
@@ -322,7 +327,8 @@ Set to 0 to disable NFLOG and use the kernel log only.
 .B LOG_WHITELIST
 Non-empty logs whitelist hits (rate-limited) with an
 .B nftgeo-accept:whitelist
-prefix, so you can see which whitelisted sources actually connect. Independent of
+prefix, so you can see which whitelisted sources actually connect. Independent
+of
 .BR LOG_DROPS ;
 shares
 .BR LOG_LIMIT .
@@ -383,12 +389,28 @@ Run status written after every run: AbuseIPDB API key presence, last
 AbuseIPDB/geo fetch timestamps, and warnings collected during the run. Read by
 the dashboard.
 .SH EXAMPLES
-Allow inbound SSH only from Poland and one admin IP:
+Allow inbound SSH from Poland while preserving access for a whitelisted admin.
+The final deny is required when
+.B DEFAULT_INPUT=accept
+(the default):
 .PP
 .RS
 .nf
+# /etc/nftgeo/whitelist.conf
+203.0.113.10
+
+# /etc/nftgeo/rules.conf
 allow in tcp 22 pl
-allow in tcp 22 203.0.113.10
+deny  in tcp 22 any
+.fi
+.RE
+.PP
+Drop blocklisted sources before conntrack. This optional rule belongs in
+.IR /etc/nftgeo/ingress.conf :
+.PP
+.RS
+.nf
+drop abuse
 .fi
 .RE
 .PP
@@ -414,8 +436,9 @@ nftgeo apply --commit
 .BR nftables (8)
 .PP
 Full documentation:
-.I /usr/share/doc/nftgeo/README.md
-and
-.IR /usr/share/doc/nftgeo/CHEATSHEET.md .
+.IR /usr/share/doc/nftgeo/README.md ,
+.IR /usr/share/doc/nftgeo/REFERENCE.md ,
+and examples under
+.IR /usr/share/doc/nftgeo/examples/ .
 .SH AUTHOR
 Written by the nftgeo project.
