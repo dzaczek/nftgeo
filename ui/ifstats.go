@@ -47,7 +47,7 @@ var (
 	ifMu   sync.Mutex
 	ifRing []ifSample
 
-	ifMetaMu sync.RWMutex
+	ifMetaMu    sync.RWMutex
 	ifMetaCache = make(map[string]ifMeta)
 )
 
