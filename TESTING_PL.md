@@ -7,6 +7,9 @@ był oczekiwany wynik i co faktycznie się stało.
 Nie publikuj prawdziwych kluczy API, list prywatnych adresów IP, nazw hostów
 produkcyjnych, danych SSH ani danych dostępowych do serwerów.
 
+Najnowsze paczki DEB i RPM pobierzesz ze strony
+[najnowszego wydania](https://github.com/dzaczek/nftgeo/releases/latest).
+
 ## Co warto testować
 
 Dobre obszary testów:

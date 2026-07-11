@@ -6,6 +6,7 @@ szukam testerów nftgeo, czyli deklaratywnego menedżera zapory sieciowej
 wykorzystującego nftables i reguły geograficzne.
 
 Repozytorium: https://github.com/dzaczek/nftgeo
+Najnowsze paczki (DEB/RPM): https://github.com/dzaczek/nftgeo/releases/latest
 
 Najbardziej przydatne testy:
 

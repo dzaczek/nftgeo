@@ -7,6 +7,9 @@ happened instead.
 Do not post real API keys, private IP inventories, production hostnames, SSH
 details, or server credentials in public issues.
 
+Download the latest DEB and RPM packages from the
+[latest release](https://github.com/dzaczek/nftgeo/releases/latest).
+
 ## What to test
 
 Good test areas:

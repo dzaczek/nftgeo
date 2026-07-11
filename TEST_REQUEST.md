@@ -6,6 +6,7 @@ I am looking for testers for nftgeo, a declarative geo-aware firewall manager
 for Linux nftables.
 
 Repository: https://github.com/dzaczek/nftgeo
+Latest packages (DEB/RPM): https://github.com/dzaczek/nftgeo/releases/latest
 
 What would be most useful to test:
 
