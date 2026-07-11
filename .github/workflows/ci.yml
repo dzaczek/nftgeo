@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: sudo apt-get update && sudo apt-get install -y mandoc shellcheck
       # SC1090: the engine sources $CONFIG_FILE / groups.d drop-ins by design.
-      - run: shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh tests/man/*.sh packaging/*.sh install.sh uninstall.sh
+      - run: shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh tests/man/*.sh tests/integration/*.sh tests/package/*.sh packaging/*.sh install.sh uninstall.sh
       - name: manual pages
         run: sh tests/man/run.sh
 
@@ -29,7 +29,7 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l ui/)" || { gofmt -l ui/; exit 1; }
       - run: go vet ./ui/
-      - run: go test ./ui/
+      - run: go test -race ./ui/
       - run: go build -o /tmp/nftgeo-ui ./ui/
 
   render:
@@ -44,3 +44,21 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y nftables
           sudo sh tests/render/nft-check.sh
+      - name: apply --confirm in a network namespace
+        run: sh tests/integration/apply-confirm.sh
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+      - name: install nfpm
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: build packages
+        run: make package
+      - name: install DEB and RPM in clean containers
+        run: sh tests/package/run.sh dist

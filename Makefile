@@ -25,7 +25,7 @@ test:
 
 ## lint: shellcheck the shell tools and check gofmt
 lint:
-	shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh tests/man/*.sh
+	shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh tests/man/*.sh tests/integration/*.sh tests/package/*.sh
 	@test -z "$$(gofmt -l ui/)" || { echo "gofmt needed:"; gofmt -l ui/; exit 1; }
 
 ## units: stage systemd units for packaging (source already uses /usr/sbin; the

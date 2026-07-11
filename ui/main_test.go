@@ -41,6 +41,72 @@ func TestSessionCookieSecurity(t *testing.T) {
 	}
 }
 
+func TestSessionAuthFlow(t *testing.T) {
+	oldSecret, oldAuthOn, oldTTL := authSecret, authOn, sessionTTL
+	authSecret = []byte("0123456789abcdef0123456789abcdef")
+	authOn = true
+	sessionTTL = time.Hour
+	sessMu.Lock()
+	oldSessions, oldNonces, oldPending := sessions, usedNonce, pendingSession
+	sessions = map[string]*uiSession{}
+	usedNonce = map[string]time.Time{}
+	pendingSession = nil
+	sessMu.Unlock()
+	defer func() {
+		authSecret, authOn, sessionTTL = oldSecret, oldAuthOn, oldTTL
+		sessMu.Lock()
+		sessions, usedNonce, pendingSession = oldSessions, oldNonces, oldPending
+		sessMu.Unlock()
+	}()
+
+	postSession := func(token string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8787/api/session", strings.NewReader(`{"auth":"`+token+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Forwarded-Proto", "https")
+		w := httptest.NewRecorder()
+		handleSession(w, r)
+		return w
+	}
+
+	roToken := mintToken(authSecret, "ro", time.Now().Add(time.Minute))
+	roResponse := postSession(roToken)
+	if roResponse.Code != http.StatusOK {
+		t.Fatalf("read-only token exchange status = %d, body=%s", roResponse.Code, roResponse.Body.String())
+	}
+	cookies := roResponse.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly {
+		t.Fatalf("unexpected session cookie: %+v", cookies)
+	}
+
+	protected := requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	readRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8787/api/status", nil)
+	readRequest.AddCookie(cookies[0])
+	readResponse := httptest.NewRecorder()
+	protected(readResponse, readRequest)
+	if readResponse.Code != http.StatusNoContent || readResponse.Header().Get("X-Nftgeo-Mode") != "ro" {
+		t.Errorf("read-only GET status/mode = %d/%q, want 204/ro", readResponse.Code, readResponse.Header().Get("X-Nftgeo-Mode"))
+	}
+
+	writeRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8787/api/rules", nil)
+	writeRequest.AddCookie(cookies[0])
+	writeResponse := httptest.NewRecorder()
+	protected(writeResponse, writeRequest)
+	if writeResponse.Code != http.StatusForbidden {
+		t.Errorf("read-only POST status = %d, want %d", writeResponse.Code, http.StatusForbidden)
+	}
+
+	rwToken := mintToken(authSecret, "rw", time.Now().Add(time.Minute))
+	if response := postSession(rwToken); response.Code != http.StatusOK {
+		t.Fatalf("read-write token exchange status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if response := postSession(rwToken); response.Code != http.StatusUnauthorized {
+		t.Errorf("reused read-write token status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
 // backupLive must create the backup's parent dir (the per-file ui-backups/<...>
 // path); a regression here broke every panel deploy from 1.26.0.
 func TestBackupLiveCreatesDir(t *testing.T) {
