@@ -8,6 +8,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.4] - 2026-07-11
+
+### Security
+- Bound dashboard per-IP histogram requests to fixed, safe resolutions so an
+  authenticated API caller cannot trigger an unbounded allocation.
+- Validated `NFLOG_GROUP` against the kernel's `uint16` group range before the
+  dashboard opens the NFLOG listener.
+- Mark dashboard session cookies as `Secure` for HTTPS and TLS reverse-proxy
+  access. Proxies must forward `X-Forwarded-Proto: https`.
+
 ## [1.72.3] - 2026-07-11
 
 ### Documentation
