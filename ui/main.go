@@ -1174,15 +1174,34 @@ const (
 	maxIPHistogramBuckets     = 360
 )
 
+// histogramBucketCount maps an API request to one of the supported fixed
+// resolutions. The returned value must never carry user input into make.
+func histogramBucketCount(requested int) int {
+	switch {
+	case requested <= 0:
+		return defaultIPHistogramBuckets
+	case requested <= 10:
+		return 10
+	case requested <= 20:
+		return 20
+	case requested <= defaultIPHistogramBuckets:
+		return defaultIPHistogramBuckets
+	case requested <= 40:
+		return 40
+	case requested <= 60:
+		return 60
+	case requested <= 120:
+		return 120
+	default:
+		return maxIPHistogramBuckets
+	}
+}
+
 func ipHistogram(from int64, buckets, limit int) map[string]interface{} {
 	if limit <= 0 {
 		limit = 10
 	}
-	if buckets <= 0 {
-		buckets = defaultIPHistogramBuckets
-	} else if buckets > maxIPHistogramBuckets {
-		buckets = maxIPHistogramBuckets
-	}
+	buckets = histogramBucketCount(buckets)
 	now := time.Now().Unix()
 	if from <= 0 || from >= now {
 		from = now - 3600

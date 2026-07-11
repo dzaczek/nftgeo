@@ -129,3 +129,25 @@ func TestIPHistogramCapsBuckets(t *testing.T) {
 		t.Errorf("bucket slice length = %d, want cap %d", got, maxIPHistogramBuckets)
 	}
 }
+
+func TestHistogramBucketCount(t *testing.T) {
+	tests := []struct {
+		requested int
+		want      int
+	}{
+		{-1, defaultIPHistogramBuckets},
+		{10, 10},
+		{11, 20},
+		{30, defaultIPHistogramBuckets},
+		{40, 40},
+		{41, 60},
+		{120, 120},
+		{maxIPHistogramBuckets + 1, maxIPHistogramBuckets},
+	}
+
+	for _, tt := range tests {
+		if got := histogramBucketCount(tt.requested); got != tt.want {
+			t.Errorf("histogramBucketCount(%d) = %d, want %d", tt.requested, got, tt.want)
+		}
+	}
+}
