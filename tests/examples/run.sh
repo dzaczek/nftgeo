@@ -34,7 +34,7 @@ EOF
 		*) cp "$example" "$tmp/rules.d/$name" ;;
 	esac
 
-	if RENDER_ONLY=1 CONFIG_FILE="$tmp/config" RULES_FILE="$tmp/rules.conf" \
+	if NFTGEO_SKIP_NFT_CHECK=1 RENDER_ONLY=1 CONFIG_FILE="$tmp/config" RULES_FILE="$tmp/rules.conf" \
 		RULES_DIR="$tmp/rules.d" GROUPS_DIR="$tmp/groups.d" ZONE_DIR="$tmp/zones" \
 		STATE_DIR="$tmp/state" INGRESS_FILE="$tmp/ingress.conf" INGRESS_DIR="$tmp/ingress.d" \
 		"$engine" >/dev/null; then
