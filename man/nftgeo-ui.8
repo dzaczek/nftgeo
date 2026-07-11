@@ -56,6 +56,11 @@ Read-write bootstrap tokens default to ten minutes and are single-use. After
 exchange, the browser receives an HttpOnly session cookie. Read-only tokens
 default to 90 days. Active session expiry is controlled separately by
 .BR UI_SESSION_TTL .
+.PP
+When accessed through HTTPS, the session cookie is marked Secure. A TLS
+reverse proxy must pass the
+.B X-Forwarded-Proto: https
+header to the local service.
 .SH RECONCILE-BOOT COMMAND
 .B nftgeo-ui reconcile-boot
 restores policy backups after a reboot interrupted an unconfirmed dashboard

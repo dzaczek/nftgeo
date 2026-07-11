@@ -1169,12 +1169,19 @@ func topIPs(from, to int64, limit int) []map[string]interface{} {
 // ipHistogram returns the top-N source IPs over [from,now] with per-bucket
 // drop counts (for the per-IP mini-histograms on the SOC overview). buckets
 // counts are oldest-first.
+const (
+	defaultIPHistogramBuckets = 30
+	maxIPHistogramBuckets     = 360
+)
+
 func ipHistogram(from int64, buckets, limit int) map[string]interface{} {
 	if limit <= 0 {
 		limit = 10
 	}
 	if buckets <= 0 {
-		buckets = 30
+		buckets = defaultIPHistogramBuckets
+	} else if buckets > maxIPHistogramBuckets {
+		buckets = maxIPHistogramBuckets
 	}
 	now := time.Now().Unix()
 	if from <= 0 || from >= now {
@@ -1802,6 +1809,19 @@ func verifyToken(tok string) (mode, nonce string, ok bool) {
 	return p[0], p[2], true
 }
 
+// sessionCookie marks cookies Secure whenever the browser connection is HTTPS.
+// A local TLS-terminating reverse proxy must pass X-Forwarded-Proto: https.
+func sessionCookie(r *http.Request, sid string) *http.Cookie {
+	return &http.Cookie{
+		Name:     "nftgeo_sess",
+		Value:    sid,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
+		SameSite: http.SameSiteStrictMode,
+	}
+}
+
 func handleSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
@@ -1855,7 +1875,7 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	sid := randHex(24)
 	sessions[sid] = &uiSession{mode: mode, last: time.Now()}
 	sessMu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "nftgeo_sess", Value: sid, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, sessionCookie(r, sid))
 	writeJSON(w, map[string]interface{}{"mode": mode})
 }
 
@@ -1907,7 +1927,7 @@ func handleSessionPoll(w http.ResponseWriter, r *http.Request) {
 		sessions[sid] = &uiSession{mode: pendingSession.mode, last: time.Now()}
 		mode := pendingSession.mode
 		pendingSession = nil
-		http.SetCookie(w, &http.Cookie{Name: "nftgeo_sess", Value: sid, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		http.SetCookie(w, sessionCookie(r, sid))
 		writeJSON(w, map[string]interface{}{"status": "ok", "mode": mode})
 		return
 	}

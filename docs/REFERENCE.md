@@ -688,7 +688,8 @@ write.
 
 To view remotely over SSH: `ssh -L 8787:127.0.0.1:8787 <host>`, then open
 `http://127.0.0.1:8787`. For production remote access, front it with a reverse
-proxy for TLS.
+proxy for TLS and pass `X-Forwarded-Proto: https`; the session cookie is then
+marked `Secure` and is not sent over HTTP.
 
 ### JSON API
 

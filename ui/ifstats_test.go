@@ -111,3 +111,21 @@ func TestIPHistogram(t *testing.T) {
 		t.Errorf("last bucket = %d, want 2", b[len(b)-1])
 	}
 }
+
+func TestIPHistogramCapsBuckets(t *testing.T) {
+	statsMu.Lock()
+	saved := statsData
+	now := time.Now().Unix()
+	statsData = []statsEntry{{Ts: now - 1, Src: "1.2.3.4", CC: "cn"}}
+	statsMu.Unlock()
+	defer func() { statsMu.Lock(); statsData = saved; statsMu.Unlock() }()
+
+	res := ipHistogram(now-60, maxIPHistogramBuckets+1, 1)
+	if got := res["buckets"].(int); got != maxIPHistogramBuckets {
+		t.Errorf("buckets = %d, want cap %d", got, maxIPHistogramBuckets)
+	}
+	ips := res["ips"].([]map[string]interface{})
+	if got := len(ips[0]["buckets"].([]int)); got != maxIPHistogramBuckets {
+		t.Errorf("bucket slice length = %d, want cap %d", got, maxIPHistogramBuckets)
+	}
+}

@@ -8,6 +8,27 @@ import (
 	"testing"
 )
 
+func TestParseNFLOGGroup(t *testing.T) {
+	tests := []struct {
+		value string
+		want  int
+	}{
+		{"", defaultNFLOGGroup},
+		{"0", 0},
+		{"5", 5},
+		{"65535", maxNFLOGGroup},
+		{"-1", defaultNFLOGGroup},
+		{"65536", defaultNFLOGGroup},
+		{"not-a-number", defaultNFLOGGroup},
+	}
+
+	for _, tt := range tests {
+		if got := parseNFLOGGroup(tt.value); got != tt.want {
+			t.Errorf("parseNFLOGGroup(%q) = %d, want %d", tt.value, got, tt.want)
+		}
+	}
+}
+
 func TestParseNflogIPv4TCP(t *testing.T) {
 	// 20-byte IPv4 header + 4 bytes of TCP (sport, dport).
 	p := make([]byte, 24)

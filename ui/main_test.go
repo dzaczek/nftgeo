@@ -1,12 +1,45 @@
 package main
 
 import (
+	"crypto/tls"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestSessionCookieSecurity(t *testing.T) {
+	tests := []struct {
+		name      string
+		tls       bool
+		forwarded string
+		want      bool
+	}{
+		{name: "local HTTP", want: false},
+		{name: "direct HTTPS", tls: true, want: true},
+		{name: "TLS reverse proxy", forwarded: "https", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8787/api/session", nil)
+			if tt.tls {
+				r.TLS = &tls.ConnectionState{}
+			}
+			r.Header.Set("X-Forwarded-Proto", tt.forwarded)
+			cookie := sessionCookie(r, "session-id")
+			if cookie.Secure != tt.want {
+				t.Errorf("Secure = %t, want %t", cookie.Secure, tt.want)
+			}
+			if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+				t.Errorf("cookie protections changed: %+v", cookie)
+			}
+		})
+	}
+}
 
 // backupLive must create the backup's parent dir (the per-file ui-backups/<...>
 // path); a regression here broke every panel deploy from 1.26.0.

@@ -37,6 +37,11 @@ var (
 
 var reNflogPrefix = regexp.MustCompile(`^nftgeo-(drop|accept):(.+?)\s*$`)
 
+const (
+	defaultNFLOGGroup = 5
+	maxNFLOGGroup     = 65535
+)
+
 // nflogGroup returns the NFLOG group the engine logs to: config NFLOG_GROUP,
 // else env, else the default 5. 0 disables NFLOG (kernel-log mode).
 func nflogGroup() int {
@@ -49,12 +54,13 @@ func nflogGroup() int {
 			}
 		}
 	}
-	if v == "" {
-		return 5
-	}
+	return parseNFLOGGroup(v)
+}
+
+func parseNFLOGGroup(v string) int {
 	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
-		return 5
+	if err != nil || n < 0 || n > maxNFLOGGroup {
+		return defaultNFLOGGroup
 	}
 	return n
 }
