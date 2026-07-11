@@ -33,40 +33,16 @@ allow out udp 53 any
 
 ## Quick start
 
-Requirements: Debian or Ubuntu, `systemd`, `nftables`, `curl`, and root access.
-An AbuseIPDB API key is optional unless you use the `abuse` target.
+For the shortest package-based install flow, use
+[Quick Start](QUICK_START.md) or [Quick Start PL](QUICK_START_PL.md).
 
-```sh
-git clone https://github.com/dzaczek/nftgeo.git
-cd nftgeo
-sudo ./install.sh
-
-# Add your current admin IP before restricting SSH.
-sudoedit /etc/nftgeo/config
-#   WHITELIST="YOUR.PUBLIC.IP"
-
-sudoedit /etc/nftgeo/rules.conf
-#   allow in tcp 22 YOUR.PUBLIC.IP
-#   deny  in tcp 22 any
-#   deny  in any - abuse
-#   allow out udp 53 any
-
-sudo nftgeo validate
-sudo nftgeo apply --confirm
-# Verify that SSH still works.
-sudo nftgeo apply --commit
-
-sudo systemctl enable --now nftgeo.timer
-```
+If you want the source installer instead, clone the repo and run
+`sudo ./install.sh` on Debian or Ubuntu.
 
 ## Install
 
-Package install:
-
-```sh
-sudo apt install ./nftgeo_<version>_amd64.deb
-sudo dnf install ./nftgeo-<version>-1.x86_64.rpm
-```
+Package install and first-run steps are documented in
+[Quick Start](QUICK_START.md) and [Quick Start PL](QUICK_START_PL.md).
 
 Source install:
 
