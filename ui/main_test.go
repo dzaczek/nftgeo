@@ -723,3 +723,77 @@ func TestBuildIngressBody(t *testing.T) {
 		t.Error("bad action should be rejected")
 	}
 }
+
+func TestSetConfigValueInputValidation(t *testing.T) {
+	// Create a temporary config file
+	tmp, err := os.CreateTemp("", "nftgeo-config-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmp.Name())
+
+	// Temporarily override the config file path for testing
+	oldConfigFile := configFile
+	configFile = tmp.Name()
+	defer func() { configFile = oldConfigFile }()
+
+	// Test inputs containing malicious shell metacharacters
+	badInputs := []string{
+		"val\"ue",
+		"val\nue",
+		"val`ue",
+		"val$ue",
+		"val\\ue",
+	}
+
+	for _, bad := range badInputs {
+		err := setConfigValue("TEST_KEY", bad)
+		if err == nil {
+			t.Errorf("expected error for bad input %q, got nil", bad)
+		}
+	}
+
+	// Test valid input
+	goodInput := "valid_value_123"
+	err = setConfigValue("TEST_KEY", goodInput)
+	if err != nil {
+		t.Errorf("expected no error for valid input %q, got %v", goodInput, err)
+	}
+}
+
+func TestSetAbuseIPDBKeyInputValidation(t *testing.T) {
+	// Create a temporary config file
+	tmp, err := os.CreateTemp("", "nftgeo-config-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmp.Name())
+
+	// Temporarily override the config file path for testing
+	oldConfigFile := configFile
+	configFile = tmp.Name()
+	defer func() { configFile = oldConfigFile }()
+
+	// Test inputs containing malicious shell metacharacters
+	badInputs := []string{
+		"key\"123",
+		"key\n123",
+		"key`123",
+		"key$123",
+		"key\\123",
+	}
+
+	for _, bad := range badInputs {
+		err := setAbuseIPDBKey(bad)
+		if err == nil {
+			t.Errorf("expected error for bad input %q, got nil", bad)
+		}
+	}
+
+	// Test valid input
+	goodInput := "valid_key_123"
+	err = setAbuseIPDBKey(goodInput)
+	if err != nil {
+		t.Errorf("expected no error for valid input %q, got %v", goodInput, err)
+	}
+}
