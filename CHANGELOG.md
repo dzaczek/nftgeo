@@ -8,6 +8,23 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.3] - 2026-07-11
+
+### Documentation
+- Added dedicated Linux manual pages for the configuration and rule formats
+  (`nftgeo.conf(5)`), update engine (`nftgeo-update(8)`), and dashboard
+  (`nftgeo-ui(8)`), and completed the operator command coverage in
+  `nftgeo(8)`.
+- Added examples and cross-references across all manual pages, plus automated
+  `mandoc` validation in CI.
+- Added stable links to the latest DEB/RPM release in the English and Polish
+  tester documentation.
+
+### Packaging
+- DEB and RPM packages now install all four manual pages in their correct
+  sections and compress them according to distribution packaging conventions.
+- The source installer and uninstaller now handle the complete manual set.
+
 ## [1.72.2] - 2026-07-11
 
 ### Documentation
