@@ -277,24 +277,28 @@ sanitize_lower() {
 
 resolve_region() {
 	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
+	_val=""
 	eval "_val=\"\${REGION_${u}:-}\""
 	printf '%s' "$_val"
 }
 
 resolve_group() {
 	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
+	_val=""
 	eval "_val=\"\${GROUP_${u}:-}\""
 	printf '%s' "$_val"
 }
 
 resolve_list() {
 	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
+	_val=""
 	eval "_val=\"\${LIST_${u}:-}\""
 	printf '%s' "$_val"
 }
 
 resolve_service() {
 	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
+	_ov=""
 	eval "_ov=\"\${SERVICE_${u}:-}\""
 	if [ -n "$_ov" ]; then printf '%s' "$_ov"; return 0; fi
 	# Fall back to the built-in catalog (a user SERVICE_ above always wins).
@@ -307,6 +311,7 @@ resolve_service() {
 resolve_host_label() {
 	# HOST_<NAME> = a named single IP/CIDR (or a few), usable as a rule target.
 	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
+	_val=""
 	eval "_val=\"\${HOST_${u}:-}\""
 	printf '%s' "$_val"
 }
@@ -315,6 +320,7 @@ resolve_zone() {
 	# ZONE_<NAME> = a space-separated list of interfaces (incl. VLAN
 	# subinterfaces like eth0.100), the members of a network segment.
 	u="$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9_' '_')"
+	_val=""
 	eval "_val=\"\${ZONE_${u}:-}\""
 	printf '%s' "$_val"
 }
