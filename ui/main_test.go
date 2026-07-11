@@ -751,6 +751,46 @@ func TestBuildIngressBody(t *testing.T) {
 	}
 }
 
+func TestParseObjects(t *testing.T) {
+	input := `
+# A comment
+   # indented comment
+
+GROUP_MYGROUP="1.1.1.1 2.2.2.2"
+REGION_MYREGION="us gb"
+SERVICE_MYSERVICE="80/tcp 443/tcp"
+HOST_MYHOST="10.0.0.1"
+ZONE_MYZONE="eth0"
+LIST_MYLIST="192.168.1.0/24"
+FEED_MYFEED="https://example.com/feed.txt"
+ABUSE_FEEDS_UI="https://example.com/feed.txt"
+INVALID_LINE
+`
+	g, r, s, h, z, l, f := parseObjects(input)
+
+	if len(g) != 1 || g[0].Name != "MYGROUP" || len(g[0].Members) != 2 || g[0].Members[0] != "1.1.1.1" || g[0].Members[1] != "2.2.2.2" {
+		t.Errorf("failed to parse GROUP: %+v", g)
+	}
+	if len(r) != 1 || r[0].Name != "MYREGION" || len(r[0].Members) != 2 || r[0].Members[0] != "us" || r[0].Members[1] != "gb" {
+		t.Errorf("failed to parse REGION: %+v", r)
+	}
+	if len(s) != 1 || s[0].Name != "MYSERVICE" || len(s[0].Members) != 2 || s[0].Members[0] != "80/tcp" || s[0].Members[1] != "443/tcp" {
+		t.Errorf("failed to parse SERVICE: %+v", s)
+	}
+	if len(h) != 1 || h[0].Name != "MYHOST" || len(h[0].Members) != 1 || h[0].Members[0] != "10.0.0.1" {
+		t.Errorf("failed to parse HOST: %+v", h)
+	}
+	if len(z) != 1 || z[0].Name != "MYZONE" || len(z[0].Members) != 1 || z[0].Members[0] != "eth0" {
+		t.Errorf("failed to parse ZONE: %+v", z)
+	}
+	if len(l) != 1 || l[0].Name != "MYLIST" || len(l[0].Members) != 1 || l[0].Members[0] != "192.168.1.0/24" {
+		t.Errorf("failed to parse LIST: %+v", l)
+	}
+	if len(f) != 1 || f[0].Name != "MYFEED" || len(f[0].Members) != 1 || f[0].Members[0] != "https://example.com/feed.txt" {
+		t.Errorf("failed to parse FEED: %+v", f)
+	}
+}
+
 func TestParseDur(t *testing.T) {
 	def := 15 * time.Minute
 	cases := []struct {
