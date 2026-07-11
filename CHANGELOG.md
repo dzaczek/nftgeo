@@ -8,6 +8,19 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.2] - 2026-07-11
+
+### Documentation
+- Split the oversized README into a concise project overview and a full
+  reference under `docs/REFERENCE.md`.
+- Added English and Polish testing, contribution, test-request, issue-report,
+  and pull-request guidance for external testers.
+- Corrected rule examples for sequential first-match evaluation and expanded
+  the Linux `nftgeo(8)` manual with whitelist, ingress, dynamic-block, and safe
+  apply examples.
+- Debian and RPM packages now include the full reference, testing and
+  contribution guides, and all ready-to-adapt files from `examples/`.
+
 ## [1.72.1] - 2026-07-10
 
 ### Fixed

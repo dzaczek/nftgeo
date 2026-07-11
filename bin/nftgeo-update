@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.72.1"
+NFTGEO_VERSION="1.72.2"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -2010,4 +2010,3 @@ printf 'nftgeo %s loaded %s/%s: rules=%s geo_groups=%s whitelist4=%s whitelist6=
 	"$(wc -l < "${TMP_DIR}/abuse6.set")"
 
 write_status
-
