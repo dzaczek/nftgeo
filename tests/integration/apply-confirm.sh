@@ -9,7 +9,7 @@ tmp="$(mktemp -d)"
 
 cleanup() {
 	sudo ip netns del "$name" 2>/dev/null || true
-	rm -rf "$tmp"
+	sudo rm -rf "$tmp"
 }
 trap cleanup EXIT INT TERM
 
