@@ -34,9 +34,21 @@ type ifSample struct {
 	C  map[string]ifCounters
 }
 
+type ifMeta struct {
+	Up      bool
+	Speed   int
+	IfIndex int
+	IfLink  int
+	Bridge  bool
+	Updated time.Time
+}
+
 var (
 	ifMu   sync.Mutex
 	ifRing []ifSample
+
+	ifMetaMu    sync.RWMutex
+	ifMetaCache = make(map[string]ifMeta)
 )
 
 // parseNetDev parses /proc/net/dev content. Loopback is kept — the frontend
@@ -190,23 +202,38 @@ func ifStats() map[string]interface{} {
 			errDelta.TxCarrier += d(prev.TxCarrier, cur.TxCarrier)
 		}
 		last := ring[len(ring)-1].C[name]
-		speed := 0
-		if s := readSysNet(name, "speed"); s != "" && s != "-1" {
-			speed, _ = strconv.Atoi(s)
+
+		ifMetaMu.RLock()
+		meta, ok := ifMetaCache[name]
+		ifMetaMu.RUnlock()
+		if !ok || time.Since(meta.Updated) > 10*time.Second {
+			speed := 0
+			if s := readSysNet(name, "speed"); s != "" && s != "-1" {
+				speed, _ = strconv.Atoi(s)
+			}
+			ifindex, _ := strconv.Atoi(readSysNet(name, "ifindex"))
+			iflink, _ := strconv.Atoi(readSysNet(name, "iflink"))
+			meta = ifMeta{
+				Up:      readSysNet(name, "operstate") == "up",
+				Speed:   speed,
+				IfIndex: ifindex,
+				IfLink:  iflink,
+				Bridge:  readSysNet(name, "bridge/bridge_id") != "",
+				Updated: time.Now(),
+			}
+			ifMetaMu.Lock()
+			ifMetaCache[name] = meta
+			ifMetaMu.Unlock()
 		}
-		// iflink != ifindex means this is one end of a veth pair (the peer's
-		// ifindex is iflink) — e.g. a container's eth0 is a veth to the host, or
-		// a Docker veth. Lets the UI show "eth0@ifN" and group virtual links.
-		ifindex, _ := strconv.Atoi(readSysNet(name, "ifindex"))
-		iflink, _ := strconv.Atoi(readSysNet(name, "iflink"))
+
 		ifaces = append(ifaces, map[string]interface{}{
 			"name":       name,
-			"up":         readSysNet(name, "operstate") == "up",
-			"speed_mbps": speed,
-			"ifindex":    ifindex,
-			"iflink":     iflink,
-			"veth":       iflink != 0 && iflink != ifindex,
-			"bridge":     readSysNet(name, "bridge/bridge_id") != "",
+			"up":         meta.Up,
+			"speed_mbps": meta.Speed,
+			"ifindex":    meta.IfIndex,
+			"iflink":     meta.IfLink,
+			"veth":       meta.IfLink != 0 && meta.IfLink != meta.IfIndex,
+			"bridge":     meta.Bridge,
 			"rx_bps":     rxBps,
 			"tx_bps":     txBps,
 			"rx_pps":     rxPps,
@@ -237,6 +264,16 @@ func ifStats() map[string]interface{} {
 	for i := 1; i < len(ring); i++ {
 		ts = append(ts, ring[i].Ts)
 	}
+
+	// Clean up stale cache entries
+	ifMetaMu.Lock()
+	for k := range ifMetaCache {
+		if !names[k] {
+			delete(ifMetaCache, k)
+		}
+	}
+	ifMetaMu.Unlock()
+
 	return map[string]interface{}{
 		"sample_secs": ifSampleSecs,
 		"ts":          ts,
