@@ -17,7 +17,16 @@ DEFAULT_INPUT="accept"
 DEFAULT_OUTPUT="accept"
 DEFAULT_FORWARD="accept"
 INGRESS_DEV="eth0"
+ZONE_CACHE_HOURS="9999"
+REGION_EUROPE="pl"
 EOF
+	# Keep this grammar/render test offline. The active examples reference these
+	# countries; non-empty cached files prevent network fetches and empty allow
+	# sets without asserting anything about live country data.
+	for cc in pl us cn ru; do
+		printf '198.18.0.0/15\n' > "$tmp/zones/$cc.v4"
+		printf '2001:db8::/32\n' > "$tmp/zones/$cc.v6"
+	done
 	: > "$tmp/rules.conf"
 
 	case "$name" in
