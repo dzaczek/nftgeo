@@ -21,6 +21,10 @@ rm -f /usr/sbin/nftgeo-update
 rm -f /usr/sbin/nftgeo-ui
 # also clean up the pre-packaging /usr/local/sbin layout, if present
 rm -f /usr/local/sbin/nftgeo /usr/local/sbin/nftgeo-update /usr/local/sbin/nftgeo-ui
+rm -f /usr/local/share/man/man5/nftgeo.conf.5
+rm -f /usr/local/share/man/man8/nftgeo.8
+rm -f /usr/local/share/man/man8/nftgeo-update.8
+rm -f /usr/local/share/man/man8/nftgeo-ui.8
 
 rm -f /etc/systemd/system/nftgeo.service
 rm -f /etc/systemd/system/nftgeo.timer
@@ -28,5 +32,7 @@ rm -f /etc/systemd/system/nftgeo-ui.service
 rm -f /etc/nftables.d/nftgeo.nft
 systemctl daemon-reload
 
-echo "Removed nftgeo service, timer, scripts, UI, and active nftables table."
+command -v mandb >/dev/null 2>&1 && mandb -q >/dev/null 2>&1 || true
+
+echo "Removed nftgeo service, timer, scripts, UI, manual pages, and active nftables table."
 echo "Left in place: /etc/nftgeo and /var/lib/nftgeo"

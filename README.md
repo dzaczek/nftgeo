@@ -137,6 +137,9 @@ ssh -L 8787:127.0.0.1:8787 user@host
   development workflow and pull request expectations.
 - [Security policy](SECURITY.md) - private vulnerability reporting.
 
+Installed manual pages: `nftgeo(8)`, `nftgeo-update(8)`, `nftgeo-ui(8)`, and
+`nftgeo.conf(5)`.
+
 ## Development
 
 ```sh

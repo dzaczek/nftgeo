@@ -1,0 +1,158 @@
+.\" nftgeo-ui(8) manual page
+.TH NFTGEO-UI 8 "2026-07-11" "nftgeo 1.72.2" "System Administration"
+.SH NAME
+nftgeo-ui \- local nftgeo dashboard and policy editor
+.SH SYNOPSIS
+.B nftgeo-ui
+.RB [ -addr " address" ]
+.RB [ -noauth ]
+.br
+.B nftgeo-ui token
+.RB [ -ro ]
+.RB [ -addr " address" ]
+.RB [ -ttl " duration" ]
+.RB [ -raw ]
+.br
+.B nftgeo-ui reconcile-boot
+.SH DESCRIPTION
+.B nftgeo-ui
+serves a dashboard for the live nftgeo table, counters, source health, drop
+events, and policy files. Its editor stages changes and deploys them through
+the same validation, plan, and confirmation-deadman flow as
+.BR nftgeo (8).
+.PP
+The packaged
+.B nftgeo-ui.service
+runs as root and listens only on 127.0.0.1:8787. Keep that default and use an
+SSH tunnel or an authenticated TLS reverse proxy for remote access. The service
+needs root access to nftables, logs, state, and policy files.
+.SH SERVER OPTIONS
+.TP
+.BI -addr " address"
+Listen address in Go host:port form. Default: 127.0.0.1:8787.
+.TP
+.B -noauth
+Disable token authentication. Use only on a trusted local-only listener. Never
+combine this option with a public or broadly reachable bind address.
+.SH TOKEN COMMAND
+.B nftgeo-ui token
+mints a signed bootstrap token and prints a dashboard URL. It must be able to
+read or create the root-owned signing secret.
+.TP
+.B -ro
+Create a long-lived read-only token. It cannot change firewall policy.
+.TP
+.BI -addr " address"
+Use this address in the printed URL. It does not change the server listener.
+Default: 127.0.0.1:8787.
+.TP
+.BI -ttl " duration"
+Override token validity using a Go duration such as 10m, 24h, or 168h.
+.TP
+.B -raw
+Print only the token, without a URL or terminal formatting.
+.PP
+Read-write bootstrap tokens default to ten minutes and are single-use. After
+exchange, the browser receives an HttpOnly session cookie. Read-only tokens
+default to 90 days. Active session expiry is controlled separately by
+.BR UI_SESSION_TTL .
+.SH RECONCILE-BOOT COMMAND
+.B nftgeo-ui reconcile-boot
+restores policy backups after a reboot interrupted an unconfirmed dashboard
+deployment and removes stale confirmation state. It is an internal, idempotent
+boot helper called by
+.BR nftgeo.service .
+.SH ENVIRONMENT
+.TP
+.B UI_SECRET_FILE
+HMAC signing-secret path. Default: /var/lib/nftgeo/ui-secret.
+.TP
+.B UI_SESSION_TTL
+Authenticated browser-session inactivity timeout. Default: 15m.
+.TP
+.BR NFTGEO_BIN , " " NFTGEO_UPDATE
+Paths to the operator CLI and generation engine. Defaults:
+/usr/sbin/nftgeo and /usr/sbin/nftgeo-update.
+.TP
+.BR CONFIG_FILE , " " RULES_FILE , " " RULES_DIR
+Override the policy files shown and edited by the dashboard.
+.TP
+.BR INGRESS_FILE , " " INGRESS_DIR , " " GROUPS_DIR
+Override ingress and object-definition locations.
+.TP
+.BR WHITELIST_FILE , " " WHITELIST_HOSTS_FILE
+Override whitelist file locations.
+.TP
+.BR TABLE_FAMILY , " " TABLE_NAME
+Table inspected by the dashboard. Defaults: inet and nftgeo.
+.TP
+.BR STATE_DIR , " " ZONE_DIR , " " ABUSE_FEEDS_CACHE_DIR
+Override runtime state and cache locations.
+.TP
+.B NFLOG_GROUP
+Netfilter log group used for live drop events. It should match the engine
+configuration. Default: 5; 0 disables NFLOG ingestion.
+.TP
+.BR GEO_FULL , " " GEO_CACHE_DIR
+Optional complete geo dataset URL and dashboard geo-cache directory.
+.SH SECURITY
+Authentication protects the HTTP interface but does not replace network
+isolation. Do not publish the default HTTP listener directly on an untrusted
+network. Treat read-write token URLs as credentials and do not place them in
+logs, issues, screenshots, or shell history shared with others.
+.PP
+The packaged systemd unit uses filesystem restrictions but grants write access
+to
+.I /etc/nftgeo
+and
+.I /etc/nftables.d
+so confirmed policy changes can be installed.
+.SH FILES
+.TP
+.I /usr/lib/systemd/system/nftgeo-ui.service
+Packaged service unit.
+.TP
+.I /var/lib/nftgeo/ui-secret
+Root-owned signing secret.
+.TP
+.IR /var/lib/nftgeo/ui-drafts/ , " " /var/lib/nftgeo/ui-backups/
+Staged policy and rollback copies.
+.TP
+.I /var/lib/nftgeo/status.json
+Engine health and source freshness displayed by the dashboard.
+.TP
+.I /etc/nftgeo/
+Live policy edited through the draft and confirmation workflow.
+.SH EXAMPLES
+Start the packaged local dashboard and mint a read-write login link:
+.PP
+.RS
+.nf
+systemctl enable --now nftgeo-ui.service
+nftgeo-ui token
+.fi
+.RE
+.PP
+Access it from an administrator workstation without exposing the listener:
+.PP
+.RS
+.nf
+ssh -L 8787:127.0.0.1:8787 server.example
+# then mint/open a token for 127.0.0.1:8787
+.fi
+.RE
+.PP
+Create a seven-day read-only token containing no terminal decoration:
+.PP
+.RS
+.nf
+nftgeo-ui token -ro -ttl 168h -raw
+.fi
+.RE
+.SH SEE ALSO
+.BR nftgeo (8),
+.BR nftgeo.conf (5),
+.BR nftgeo-update (8),
+.BR ssh (1),
+.BR systemctl (1),
+.BR systemd.service (5)

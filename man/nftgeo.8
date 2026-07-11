@@ -8,7 +8,7 @@ nftgeo \- declarative geo / abuse / segmentation firewall for nftables
 .RI [ args ]
 .br
 .B nftgeo-update
-.RB [ --version ]
+.RB [ --version | -V | --services ]
 .SH DESCRIPTION
 .B nftgeo
 builds and maintains an
@@ -51,7 +51,17 @@ without loading it. Exits non-zero if the config is invalid. Requires root.
 Show how the rendered ruleset differs from what is loaded, as a policy diff
 (set contents elided). Requires root.
 .TP
-.BI "block " "ip " [ ttl ]
+.BR "migrate-sequential" " [" --dry-run "]"
+Find geo-restricted allow rules that do not have a following catch-all deny and
+write the missing denies to
+.IR /etc/nftgeo/rules.d/zz-sequential-migration.conf .
+Use
+.B --dry-run
+to preview without writing. This migration preserves the pre-1.57 implicit
+per-port deny behavior under current top-to-bottom rule evaluation. Requires
+root when writing.
+.TP
+.BI "block " "[--force] ip " [ ttl ]
 Drop an address immediately for
 .I ttl
 (default 1h; e.g.\& 30m, 2d) without editing rules or reloading. Refuses a
@@ -87,6 +97,11 @@ Print the nftgeo version.
 .TP
 .B help
 Show a usage summary.
+.PP
+.B nftgeo-update --services
+prints the built-in service names accepted in a rule's port field. Direct use
+of the update engine is described in
+.BR nftgeo-update (8).
 .SH RULES
 Rules live in
 .I /etc/nftgeo/rules.conf
@@ -264,6 +279,8 @@ Settings live in
 .IR /etc/nftgeo/config ;
 object definitions may also live in
 .IR /etc/nftgeo/groups.d/*.conf .
+The complete file formats and configuration key reference are documented in
+.BR nftgeo.conf (5).
 Selected keys:
 .TP
 .B WHITELIST ", " WHITELIST_HOSTS
@@ -433,7 +450,12 @@ nftgeo apply --commit
 .RE
 .SH SEE ALSO
 .BR nft (8),
-.BR nftables (8)
+.BR nftables (8),
+.BR nftgeo.conf (5),
+.BR nftgeo-update (8),
+.BR nftgeo-ui (8),
+.BR systemctl (1),
+.BR journalctl (1)
 .PP
 Full documentation:
 .IR /usr/share/doc/nftgeo/README.md ,

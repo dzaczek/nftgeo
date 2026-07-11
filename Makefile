@@ -4,7 +4,7 @@ GO      ?= go
 ARCHES  := amd64 arm64
 DIST    := dist
 
-.PHONY: all build test lint units package tarball clean
+.PHONY: all build test lint units manpages package tarball clean
 all: build
 
 ## build: cross-compile the nftgeo-ui binary for each arch into dist/
@@ -21,10 +21,11 @@ test:
 	$(GO) test ./ui/
 	sh tests/render/run.sh
 	sh tests/migrate/run.sh
+	sh tests/man/run.sh
 
 ## lint: shellcheck the shell tools and check gofmt
 lint:
-	shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh
+	shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh tests/man/*.sh
 	@test -z "$$(gofmt -l ui/)" || { echo "gofmt needed:"; gofmt -l ui/; exit 1; }
 
 ## units: stage systemd units for packaging (source already uses /usr/sbin; the
@@ -35,8 +36,15 @@ units:
 	  sed 's#/usr/local/sbin#/usr/sbin#g' systemd/$$u > $(DIST)/units/$$u; \
 	done
 
+## manpages: compress package manual pages without modifying their sources
+manpages:
+	@mkdir -p $(DIST)/man
+	@for page in man/*.[1-9]; do \
+	  gzip -9 -n -c "$$page" > "$(DIST)/man/$$(basename "$$page").gz"; \
+	done
+
 ## package: build .deb and .rpm for each arch (needs nfpm)
-package: build units
+package: build units manpages
 	@command -v nfpm >/dev/null || { echo "install nfpm: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"; exit 1; }
 	@for a in $(ARCHES); do \
 	  cp $(DIST)/nftgeo-ui-linux-$$a $(DIST)/nftgeo-ui; \

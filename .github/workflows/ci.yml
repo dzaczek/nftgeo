@@ -13,9 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: sudo apt-get update && sudo apt-get install -y mandoc shellcheck
       # SC1090: the engine sources $CONFIG_FILE / groups.d drop-ins by design.
-      - run: shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh packaging/*.sh install.sh uninstall.sh
+      - run: shellcheck -S warning --exclude=SC1090 bin/nftgeo-update bin/nftgeo tests/render/*.sh tests/migrate/*.sh tests/man/*.sh packaging/*.sh install.sh uninstall.sh
+      - name: manual pages
+        run: sh tests/man/run.sh
 
   go:
     runs-on: ubuntu-latest

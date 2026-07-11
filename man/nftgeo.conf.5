@@ -1,0 +1,419 @@
+.\" nftgeo.conf(5) manual page
+.TH NFTGEO.CONF 5 "2026-07-11" "nftgeo 1.72.2" "File Formats"
+.SH NAME
+nftgeo.conf \- configuration and rule file formats for nftgeo
+.SH SYNOPSIS
+.I /etc/nftgeo/config
+.br
+.I /etc/nftgeo/groups.d/*.conf
+.br
+.I /etc/nftgeo/rules.conf
+.br
+.I /etc/nftgeo/rules.d/*.conf
+.br
+.I /etc/nftgeo/ingress.conf
+.br
+.I /etc/nftgeo/ingress.d/*.conf
+.br
+.I /etc/nftgeo/whitelist.conf
+.br
+.I /etc/nftgeo/whitelist-hosts.conf
+.SH DESCRIPTION
+.B nftgeo-update
+sources the main configuration and sorted
+.I groups.d
+fragments as POSIX shell syntax, then parses the filter, NAT, zone, throttle,
+synproxy, and ingress rule files. The generated ruleset is validated with
+.B nft -c
+before it is loaded.
+.PP
+Keep configuration files root-owned. They are executed as shell input by a
+root service and must not be writable by untrusted users. Quote values that
+contain whitespace. Blank lines and lines beginning with
+.B #
+are ignored in rule and list files.
+.SH CONFIGURATION
+The following settings are intended for
+.IR /etc/nftgeo/config .
+Path, table, and state variables used for isolated testing are documented under
+.B ENVIRONMENT
+in
+.BR nftgeo-update (8).
+.SS Whitelist and name resolution
+.TP
+.B WHITELIST
+Space-separated literal IPv4/IPv6 addresses or CIDRs that bypass geo, abuse,
+throttle, synproxy, and policy drops. Entries in
+.I whitelist.conf
+take precedence when that file is non-empty.
+.TP
+.B WHITELIST_HOSTS
+Space-separated hostnames resolved on each update. Entries in
+.I whitelist-hosts.conf
+take precedence when that file is non-empty.
+.TP
+.B WHITELIST_HOSTS_RETENTION_DAYS
+Keep the last successful addresses for a hostname this many days after
+resolution fails. Default: 7.
+.TP
+.B RESOLVERS
+Space-separated resolvers tried in order. The word
+.B local
+uses the system resolver; an IP address requests that DNS server directly.
+Default: local.
+.TP
+.B RESOLVE_TIMEOUT
+Timeout in seconds for each resolver attempt. Default: 5.
+.SS Geo data
+.TP
+.B ZONE_CACHE_HOURS
+Maximum age of downloaded country-zone data before refresh. Default: 20.
+.TP
+.BI REGION_ NAME
+Space-separated ISO 3166-1 alpha-2 country codes defining a named region.
+Names are referenced lowercased in rules. The built-ins are
+.BR europe ,
+.BR north_america ,
+.BR caribbean ,
+.BR south_america ,
+.BR middle_east ,
+.BR asia ,
+.BR africa ,
+and
+.BR oceania ;
+an assignment with the same name overrides a built-in.
+.SS Abuse sources
+.TP
+.B ABUSEIPDB_API_KEY
+API key used to download the AbuseIPDB blacklist. It is read only when at least
+one rule targets
+.BR abuse .
+.TP
+.BR ABUSEIPDB_CONFIDENCE_MINIMUM , " " ABUSEIPDB_LIMIT , " " ABUSEIPDB_DAYS
+AbuseIPDB request filters. Defaults: 90, 10000, and 30 respectively.
+.TP
+.B ABUSEIPDB_RETENTION_DAYS
+Age in days after which addresses absent from successful API responses are
+discarded. Defaults to
+.BR ABUSEIPDB_DAYS .
+.TP
+.B ABUSE_FEEDS
+Space- or newline-separated URLs of plaintext IP/CIDR feeds merged into the
+.B abuse
+sets. The last good copy of each feed is cached.
+.TP
+.B ABUSE_FEEDS_MAX
+Maximum entries retained from one feed; 0 disables the limit. Default: 200000.
+.TP
+.B ABUSE_FEEDS_AGGREGATE
+Set to 1 to collapse adjacent addresses into CIDRs before loading. Default: 1.
+.TP
+.BR ABUSE_FEEDS_BATCH , " " ABUSE_FEEDS_BATCH_SLEEP
+When the batch size is non-zero and an abuse set is larger than it, initially
+load the ruleset with an empty set and fill it in paced chunks. The default
+batch size is 0 (atomic loading); sleep defaults to 1 second. Batching reduces
+netlink pressure but protection ramps up during the fill window.
+.SS Base policy and logging
+.TP
+.BR DEFAULT_INPUT , " " DEFAULT_OUTPUT , " " DEFAULT_FORWARD
+Base chain policy,
+.B accept
+or
+.BR drop .
+All default to
+.BR accept .
+With a drop policy, explicitly allow required SSH, DNS, update, and forwarding
+traffic before deployment. Use
+.BR "nftgeo apply --confirm" .
+.TP
+.B HARDEN
+A non-empty value enables baseline loopback acceptance, invalid-state drops,
+essential ICMPv6, and inbound ping rate limiting.
+.TP
+.BR ICMP_RATE , " " ICMP_BURST
+Ping limit used by
+.BR HARDEN .
+Defaults: 1/second and 5. Set
+.B ICMP_RATE=0
+to disable ping limiting.
+.TP
+.B ANTISPOOF
+Space-separated ingress interfaces protected by an IPv4 reverse-path
+.B fib
+check.
+.TP
+.B LOG_DROPS
+A non-empty value logs dropped packets.
+.TP
+.B LOG_WHITELIST
+A non-empty value logs whitelist hits independently of
+.BR LOG_DROPS .
+.TP
+.BR LOG_PREFIX , " " LOG_LIMIT
+Drop-log prefix and nftables rate expression. Defaults are
+.B "nftgeo-drop "
+and
+.BR "limit rate 10/second" .
+.TP
+.B NFLOG_GROUP
+Netfilter log multicast group consumed by the dashboard. Set to 0 to use only
+the kernel log. Default: 5.
+.TP
+.B THROTTLE_BAN
+Default duration for reactive throttle bans. Default: 1h.
+.TP
+.B SEGMENT_DEFAULT
+Set to
+.B deny
+to drop forwarding between defined zones unless a zone rule allows it. Empty
+by default.
+.TP
+.B INGRESS_DEV
+Space- or comma-separated interfaces on which ingress-hook rules are attached.
+When empty, the default-route interface is detected.
+.SH OBJECTS
+Object assignments may be placed in the main config or in sorted
+.IR groups.d/*.conf
+fragments.
+.TP
+.BI GROUP_ NAME
+Reusable list of IPs, CIDRs, countries, and regions. Groups cannot include
+other groups.
+.TP
+.BI HOST_ NAME
+Reusable list of literal IPs or CIDRs associated with a host label.
+.TP
+.BI SERVICE_ NAME
+Reusable list of ports, ranges, service names, and optionally protocol-tagged
+members such as
+.BR 53/udp .
+Services may include other services. User definitions override built-in names.
+.TP
+.BI ZONE_ NAME
+Space-separated interface names defining a network segment. VLAN interface
+names are accepted.
+.PP
+Object names are the lowercased suffix after the underscore. For example,
+.B GROUP_OFFICE
+is referenced as
+.BR office .
+.SH FILTER RULES
+Filter rules in
+.I rules.conf
+and sorted
+.I rules.d/*.conf
+have this form:
+.PP
+.RS
+.nf
+<allow|deny> <dir> <proto> <port> <target> [on <iface>] [log]
+.fi
+.RE
+.TP
+.B dir
+One of
+.BR in ,
+.BR out ,
+.BR fwd-in ,
+or
+.BR fwd-out .
+.TP
+.B proto
+One of
+.BR tcp ,
+.BR udp ,
+.BR sctp ,
+.BR all ,
+.BR icmp ,
+.BR icmpv6 ,
+.BR esp ,
+.BR ah ,
+.BR gre ,
+or
+.BR any .
+.B all
+means TCP and UDP. Port-less protocols and
+.B any
+use
+.B -
+for the port.
+.TP
+.B port
+A number, range, comma-separated list, built-in service name, or
+.B SERVICE_
+object name. A
+.B -
+matches every port/protocol where applicable.
+.TP
+.B target
+A comma-separated mixture of country codes, region names, literal IPs/CIDRs,
+.B GROUP_
+names,
+.B HOST_
+names, or
+.BR any .
+The reserved target
+.B abuse
+is valid only for deny rules.
+.TP
+.BI "on " iface
+Restrict the rule to an interface.
+.TP
+.B log
+Log matches for this rule. A trailing
+.B # comment
+is used as its log name.
+.SS Evaluation
+Rules are evaluated top-to-bottom across the main file and sorted fragments;
+the first matching user rule wins. The fixed baseline is evaluated first:
+loopback and established/related acceptance as applicable, invalid-state drop,
+whitelist, throttle, and synproxy.
+.PP
+An allow rule does not implicitly close a port. Under
+.B DEFAULT_INPUT=accept
+write a following catch-all deny when a service must be limited:
+.PP
+.RS
+.nf
+allow in tcp 22 europe
+deny  in tcp 22 any
+.fi
+.RE
+.SH INGRESS RULES
+Ingress rules in
+.I ingress.conf
+and sorted
+.I ingress.d/*.conf
+run before prerouting and connection tracking:
+.PP
+.RS
+.nf
+<accept|drop> <target> [proto] [port] [log]
+.fi
+.RE
+.PP
+They match source addresses and are stateless. The whitelist is accepted before
+all ingress drops. Targets are the same as filter-rule targets. This optional
+hook requires Linux 5.10 or newer and an interface selected by
+.BR INGRESS_DEV .
+.SH SPECIAL RULES
+.SS Reactive throttle
+.RS
+.nf
+throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> \
+         [ban <duration>] [on <iface>]
+.fi
+.RE
+.PP
+Sources exceeding the new-connection rate are temporarily blocked. Whitelisted
+sources are immune.
+.SS SYN proxy
+.RS
+.nf
+synproxy <in|fwd-in> tcp <port> [on <iface>]
+.fi
+.RE
+.PP
+Proxy the TCP handshake in the kernel before allow rules.
+.SS NAT
+.RS
+.nf
+masquerade on <wan> [in <lan>]
+snat out on <wan> to <ip> [in <lan>]
+dnat <proto> <port> to <ip>[:<port>] [from <target>] [on <iface>]
+.fi
+.RE
+.PP
+Routing also requires the appropriate kernel IP-forwarding setting.
+.SS Zones
+.RS
+.nf
+<allow|deny> <source-zone> -> <destination-zone> <proto> <port> \
+             [from <target>]
+.fi
+.RE
+.PP
+Zone names reference
+.B ZONE_
+objects and match input/output interfaces in the forward chain.
+.SH LIST FILES
+.I whitelist.conf
+contains one literal IP or CIDR per line.
+.I whitelist-hosts.conf
+contains one hostname per line. In both files, whitespace is trimmed and
+.B #
+starts a comment. A non-empty file is authoritative over its corresponding
+legacy config variable.
+.SH FILES
+.TP
+.I /etc/nftgeo/config
+Main shell-syntax configuration. Recommended mode: 0600.
+.TP
+.I /etc/nftgeo/config.example
+Packaged configuration template with comments and defaults.
+.TP
+.I /etc/nftgeo/groups.d/*.conf
+Sorted shell-syntax object fragments.
+.TP
+.I /etc/nftgeo/rules.conf
+Main policy file.
+.TP
+.I /etc/nftgeo/rules.d/*.conf
+Sorted policy fragments.
+.TP
+.I /etc/nftgeo/ingress.conf
+Main early-ingress policy file.
+.TP
+.I /etc/nftgeo/ingress.d/*.conf
+Sorted early-ingress fragments.
+.TP
+.IR /etc/nftgeo/whitelist.conf , " " /etc/nftgeo/whitelist-hosts.conf
+Authoritative whitelist files when non-empty.
+.SH EXAMPLES
+Protect SSH by country while preserving an administrator address:
+.PP
+.RS
+.nf
+# /etc/nftgeo/whitelist.conf
+203.0.113.10
+
+# /etc/nftgeo/rules.conf
+allow in tcp 22 pl
+deny  in tcp 22 any
+.fi
+.RE
+.PP
+Define reusable objects and a strict output policy:
+.PP
+.RS
+.nf
+# /etc/nftgeo/groups.d/site.conf
+GROUP_DNS="1.1.1.1 9.9.9.9"
+SERVICE_WEB="80 443"
+
+# /etc/nftgeo/config
+DEFAULT_OUTPUT="drop"
+
+# /etc/nftgeo/rules.conf
+allow out udp 53 dns
+allow out tcp web any
+.fi
+.RE
+.PP
+Validate and deploy with automatic rollback:
+.PP
+.RS
+.nf
+nftgeo validate
+nftgeo plan
+nftgeo apply --confirm 300
+# verify access from a second session
+nftgeo apply --commit
+.fi
+.RE
+.SH SEE ALSO
+.BR nftgeo (8),
+.BR nftgeo-update (8),
+.BR nftgeo-ui (8),
+.BR nft (8),
+.BR systemd.service (5)

@@ -60,8 +60,14 @@ contents:
     dst: /usr/share/doc/nftgeo/CONTRIBUTING_PL.md
   - src: examples/*
     dst: /usr/share/doc/nftgeo/examples/
-  - src: man/nftgeo.8
-    dst: /usr/share/man/man8/nftgeo.8
+  - src: dist/man/nftgeo.8.gz
+    dst: /usr/share/man/man8/nftgeo.8.gz
+  - src: dist/man/nftgeo-update.8.gz
+    dst: /usr/share/man/man8/nftgeo-update.8.gz
+  - src: dist/man/nftgeo-ui.8.gz
+    dst: /usr/share/man/man8/nftgeo-ui.8.gz
+  - src: dist/man/nftgeo.conf.5.gz
+    dst: /usr/share/man/man5/nftgeo.conf.5.gz
   - dst: /etc/nftgeo/rules.d
     type: dir
   - dst: /etc/nftgeo/groups.d

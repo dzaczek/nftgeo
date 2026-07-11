@@ -1,0 +1,170 @@
+.\" nftgeo-update(8) manual page
+.TH NFTGEO-UPDATE 8 "2026-07-11" "nftgeo 1.72.2" "System Administration"
+.SH NAME
+nftgeo-update \- render, validate, and load the nftgeo nftables ruleset
+.SH SYNOPSIS
+.B nftgeo-update
+.br
+.B nftgeo-update
+.RB [ --version | -V ]
+.br
+.B nftgeo-update --services
+.SH DESCRIPTION
+.B nftgeo-update
+is the nftgeo generation engine. It reads
+.BR nftgeo.conf (5),
+resolves required country zones and abuse feeds, renders an
+.BR nftables (8)
+ruleset, validates it with
+.BR "nft -c" ,
+and replaces the
+.B inet nftgeo
+table.
+.PP
+Normal operators should use
+.BR nftgeo (8)
+or start
+.BR nftgeo.service .
+The service is triggered periodically by
+.B nftgeo.timer
+to refresh cached source data. Running the engine directly requires root when
+it writes state or loads nftables.
+.SH OPTIONS
+.TP
+.BR --version , " " -V
+Print the engine version and exit.
+.TP
+.B --services
+Print built-in service names and their port definitions, one per line, then
+exit. A user
+.B SERVICE_
+definition with the same name takes precedence.
+.SH OPERATION
+Only geo countries referenced by policy are downloaded. AbuseIPDB and custom
+feeds are fetched only when a rule targets
+.BR abuse .
+Successful downloads are cached; a failed refresh reuses suitable cached data
+where the configured retention policy allows it.
+.PP
+The complete candidate ruleset is checked before the existing table is
+replaced. With
+.B ABUSE_FEEDS_BATCH=0
+the replacement, including abuse sets, is atomic. With batching enabled, the
+validated policy is loaded with empty abuse sets and the sets are populated in
+paced chunks.
+.PP
+A successful run writes the generated file and JSON status. It preserves live
+counters where rules can be matched between generations.
+.SH ENVIRONMENT
+The service normally obtains policy settings from
+.IR /etc/nftgeo/config .
+The following environment variables primarily support testing, alternate
+layouts, and the operator CLI.
+.TP
+.BR CONFIG_FILE , " " RULES_FILE , " " RULES_DIR
+Override the main configuration, rule file, and rule-fragment directory.
+.TP
+.BR INGRESS_FILE , " " INGRESS_DIR , " " GROUPS_DIR
+Override ingress and object-definition paths.
+.TP
+.BR WHITELIST_FILE , " " WHITELIST_HOSTS_FILE
+Override whitelist list paths.
+.TP
+.BR STATE_DIR , " " ZONE_DIR , " " NFT_FILE
+Override runtime state, country cache, and generated-ruleset paths.
+.TP
+.BR TABLE_FAMILY , " " TABLE_NAME
+Override the generated nftables table identity. Defaults: inet and nftgeo.
+.TP
+.B RENDER_ONLY
+When non-empty, render and validate without loading nftables or replacing the
+installed ruleset. Used by
+.BR "nftgeo validate" .
+.TP
+.B RENDER_OUT
+With render-only mode, write the candidate ruleset to this path. Used by
+.BR "nftgeo plan" .
+.TP
+.B NFTGEO_SKIP_NFT_CHECK
+Skip
+.B nft -c
+validation when non-empty. Intended only for offline test fixtures; do not use
+for deployment.
+.TP
+.BR LOCK_FILE , " " LOCK_WAIT
+Override the update lock path and maximum lock wait.
+.TP
+.BR IPDENY_V4_URL , " " IPDENY_V6_URL , " " ABUSEIPDB_URL
+Override upstream data endpoints. Primarily useful for controlled tests or a
+trusted internal mirror.
+.PP
+All policy variables described in
+.BR nftgeo.conf (5)
+may also be supplied in the environment. Values sourced from configuration
+take precedence according to normal shell assignment semantics.
+.SH EXIT STATUS
+.TP
+.B 0
+Rules were successfully rendered and validated, and were loaded unless
+render-only mode was selected.
+.TP
+.B non-zero
+Configuration, resolution, rendering, validation, locking, or nftables loading
+failed. The previously loaded table is retained when failure occurs before
+replacement.
+.SH FILES
+.TP
+.I /etc/nftgeo/config
+Main configuration.
+.TP
+.IR /etc/nftgeo/rules.conf , " " /etc/nftgeo/rules.d/*.conf
+Filter, NAT, zone, throttle, and synproxy policy.
+.TP
+.IR /etc/nftgeo/ingress.conf , " " /etc/nftgeo/ingress.d/*.conf
+Early ingress policy.
+.TP
+.I /etc/nftables.d/nftgeo.nft
+Last generated ruleset.
+.TP
+.I /var/lib/nftgeo/
+Cached source data, status, dynamic state, locks, and generations.
+.TP
+.I /var/lib/nftgeo/status.json
+Machine-readable outcome, source freshness, and warnings from the last run.
+.SH EXAMPLES
+Run an immediate update through systemd and inspect the result:
+.PP
+.RS
+.nf
+systemctl start nftgeo.service
+systemctl show nftgeo.service -p Result -p ExecMainStatus
+journalctl -u nftgeo.service -n 50 --no-pager
+.fi
+.RE
+.PP
+Render and validate through the supported operator interface:
+.PP
+.RS
+.nf
+nftgeo validate
+nftgeo plan
+.fi
+.RE
+.PP
+List built-in service aliases:
+.PP
+.RS
+.nf
+nftgeo-update --services
+.fi
+.RE
+.SH SEE ALSO
+.BR nftgeo (8),
+.BR nftgeo.conf (5),
+.BR nftgeo-ui (8),
+.BR nft (8),
+.BR nftables (8),
+.BR systemctl (1),
+.BR journalctl (1),
+.BR systemd.service (5),
+.BR systemd.timer (5)
