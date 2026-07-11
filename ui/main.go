@@ -711,6 +711,22 @@ func drops(since string) DropsResp {
 		records = collectJournalDrops(since)
 	}
 	resp := aggregateDrops(records)
+	// The live records can lose history: the NFLOG ring is in-memory only, so
+	// right after a UI restart the "24h" timeline covers just minutes. The
+	// stats store persists across restarts; take the fuller of the two per
+	// hourly bucket, and keep the total consistent with the chart.
+	for i, v := range statsTimeline(time.Now()) {
+		if v > resp.Timeline[i] {
+			resp.Timeline[i] = v
+		}
+	}
+	sum := 0
+	for _, v := range resp.Timeline {
+		sum += v
+	}
+	if sum > resp.Total {
+		resp.Total = sum
+	}
 	resp.Enabled = logDropsOn()
 	resp.Container = kernelLogHidden()
 	resp.Nflog = nflogActive()
@@ -1112,6 +1128,22 @@ func recordStats(entries []statsEntry) {
 		// head's backing array can be freed instead of leaking behind the slice).
 		statsData = append([]statsEntry(nil), statsData[n-maxStatsEntries:]...)
 	}
+}
+
+// statsTimeline buckets the persistent stats store's last 24h of drops into
+// hourly counts (oldest first), same layout as DropsResp.Timeline.
+func statsTimeline(now time.Time) []int {
+	tl := make([]int, 24)
+	statsMu.Lock()
+	defer statsMu.Unlock()
+	for _, e := range statsData {
+		// age in whole seconds first: int() truncates toward zero, so a
+		// slightly-future timestamp would otherwise land in the newest bucket.
+		if age := now.Unix() - e.Ts; age >= 0 && age < 24*3600 {
+			tl[23-int(age/3600)]++
+		}
+	}
+	return tl
 }
 
 // topIPs returns top source IPs by drop count within [from, to] unix timestamps.
