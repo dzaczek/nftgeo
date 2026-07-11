@@ -1,0 +1,29 @@
+--- ui/main_test.go
++++ ui/main_test.go
+@@ -3,6 +3,7 @@
+ import (
+	"crypto/tls"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
++	"reflect"
+	"strings"
+	"testing"
+	"time"
+@@ -1025,12 +1026,7 @@
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseList(tt.input)
+-			if len(got) != len(tt.want) {
+-				t.Errorf("parseList() got length %v, want %v", len(got), len(tt.want))
+-			}
+-			for i := range got {
+-				if got[i] != tt.want[i] {
+-					t.Errorf("parseList() got[%d] = %v, want[%d] = %v", i, got[i], i, tt.want[i])
+-				}
++			if !reflect.DeepEqual(got, tt.want) {
++				t.Errorf("parseList() got = %v, want %v", got, tt.want)
+			}
+		})
+	}

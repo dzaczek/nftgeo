@@ -1,0 +1,10 @@
+--- main_test.go
++++ main_test.go
+@@ -3,6 +3,7 @@
+ import (
+	"crypto/tls"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
++	"reflect"
