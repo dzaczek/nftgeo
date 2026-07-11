@@ -750,3 +750,24 @@ func TestBuildIngressBody(t *testing.T) {
 		t.Error("bad action should be rejected")
 	}
 }
+
+func TestParseDur(t *testing.T) {
+	def := 15 * time.Minute
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"10m", 10 * time.Minute},
+		{"1h", 1 * time.Hour},
+		{"", def},
+		{"invalid", def},
+		{"10", def}, // missing unit
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			if got := parseDur(c.in, def); got != c.want {
+				t.Errorf("parseDur(%q, %v) = %v, want %v", c.in, def, got, c.want)
+			}
+		})
+	}
+}
