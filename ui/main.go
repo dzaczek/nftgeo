@@ -4255,13 +4255,21 @@ func reconcileCommit() {
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "token" {
-		tokenCmd(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "reconcile-boot" {
-		reconcileBoot()
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "cli":
+			geo.load()
+			startIfSampler()
+			startNflog()
+			startCLI()
+			return
+		case "token":
+			tokenCmd(os.Args[2:])
+			return
+		case "reconcile-boot":
+			reconcileBoot()
+			return
+		}
 	}
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address (keep it local)")
 	noauth := flag.Bool("noauth", false, "run without auth (trusted localhost only)")
