@@ -8,6 +8,13 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.10] - 2026-07-12
+
+### Changed
+- Dashboard (narrow layout): the status / version / theme block now sits in a
+  real page footer at the very bottom of the page (moved out of the top
+  toolbar) instead of a strip directly under the nav.
+
 ## [1.72.9] - 2026-07-12
 
 ### Fixed

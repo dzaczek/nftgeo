@@ -213,7 +213,7 @@
   .drawer .x{cursor:pointer;color:var(--mut)}
   @media(max-width:760px){.app{grid-template-columns:1fr}.side{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px}
     .brand{border:0;padding:12px 14px}.nav{display:flex;flex-wrap:wrap;padding:0 8px}.nav a{padding:8px 10px}
-    .sidefoot{margin:0;border:0;border-top:1px solid var(--line);flex-basis:100%;order:9;display:flex;align-items:center;justify-content:center;gap:14px;padding:8px 14px}.sidefoot .themebtn{margin-top:0}.g2,.g3{grid-template-columns:1fr!important}}
+    .sidefoot{margin:0;border:0;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:center;gap:14px;padding:10px 14px}.sidefoot .themebtn{margin-top:0}.g2,.g3{grid-template-columns:1fr!important}}
   @keyframes movePulse { 0% { background: #3d8bfd40; } 100% { background: transparent; } }
   .highlight-move td { animation: movePulse 3s ease-out; }
   .mv{display:inline-flex;gap:0;margin:0 3px;vertical-align:middle;opacity:.45}
@@ -2009,6 +2009,14 @@ async function boot(){
     refresh();
   },5000);
 }
+// Narrow layout: move the status/version/theme footer to the very bottom of the
+// page (last row of the .app grid) instead of leaving it in the top toolbar.
+(function(){
+  const mq=matchMedia('(max-width:760px)');
+  const sf=document.querySelector('.sidefoot'), side=document.querySelector('.side'), app=document.querySelector('.app');
+  const place=()=>{(mq.matches?app:side).appendChild(sf);};
+  mq.addEventListener('change',place); place();
+})();
 boot();
 </script>
 </body>
