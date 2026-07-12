@@ -613,6 +613,10 @@ function areaChart(id,o){
   const grid=[0.25,0.5,0.75].map(f=>`<line x1="0" y1="${(h*f).toFixed(1)}" x2="${w}" y2="${(h*f).toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3,5" opacity=".6"/>`).join('');
   const layers=o.series.map((s,si)=>{
     if(!s.data.length)return '';
+    if(o.bars){
+      const bw=w/s.data.length;
+      return s.data.map((v,i)=>v>0?`<rect x="${(i*bw+1).toFixed(1)}" y="${y(v).toFixed(1)}" width="${Math.max(1,bw-2).toFixed(1)}" height="${(h-pad-y(v)).toFixed(1)}" fill="${s.color}" opacity=".8"/>`:'').join('');
+    }
     const pts=s.data.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
     const gid=id+'g'+si;
     return `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${s.color}" stop-opacity=".35"/><stop offset="100%" stop-color="${s.color}" stop-opacity=".02"/></linearGradient></defs>
@@ -634,7 +638,7 @@ document.addEventListener('mousemove',e=>{
   const r=el.getBoundingClientRect();
   const fx=Math.min(Math.max((e.clientX-r.left)/r.width,0),1);
   const n=o.series[0].data.length;
-  const i=Math.min(n-1,Math.round(fx*(n-1)));
+  const i=o.bars?Math.min(n-1,Math.floor(fx*n)):Math.min(n-1,Math.round(fx*(n-1)));
   const fmt=o.fmt||fmtNum;
   const when=o.ts&&o.ts[i]?new Date(o.ts[i]*1000).toLocaleTimeString():'';
   const tip=el.querySelector('.actip');
@@ -644,7 +648,9 @@ document.addEventListener('mousemove',e=>{
   tip.style.left=left+'px';tip.style.top='4px';
 });
 function sparkline(el,data){data=data||[];
-  el.innerHTML=areaChart('spark-drops',{series:[{data,color:'var(--drop)',label:'drops/h'}],tleft:'-24h',h:64});}
+  const now=Math.floor(Date.now()/1000);
+  const ts=data.map((_,i)=>now-(data.length-1-i)*3600);
+  el.innerHTML=areaChart('spark-drops',{series:[{data,color:'var(--drop)',label:'drops/h'}],bars:true,ts,tleft:'-24h',h:64});}
 // Error summary table in the right column (fills the space under the map):
 // rows = error types, one column per interface; since-boot total with the
 // 1h delta in red when a counter is actively growing.

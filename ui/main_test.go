@@ -356,6 +356,33 @@ func TestFilterNewDropsDedup(t *testing.T) {
 	}
 }
 
+func TestStatsTimeline(t *testing.T) {
+	now := time.Unix(100000, 0)
+	statsMu.Lock()
+	saved := statsData
+	statsData = []statsEntry{
+		{Ts: now.Unix() - 30},          // 0h ago -> newest bucket [23]
+		{Ts: now.Unix() - 3*3600 - 10}, // 3h ago -> bucket [20]
+		{Ts: now.Unix() - 3*3600 - 20}, // 3h ago -> bucket [20]
+		{Ts: now.Unix() - 25*3600},     // older than 24h -> dropped
+		{Ts: now.Unix() + 60},          // future clock skew -> dropped
+	}
+	statsMu.Unlock()
+	defer func() { statsMu.Lock(); statsData = saved; statsMu.Unlock() }()
+
+	tl := statsTimeline(now)
+	if len(tl) != 24 || tl[23] != 1 || tl[20] != 2 {
+		t.Fatalf("timeline = %v (want 24 buckets, [23]=1, [20]=2)", tl)
+	}
+	sum := 0
+	for _, v := range tl {
+		sum += v
+	}
+	if sum != 3 {
+		t.Fatalf("timeline sum = %d (want 3: out-of-window entries must be excluded)", sum)
+	}
+}
+
 func TestBuildSynproxyBody(t *testing.T) {
 	cases := []struct {
 		dir, port, iface, want string
@@ -722,6 +749,67 @@ func TestBuildIngressBody(t *testing.T) {
 	}
 	if _, err := buildIngressBody("bogus", "any", "", "", false); err == nil {
 		t.Error("bad action should be rejected")
+	}
+}
+
+func TestParseObjects(t *testing.T) {
+	input := `
+# A comment
+   # indented comment
+
+GROUP_MYGROUP="1.1.1.1 2.2.2.2"
+REGION_MYREGION="us gb"
+SERVICE_MYSERVICE="80/tcp 443/tcp"
+HOST_MYHOST="10.0.0.1"
+ZONE_MYZONE="eth0"
+LIST_MYLIST="192.168.1.0/24"
+FEED_MYFEED="https://example.com/feed.txt"
+ABUSE_FEEDS_UI="https://example.com/feed.txt"
+INVALID_LINE
+`
+	g, r, s, h, z, l, f := parseObjects(input)
+
+	if len(g) != 1 || g[0].Name != "MYGROUP" || len(g[0].Members) != 2 || g[0].Members[0] != "1.1.1.1" || g[0].Members[1] != "2.2.2.2" {
+		t.Errorf("failed to parse GROUP: %+v", g)
+	}
+	if len(r) != 1 || r[0].Name != "MYREGION" || len(r[0].Members) != 2 || r[0].Members[0] != "us" || r[0].Members[1] != "gb" {
+		t.Errorf("failed to parse REGION: %+v", r)
+	}
+	if len(s) != 1 || s[0].Name != "MYSERVICE" || len(s[0].Members) != 2 || s[0].Members[0] != "80/tcp" || s[0].Members[1] != "443/tcp" {
+		t.Errorf("failed to parse SERVICE: %+v", s)
+	}
+	if len(h) != 1 || h[0].Name != "MYHOST" || len(h[0].Members) != 1 || h[0].Members[0] != "10.0.0.1" {
+		t.Errorf("failed to parse HOST: %+v", h)
+	}
+	if len(z) != 1 || z[0].Name != "MYZONE" || len(z[0].Members) != 1 || z[0].Members[0] != "eth0" {
+		t.Errorf("failed to parse ZONE: %+v", z)
+	}
+	if len(l) != 1 || l[0].Name != "MYLIST" || len(l[0].Members) != 1 || l[0].Members[0] != "192.168.1.0/24" {
+		t.Errorf("failed to parse LIST: %+v", l)
+	}
+	if len(f) != 1 || f[0].Name != "MYFEED" || len(f[0].Members) != 1 || f[0].Members[0] != "https://example.com/feed.txt" {
+		t.Errorf("failed to parse FEED: %+v", f)
+	}
+}
+
+func TestParseDur(t *testing.T) {
+	def := 15 * time.Minute
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"10m", 10 * time.Minute},
+		{"1h", 1 * time.Hour},
+		{"", def},
+		{"invalid", def},
+		{"10", def}, // missing unit
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			if got := parseDur(c.in, def); got != c.want {
+				t.Errorf("parseDur(%q, %v) = %v, want %v", c.in, def, got, c.want)
+			}
+		})
 	}
 }
 

@@ -8,6 +8,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.5] - 2026-07-11
+
+### Fixed
+- Dashboard "Drops over time (24h)" now backfills its hourly timeline (and the
+  drops/24h counter) from the persistent stats store, so a dashboard restart
+  no longer resets the chart to just the newest minutes (the NFLOG ring is
+  in-memory only).
+
+### Changed
+- The 24h drop timeline renders as hourly bars with per-hour tooltips instead
+  of an area chart.
+
 ## [1.72.4] - 2026-07-11
 
 ### Security
