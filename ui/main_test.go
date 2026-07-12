@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -807,6 +808,43 @@ func TestParseDur(t *testing.T) {
 		t.Run(c.in, func(t *testing.T) {
 			if got := parseDur(c.in, def); got != c.want {
 				t.Errorf("parseDur(%q, %v) = %v, want %v", c.in, def, got, c.want)
+			}
+		})
+	}
+}
+
+func TestParseList(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "standard input",
+			input: "item1\nitem2\nitem3",
+			want:  []string{"item1", "item2", "item3"},
+		},
+		{
+			name:  "empty input",
+			input: "",
+			want:  nil,
+		},
+		{
+			name:  "comments only",
+			input: "# comment 1\n# comment 2",
+			want:  nil,
+		},
+		{
+			name:  "mixed input",
+			input: "item1\n# comment\n  \nitem2  \n\titem3\t\n",
+			want:  []string{"item1", "item2", "item3"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseList(tt.input)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseList() got = %v, want %v", got, tt.want)
 			}
 		})
 	}
