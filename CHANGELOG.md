@@ -8,6 +8,27 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.10] - 2026-07-12
+
+### Changed
+- Dashboard (narrow layout): the status / version / theme block now sits in a
+  real page footer at the very bottom of the page (moved out of the top
+  toolbar) instead of a strip directly under the nav.
+
+## [1.72.9] - 2026-07-12
+
+### Fixed
+- Login: a fresh token pasted in the browser that already holds the active
+  read-write session now takes over immediately, instead of stalling in the
+  30-second approval prompt that nothing could answer once that tab reloaded.
+- Login: the "another session is active" wait is shown as a clear countdown
+  with the token-entry form hidden, so it reads as a wait rather than a
+  failed login (the pending message was previously buried under the still
+  visible login form).
+- Dashboard (narrow layout): the status / version / theme block moves to its
+  own centered footer row under the top toolbar instead of crowding the
+  top-right corner.
+
 ## [1.72.8] - 2026-07-12
 
 ### Fixed

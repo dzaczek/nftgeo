@@ -1981,6 +1981,16 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		}
 		usedNonce[nonce] = time.Now()
 
+		// A fresh token presented by the browser that already holds the active rw
+		// session is the same operator re-authenticating — retire that session so
+		// the takeover is instant instead of routing through the 30s approval
+		// prompt (which nothing could answer once this tab reloads).
+		if c, err := r.Cookie("nftgeo_sess"); err == nil {
+			if s := sessions[c.Value]; s != nil && s.mode == "rw" {
+				delete(sessions, c.Value)
+			}
+		}
+
 		// Check for an existing rw session to trigger approval
 		hasActiveRW := false
 		for _, s := range sessions {
@@ -4245,17 +4255,21 @@ func reconcileCommit() {
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "token" {
-		tokenCmd(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "reconcile-boot" {
-		reconcileBoot()
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "cli" {
-		startCLI(os.Args[2:])
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "cli":
+			geo.load()
+			startIfSampler()
+			startNflog()
+			startCLI()
+			return
+		case "token":
+			tokenCmd(os.Args[2:])
+			return
+		case "reconcile-boot":
+			reconcileBoot()
+			return
+		}
 	}
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address (keep it local)")
 	noauth := flag.Bool("noauth", false, "run without auth (trusted localhost only)")

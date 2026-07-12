@@ -3,33 +3,136 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strings"
+	"time"
 
+	"github.com/NimbleMarkets/ntcharts/barchart"
+	"github.com/NimbleMarkets/ntcharts/canvas"
+	"github.com/NimbleMarkets/ntcharts/linechart"
+	"github.com/NimbleMarkets/ntcharts/sparkline"
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+	bubblesTable "github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
+// ---- styles ----
+
 var (
-	tabStyle = lipgloss.NewStyle().
+	cliHeaderStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("7")).
+			Background(lipgloss.Color("24")).
+			Padding(0, 1)
+
+	cliTabStyle = lipgloss.NewStyle().
 			Padding(0, 2).
 			Border(lipgloss.NormalBorder(), false, true, false, false).
 			BorderForeground(lipgloss.Color("238"))
 
-	activeTabStyle = tabStyle.Copy().
-			Foreground(lipgloss.Color("10")).
-			Bold(true)
+	cliActiveTabStyle = cliTabStyle.Copy().
+				Foreground(lipgloss.Color("10")).
+				Bold(true)
 
-	windowStyle = lipgloss.NewStyle().
+	cliWindowStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("238")).
 			Padding(1, 2)
 
-	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	cliKpiStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("238")).
+			Padding(0, 1).
+			MarginRight(1)
 
-	logHeaderStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240"))
-	dropVerdictStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	acceptVerdictStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	cliKpiLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	cliKpiValueStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
+
+	cliTableHeaderStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.Color("240")).
+				BorderBottom(true).
+				Bold(true)
+
+	cliTableSelectedStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("236")).
+				Foreground(lipgloss.Color("231"))
+
+	cliHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+
+	cliModalStyle = lipgloss.NewStyle().
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(lipgloss.Color("12")).
+			Padding(1, 2).
+			Background(lipgloss.Color("234"))
+
+	cliDropVerdictStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	cliAcceptVerdictStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	cliMutedStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
+
+// ---- keys ----
+
+type cliKeyMap struct {
+	TabNext key.Binding
+	TabPrev key.Binding
+	Up      key.Binding
+	Down    key.Binding
+	Jump1   key.Binding
+	Jump2   key.Binding
+	Jump3   key.Binding
+	Jump4   key.Binding
+	Jump5   key.Binding
+	Help    key.Binding
+	Quit    key.Binding
+	Enter   key.Binding
+	Back    key.Binding
+	Top     key.Binding
+	Bottom  key.Binding
+	Filter  key.Binding
+	CycleV  key.Binding
+	CycleD  key.Binding
+}
+
+func (k cliKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Help, k.Quit}
+}
+
+func (k cliKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down, k.TabNext, k.TabPrev},
+		{k.Jump1, k.Jump2, k.Jump3, k.Jump4, k.Jump5},
+		{k.Top, k.Bottom, k.Enter, k.Back},
+		{k.Filter, k.CycleV, k.CycleD, k.Help, k.Quit},
+	}
+}
+
+var cliKeys = cliKeyMap{
+	TabNext: key.NewBinding(key.WithKeys("tab", "l", "right"), key.WithHelp("tab/l", "next tab")),
+	TabPrev: key.NewBinding(key.WithKeys("shift+tab", "h", "left"), key.WithHelp("shift+tab/h", "prev tab")),
+	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Jump1:   key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "dashboard")),
+	Jump2:   key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "logs")),
+	Jump3:   key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "policy")),
+	Jump4:   key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "objects")),
+	Jump5:   key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "system")),
+	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "toggle help")),
+	Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	Enter:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select/lookup")),
+	Back:    key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
+	Top:     key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top")),
+	Bottom:  key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom")),
+	Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter text")),
+	CycleV:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "cycle verdict")),
+	CycleD:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "cycle direction")),
+}
+
+// ---- model ----
 
 type cliModel struct {
 	activeTab int
@@ -37,169 +140,727 @@ type cliModel struct {
 	width     int
 	height    int
 
-	logs []Drop
+	// data
+	status    map[string]interface{}
+	drops     DropsResp
+	policies  []PolicyRule
+	baseline  map[string]map[string]interface{}
+	objects   map[string]interface{}
+	ifStats   map[string]interface{}
+	lookupRes map[string]interface{}
 
-	policies     []PolicyRule
-	policyCursor int
+	// components
+	logTable    bubblesTable.Model
+	policyTable bubblesTable.Model
+	viewport    viewport.Model // for lookup details
+	help        help.Model
+	filterInput textinput.Model
 
-	ipInput      textinput.Model
-	blacklistMsg string
+	// filters
+	verdictFilter string // "", "drop", "accept"
+	dirFilter     string // "", "ingress", "egress", "forward"
+
+	// charts
+	dropsChart    linechart.Model
+	ingressChart  barchart.Model
+	topPortsChart barchart.Model
+	rxSparklines  map[string]sparkline.Model
+	txSparklines  map[string]sparkline.Model
+
+	showHelp   bool
+	showLookup bool
+	showFilter bool
+	loading    bool
+	lastFetch  time.Time
 }
 
 func initialModel() cliModel {
 	ti := textinput.New()
-	ti.Placeholder = "Enter IP to blacklist (e.g. 192.168.1.50)"
-	ti.Focus()
-	ti.CharLimit = 156
-	ti.Width = 40
+	ti.Placeholder = "Filter..."
+	ti.CharLimit = 64
+	ti.Width = 30
 
-	return cliModel{
-		activeTab: 0,
-		tabs:      []string{"Policy", "Logs"},
-		ipInput:   ti,
+	m := cliModel{
+		activeTab:    0,
+		tabs:         []string{"Dashboard", "Logs", "Policy", "Objects", "System"},
+		rxSparklines: make(map[string]sparkline.Model),
+		txSparklines: make(map[string]sparkline.Model),
+		help:         help.New(),
+		filterInput:  ti,
+		loading:      true,
 	}
+
+	// Initialize tables
+	columns := []bubblesTable.Column{
+		{Title: "Time", Width: 20},
+		{Title: "Src", Width: 16},
+		{Title: "CC", Width: 4},
+		{Title: "Dport", Width: 6},
+		{Title: "Proto", Width: 6},
+		{Title: "Reason", Width: 15},
+		{Title: "Verdict", Width: 8},
+	}
+	m.logTable = bubblesTable.New(
+		bubblesTable.WithColumns(columns),
+		bubblesTable.WithFocused(true),
+	)
+	s := bubblesTable.DefaultStyles()
+	s.Header = cliTableHeaderStyle
+	s.Selected = cliTableSelectedStyle
+	m.logTable.SetStyles(s)
+
+	pColumns := []bubblesTable.Column{
+		{Title: "#", Width: 4},
+		{Title: "Action", Width: 8},
+		{Title: "Dir", Width: 6},
+		{Title: "Proto", Width: 6},
+		{Title: "Port", Width: 10},
+		{Title: "Target", Width: 15},
+		{Title: "Iface", Width: 8},
+		{Title: "Hits", Width: 10},
+		{Title: "Activity", Width: 12},
+	}
+	m.policyTable = bubblesTable.New(
+		bubblesTable.WithColumns(pColumns),
+		bubblesTable.WithFocused(true),
+	)
+	m.policyTable.SetStyles(s)
+
+	// Charts
+	m.dropsChart = linechart.New(80, 10, 0, 23, 0, 100)
+	m.ingressChart = barchart.New(40, 10)
+	m.ingressChart.SetHorizontal(true)
+	m.ingressChart.SetShowAxis(true)
+	m.topPortsChart = barchart.New(40, 10)
+	m.topPortsChart.SetShowAxis(true)
+
+	m.viewport = viewport.New(60, 20)
+
+	return m
 }
 
-type logsMsg []Drop
-type policiesMsg []PolicyRule
+// ---- commands ----
 
-func fetchLogs() tea.Cmd {
+type tickMsg time.Time
+type fetchMsg struct {
+	status   map[string]interface{}
+	drops    DropsResp
+	policies []PolicyRule
+	baseline map[string]map[string]interface{}
+	objects  map[string]interface{}
+	ifStats  map[string]interface{}
+}
+type lookupMsg map[string]interface{}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+func fetchDataCmd() tea.Cmd {
 	return func() tea.Msg {
-		resp := drops("-24h")
-		return logsMsg(resp.Recent)
+		ch := chains()
+		st := map[string]interface{}{
+			"version": version(),
+			"loaded":  tableLoaded(),
+			"chains":  ch,
+			"health":  health(ch),
+			"time":    time.Now().UTC().Format(time.RFC3339),
+		}
+		dr := drops("-24h")
+		pl := policy()
+		annotate(pl, ruleCounters())
+
+		bc := baselineCounters()
+		pol := chainPolicies()
+		bs := map[string]map[string]interface{}{}
+		for hook, ctr := range bc {
+			m := map[string]interface{}{}
+			for k, v := range ctr {
+				m[k] = v
+			}
+			bs[hook] = m
+		}
+		for hook, p := range pol {
+			if bs[hook] == nil {
+				bs[hook] = map[string]interface{}{}
+			}
+			bs[hook]["policy"] = p
+		}
+
+		return fetchMsg{
+			status:   st,
+			drops:    dr,
+			policies: pl,
+			baseline: bs,
+			objects:  objects(),
+			ifStats:  ifStats(),
+		}
 	}
 }
 
-func fetchPolicies() tea.Cmd {
+func lookupCmd(ip string) tea.Cmd {
 	return func() tea.Msg {
-		return policiesMsg(policy())
+		return lookupMsg(doLookup(ip))
 	}
 }
+
+// ---- update ----
 
 func (m cliModel) Init() tea.Cmd {
-	return tea.Batch(fetchLogs(), fetchPolicies(), textinput.Blink)
+	return tea.Batch(fetchDataCmd(), tickCmd())
 }
 
 func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
-	case logsMsg:
-		m.logs = msg
-	case policiesMsg:
-		m.policies = msg
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		case "tab", "l", "right":
-			m.activeTab = (m.activeTab + 1) % len(m.tabs)
-		case "shift+tab", "h", "left":
-			m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
+	case tickMsg:
+		return m, tea.Batch(fetchDataCmd(), tickCmd())
 
-		case "j", "down":
-			if m.activeTab == 0 && m.policyCursor < len(m.policies)-1 {
-				m.policyCursor++
+	case fetchMsg:
+		m.status = msg.status
+		m.drops = msg.drops
+		m.policies = msg.policies
+		m.baseline = msg.baseline
+		m.objects = msg.objects
+		m.ifStats = msg.ifStats
+		m.loading = false
+		m.lastFetch = time.Now()
+		m.updateData()
+
+	case lookupMsg:
+		m.lookupRes = msg
+		m.showLookup = true
+		m.viewport.SetContent(m.renderLookupDetails())
+
+	case tea.KeyMsg:
+		if m.showLookup {
+			switch {
+			case key.Matches(msg, cliKeys.Back), key.Matches(msg, cliKeys.Quit):
+				m.showLookup = false
+				return m, nil
 			}
-		case "k", "up":
-			if m.activeTab == 0 && m.policyCursor > 0 {
-				m.policyCursor--
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+
+		if m.showFilter {
+			switch {
+			case key.Matches(msg, cliKeys.Enter), key.Matches(msg, cliKeys.Back):
+				m.showFilter = false
+				m.filterInput.Blur()
+				m.updateData()
+				return m, nil
+			}
+			m.filterInput, cmd = m.filterInput.Update(msg)
+			m.updateData()
+			return m, cmd
+		}
+
+		switch {
+		case key.Matches(msg, cliKeys.Quit):
+			return m, tea.Quit
+		case key.Matches(msg, cliKeys.TabNext):
+			m.activeTab = (m.activeTab + 1) % len(m.tabs)
+		case key.Matches(msg, cliKeys.TabPrev):
+			m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
+		case key.Matches(msg, cliKeys.Jump1):
+			m.activeTab = 0
+		case key.Matches(msg, cliKeys.Jump2):
+			m.activeTab = 1
+		case key.Matches(msg, cliKeys.Jump3):
+			m.activeTab = 2
+		case key.Matches(msg, cliKeys.Jump4):
+			m.activeTab = 3
+		case key.Matches(msg, cliKeys.Jump5):
+			m.activeTab = 4
+		case key.Matches(msg, cliKeys.Help):
+			m.showHelp = !m.showHelp
+		case key.Matches(msg, cliKeys.Enter):
+			if m.activeTab == 1 && len(m.logTable.Rows()) > 0 {
+				row := m.logTable.SelectedRow()
+				if len(row) > 1 {
+					return m, lookupCmd(row[1])
+				}
+			}
+		case key.Matches(msg, cliKeys.Top):
+			if m.activeTab == 1 {
+				m.logTable.GotoTop()
+			} else if m.activeTab == 2 {
+				m.policyTable.GotoTop()
+			}
+		case key.Matches(msg, cliKeys.Bottom):
+			if m.activeTab == 1 {
+				m.logTable.GotoBottom()
+			} else if m.activeTab == 2 {
+				m.policyTable.GotoBottom()
+			}
+		case key.Matches(msg, cliKeys.Filter):
+			if m.activeTab == 1 {
+				m.showFilter = true
+				m.filterInput.Focus()
+				return m, nil
+			}
+		case key.Matches(msg, cliKeys.CycleV):
+			if m.activeTab == 1 {
+				switch m.verdictFilter {
+				case "":
+					m.verdictFilter = "drop"
+				case "drop":
+					m.verdictFilter = "accept"
+				default:
+					m.verdictFilter = ""
+				}
+				m.updateData()
+			}
+		case key.Matches(msg, cliKeys.CycleD):
+			if m.activeTab == 1 {
+				switch m.dirFilter {
+				case "":
+					m.dirFilter = "ingress"
+				case "ingress":
+					m.dirFilter = "egress"
+				case "egress":
+					m.dirFilter = "forward"
+				default:
+					m.dirFilter = ""
+				}
+				m.updateData()
 			}
 		}
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.updateLayout()
 	}
 
-	return m, nil
+	if m.activeTab == 1 && !m.showFilter {
+		m.logTable, cmd = m.logTable.Update(msg)
+	} else if m.activeTab == 2 {
+		m.policyTable, cmd = m.policyTable.Update(msg)
+	}
+
+	return m, cmd
 }
+
+func (m *cliModel) updateData() {
+	// Update Logs Table
+	var rows []bubblesTable.Row
+	txt := strings.ToLower(m.filterInput.Value())
+	for _, d := range m.drops.Recent {
+		if m.verdictFilter != "" && d.Verdict != m.verdictFilter {
+			continue
+		}
+		if m.dirFilter != "" && d.Dir != m.dirFilter {
+			continue
+		}
+		if txt != "" && !strings.Contains(strings.ToLower(d.Src), txt) && !strings.Contains(strings.ToLower(d.Reason), txt) {
+			continue
+		}
+
+		v := d.Verdict
+		if d.Verdict == "drop" {
+			v = cliDropVerdictStyle.Render(v)
+		} else {
+			v = cliAcceptVerdictStyle.Render(v)
+		}
+
+		rows = append(rows, bubblesTable.Row{
+			d.Time, d.Src, d.CC, d.Dport, d.Proto, d.Reason, v,
+		})
+	}
+	m.logTable.SetRows(rows)
+
+	// Update Policy Table
+	var pRows []bubblesTable.Row
+	maxHits := 1.0
+	for _, p := range m.policies {
+		if float64(p.Hits) > maxHits {
+			maxHits = float64(p.Hits)
+		}
+	}
+
+	for _, p := range m.policies {
+		hits := fmt.Sprintf("%d", p.Hits)
+		if p.Hits > 1000 {
+			hits = fmt.Sprintf("%.1fk", float64(p.Hits)/1000)
+		}
+
+		bar := ""
+		if p.Matched && p.Hits > 0 {
+			w := int(float64(p.Hits) / maxHits * 10)
+			if w < 1 {
+				w = 1
+			}
+			bar = strings.Repeat("■", w)
+			if p.Action == "deny" || p.Action == "drop" {
+				bar = cliDropVerdictStyle.Render(bar)
+			} else {
+				bar = cliAcceptVerdictStyle.Render(bar)
+			}
+		}
+
+		row := bubblesTable.Row{
+			fmt.Sprintf("%d", p.Num), p.Action, p.Dir, p.Proto, p.Port, p.Target, p.Iface, hits, bar,
+		}
+		if !p.Matched {
+			for i, val := range row {
+				row[i] = cliMutedStyle.Render(val)
+			}
+		}
+		pRows = append(pRows, row)
+	}
+	m.policyTable.SetRows(pRows)
+
+	// Update Charts
+	if len(m.drops.Timeline) == 24 {
+		m.dropsChart.Clear()
+		maxDrops := 1.0
+		for _, v := range m.drops.Timeline {
+			if float64(v) > maxDrops {
+				maxDrops = float64(v)
+			}
+		}
+		// Redraw with new max
+		m.dropsChart = linechart.New(m.dropsChart.Canvas.Width(), m.dropsChart.Canvas.Height(), 0, 23, 0, maxDrops)
+		for i := 1; i < 24; i++ {
+			p1 := canvas.Float64Point{X: float64(i - 1), Y: float64(m.drops.Timeline[i-1])}
+			p2 := canvas.Float64Point{X: float64(i), Y: float64(m.drops.Timeline[i])}
+			m.dropsChart.DrawBrailleLine(p1, p2)
+		}
+	}
+
+	// Ingress CC
+	m.ingressChart.Clear()
+	var ccKeys []string
+	for k := range m.drops.IngressByCC {
+		ccKeys = append(ccKeys, k)
+	}
+	sort.Slice(ccKeys, func(i, j int) bool { return m.drops.IngressByCC[ccKeys[i]] > m.drops.IngressByCC[ccKeys[j]] })
+	for i := 0; i < 10 && i < len(ccKeys); i++ {
+		m.ingressChart.Push(barchart.BarData{
+			Label:  ccKeys[i],
+			Values: []barchart.BarValue{{Value: float64(m.drops.IngressByCC[ccKeys[i]]), Style: lipgloss.NewStyle().Foreground(lipgloss.Color("9"))}},
+		})
+	}
+	m.ingressChart.Draw()
+
+	// Top Ports
+	m.topPortsChart.Clear()
+	var portKeys []string
+	for k := range m.drops.TopPorts {
+		portKeys = append(portKeys, k)
+	}
+	sort.Slice(portKeys, func(i, j int) bool { return m.drops.TopPorts[portKeys[i]] > m.drops.TopPorts[portKeys[j]] })
+	for i := 0; i < 10 && i < len(portKeys); i++ {
+		m.topPortsChart.Push(barchart.BarData{
+			Label:  portKeys[i],
+			Values: []barchart.BarValue{{Value: float64(m.drops.TopPorts[portKeys[i]]), Style: lipgloss.NewStyle().Foreground(lipgloss.Color("12"))}},
+		})
+	}
+	m.topPortsChart.Draw()
+
+	// Sparklines
+	if ifData, ok := m.ifStats["ifaces"].([]map[string]interface{}); ok {
+		for _, iface := range ifData {
+			name := iface["name"].(string)
+			if _, ok := m.rxSparklines[name]; !ok {
+				m.rxSparklines[name] = sparkline.New(20, 1)
+				m.txSparklines[name] = sparkline.New(20, 1)
+			}
+			if rx, ok := iface["rx_bps"].([]float64); ok {
+				sl := m.rxSparklines[name]
+				sl.Clear()
+				sl.PushAll(rx)
+				sl.Draw()
+				m.rxSparklines[name] = sl
+			}
+			if tx, ok := iface["tx_bps"].([]float64); ok {
+				sl := m.txSparklines[name]
+				sl.Clear()
+				sl.PushAll(tx)
+				sl.Draw()
+				m.txSparklines[name] = sl
+			}
+		}
+	}
+}
+
+func (m *cliModel) updateLayout() {
+	m.help.Width = m.width
+	m.logTable.SetHeight(m.height - 12)
+	m.policyTable.SetHeight(m.height - 15)
+	m.viewport.Width = m.width - 10
+	m.viewport.Height = m.height - 10
+
+	m.dropsChart.Resize(m.width-10, 10)
+	m.ingressChart.Resize((m.width-15)/2, 10)
+	m.topPortsChart.Resize((m.width-15)/2, 10)
+}
+
+// ---- view ----
 
 func (m cliModel) View() string {
 	if m.width == 0 {
 		return "Initializing..."
 	}
 
+	header := cliHeaderStyle.Render(fmt.Sprintf("nftgeo-ui console • %s", version()))
+
 	var renderedTabs []string
 	for i, t := range m.tabs {
 		if i == m.activeTab {
-			renderedTabs = append(renderedTabs, activeTabStyle.Render(t))
+			renderedTabs = append(renderedTabs, cliActiveTabStyle.Render(t))
 		} else {
-			renderedTabs = append(renderedTabs, tabStyle.Render(t))
+			renderedTabs = append(renderedTabs, cliTabStyle.Render(t))
 		}
 	}
-	row := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
+	tabsRow := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
 
-	content := ""
-	switch m.activeTab {
-	case 0:
-		content = m.renderPolicy()
-	case 1:
-		content = m.renderLogs()
+	var content string
+	if m.loading {
+		content = "\n\n  Loading data from firewall..."
+	} else {
+		switch m.activeTab {
+		case 0:
+			content = m.renderDashboard()
+		case 1:
+			content = m.renderLogs()
+		case 2:
+			content = m.renderPolicy()
+		case 3:
+			content = m.renderObjects()
+		case 4:
+			content = m.renderSystem()
+		}
 	}
 
-	mainContent := windowStyle.Width(m.width - 4).Height(m.height - 5).Render(content)
+	mainContent := cliWindowStyle.Width(m.width - 4).Height(m.height - 6).Render(content)
 
-	help := helpStyle.Render("tab/h/l: switch tabs • q: quit")
+	footer := m.help.View(cliKeys)
+	if m.showHelp {
+		footer = m.help.FullHelpView(cliKeys.FullHelp())
+	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, row, mainContent, help)
+	view := lipgloss.JoinVertical(lipgloss.Left, header, tabsRow, mainContent, footer)
+
+	if m.showLookup {
+		modal := cliModalStyle.Render(m.viewport.View())
+		return m.placeCenter(modal, view)
+	}
+
+	return view
 }
 
-func (m cliModel) renderPolicy() string {
-	if len(m.policies) == 0 {
-		return "No policies available."
+func (m cliModel) renderKPI(label, value string) string {
+	return cliKpiStyle.Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			cliKpiLabelStyle.Render(label),
+			cliKpiValueStyle.Render(value),
+		),
+	)
+}
+
+func (m cliModel) renderDashboard() string {
+	ingressTotal := 0
+	for _, v := range m.drops.IngressByCC {
+		ingressTotal += v
+	}
+	egressTotal := 0
+	for _, v := range m.drops.EgressByCC {
+		egressTotal += v
 	}
 
-	res := logHeaderStyle.Render(fmt.Sprintf("  %-6s %-6s %-6s %-6s %-12s %s", "ACTION", "DIR", "PROTO", "PORT", "TARGET", "IFACE")) + "\n"
-
-	for i, p := range m.policies {
-		cursor := " "
-		style := lipgloss.NewStyle()
-		if i == m.policyCursor {
-			cursor = ">"
-			style = style.Foreground(lipgloss.Color("10")).Bold(true)
+	rxTotal, txTotal := 0.0, 0.0
+	if ifaces, ok := m.ifStats["ifaces"].([]map[string]interface{}); ok {
+		for _, iface := range ifaces {
+			if rx, ok := iface["rx_bps"].([]float64); ok && len(rx) > 0 {
+				rxTotal += rx[len(rx)-1]
+			}
+			if tx, ok := iface["tx_bps"].([]float64); ok && len(tx) > 0 {
+				txTotal += tx[len(tx)-1]
+			}
 		}
-
-		row := fmt.Sprintf("%s %-6s %-6s %-6s %-6s %-12s %s",
-			cursor,
-			p.Action,
-			p.Dir,
-			p.Proto,
-			p.Port,
-			p.Target,
-			p.Iface,
-		)
-		res += style.Render(row) + "\n"
 	}
 
-	return res
+	kpiRow := lipgloss.JoinHorizontal(lipgloss.Top,
+		m.renderKPI("Drops/24h", fmt.Sprintf("%d", m.drops.Total)),
+		m.renderKPI("Ingress", fmt.Sprintf("%d", ingressTotal)),
+		m.renderKPI("Egress", fmt.Sprintf("%d", egressTotal)),
+		m.renderKPI("Abuse IPs", fmt.Sprintf("%d", abuseLoadedCount())),
+		m.renderKPI("Conntrack", m.getConntrack()),
+		m.renderKPI("Net RX/TX", fmt.Sprintf("%s / %s", formatBpsVal(rxTotal), formatBpsVal(txTotal))),
+	)
+
+	chartTitle := lipgloss.NewStyle().Bold(true).MarginBottom(0).Render("Drops over 24h")
+	chart := m.dropsChart.View()
+
+	bottomCharts := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.JoinVertical(lipgloss.Left, lipgloss.NewStyle().Bold(true).Render("Top Countries"), m.ingressChart.View()),
+		lipgloss.JoinVertical(lipgloss.Left, lipgloss.NewStyle().Bold(true).Render("Top Ports"), m.topPortsChart.View()),
+	)
+
+	systemLine := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
+		fmt.Sprintf("Table: %s • Last Fetch: %s",
+			map[bool]string{true: "LOADED", false: "NOT LOADED"}[m.status["loaded"].(bool)],
+			m.lastFetch.Format("15:04:05")),
+	)
+
+	return lipgloss.JoinVertical(lipgloss.Left, kpiRow, "", chartTitle, chart, "", bottomCharts, "", systemLine)
+}
+
+func (m cliModel) getConntrack() string {
+	if ct, ok := m.ifStats["conntrack"].(map[string]uint64); ok {
+		return fmt.Sprintf("%d / %d", ct["count"], ct["max"])
+	}
+	return "n/a"
 }
 
 func (m cliModel) renderLogs() string {
-	if len(m.logs) == 0 {
-		return "No logs available."
+	filterInfo := "Filters: "
+	if m.verdictFilter != "" {
+		filterInfo += "Verdict=" + strings.ToUpper(m.verdictFilter) + " "
+	} else {
+		filterInfo += "Verdict=ALL "
+	}
+	if m.dirFilter != "" {
+		filterInfo += "Dir=" + strings.ToUpper(m.dirFilter) + " "
+	} else {
+		filterInfo += "Dir=ALL "
+	}
+	if m.filterInput.Value() != "" {
+		filterInfo += "Search='" + m.filterInput.Value() + "'"
 	}
 
-	header := fmt.Sprintf("%-25s %-20s %-10s %-8s %-20s %s", "TIME", "SRC", "DPORT", "PROTO", "REASON", "VERDICT")
-	res := logHeaderStyle.Render(header) + "\n"
-
-	for _, l := range m.logs {
-		vStyle := dropVerdictStyle
-		if l.Verdict == "accept" {
-			vStyle = acceptVerdictStyle
-		}
-
-		row := fmt.Sprintf("%-25s %-20s %-10s %-8s %-20s %s",
-			l.Time,
-			l.Src,
-			l.Dport,
-			l.Proto,
-			l.Reason,
-			vStyle.Render(l.Verdict),
+	fLine := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(filterInfo)
+	if m.showFilter {
+		fLine = lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Render("FIND: "),
+			m.filterInput.View(),
 		)
-		res += row + "\n"
 	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, fLine, "", m.logTable.View())
+}
+
+func (m cliModel) renderPolicy() string {
+	base := ""
+	if m.baseline != nil {
+		input := m.baseline["input"]
+		base = fmt.Sprintf("Default Policies: INPUT=%s  FORWARD=%s  OUTPUT=%s\n",
+			input["policy"], m.baseline["forward"]["policy"], m.baseline["output"]["policy"])
+		base += fmt.Sprintf("Established: %v  Whitelist: %v  Invalid: %v\n\n",
+			input["established"], input["whitelist"], input["invalid"])
+	}
+	return base + m.policyTable.View()
+}
+
+func (m cliModel) renderObjects() string {
+	var sb strings.Builder
+	renderSection := func(title string, items []map[string]string) {
+		sb.WriteString(lipgloss.NewStyle().Bold(true).Underline(true).Render(title) + "\n")
+		for _, it := range items {
+			sb.WriteString(fmt.Sprintf("  %-15s %s\n", it["name"], it["value"]))
+		}
+		sb.WriteString("\n")
+	}
+
+	if groups, ok := m.objects["groups"].([]map[string]string); ok {
+		renderSection("Groups", groups)
+	}
+	if regions, ok := m.objects["regions"].([]map[string]string); ok {
+		renderSection("Regions", regions)
+	}
+
+	return sb.String()
+}
+
+func (m cliModel) renderSystem() string {
+	var sb strings.Builder
+	if ifaces, ok := m.ifStats["ifaces"].([]map[string]interface{}); ok {
+		for _, iface := range ifaces {
+			name := iface["name"].(string)
+			up := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("DOWN")
+			if iface["up"].(bool) {
+				up = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("UP")
+			}
+
+			flags := ""
+			if iface["veth"].(bool) {
+				flags += " [veth]"
+			}
+			if iface["bridge"].(bool) {
+				flags += " [bridge]"
+			}
+
+			sb.WriteString(fmt.Sprintf("%-10s [%s] Speed: %d Mbps %s\n", name, up, iface["speed_mbps"], flags))
+			sb.WriteString("  RX: " + m.rxSparklines[name].View() + " " + formatBps(iface["rx_bps"].([]float64)))
+			if errs, ok := iface["errors"].(map[string]uint64); ok && errs["rx_errs"] > 0 {
+				sb.WriteString(cliDropVerdictStyle.Render(fmt.Sprintf(" (Errs: %d)", errs["rx_errs"])))
+			}
+			sb.WriteString("\n")
+
+			sb.WriteString("  TX: " + m.txSparklines[name].View() + " " + formatBps(iface["tx_bps"].([]float64)))
+			if errs, ok := iface["errors"].(map[string]uint64); ok && errs["tx_errs"] > 0 {
+				sb.WriteString(cliDropVerdictStyle.Render(fmt.Sprintf(" (Errs: %d)", errs["tx_errs"])))
+			}
+			sb.WriteString("\n\n")
+		}
+	}
+	return sb.String()
+}
+
+func formatBpsVal(val float64) string {
+	if val > 1000000 {
+		return fmt.Sprintf("%.1f Mbps", val/1000000)
+	}
+	if val > 1000 {
+		return fmt.Sprintf("%.1f Kbps", val/1000)
+	}
+	return fmt.Sprintf("%.0f bps", val)
+}
+
+func formatBps(data []float64) string {
+	if len(data) == 0 {
+		return "0 bps"
+	}
+	return formatBpsVal(data[len(data)-1])
+}
+
+func (m cliModel) renderLookupDetails() string {
+	if m.lookupRes == nil {
+		return "Loading..."
+	}
+	ip := m.lookupRes["ip"].(string)
+	res := fmt.Sprintf("Lookup for: %s\n\n", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).Render(ip))
+
+	if ptr, ok := m.lookupRes["ptr"].([]string); ok {
+		res += lipgloss.NewStyle().Bold(true).Render("Reverse DNS:") + "\n"
+		for _, n := range ptr {
+			res += "  " + n + "\n"
+		}
+		res += "\n"
+	}
+
+	if rdap, ok := m.lookupRes["rdap"].(map[string]interface{}); ok {
+		res += lipgloss.NewStyle().Bold(true).Render("RDAP Information:") + "\n"
+		res += fmt.Sprintf("  Org:     %v\n", rdap["org"])
+		res += fmt.Sprintf("  CIDR:    %v\n", rdap["cidr"])
+		res += fmt.Sprintf("  Country: %v\n", rdap["country"])
+		res += fmt.Sprintf("  Handle:  %v\n", rdap["handle"])
+	}
+
+	res += "\n\nPress ESC to close"
 	return res
 }
 
-func startCLI(args []string) {
+func (m cliModel) placeCenter(modal, bg string) string {
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal, lipgloss.WithWhitespaceChars(" "), lipgloss.WithWhitespaceForeground(lipgloss.Color("232")))
+}
+
+func startCLI() {
 	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error starting CLI: %v", err)
