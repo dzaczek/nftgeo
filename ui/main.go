@@ -1003,32 +1003,58 @@ func ruleCountersInto(m map[string]int64, out string) {
 // can explain why an "allow" rule's own hit count stays low.
 func baselineCounters() map[string]map[string]int64 {
 	out := map[string]map[string]int64{}
-	// Per-chain, not `list table` (which also dumps every set's elements — slow
-	// with a large abuse set, and this runs on every dashboard refresh).
-	for _, hook := range []string{"input", "output", "forward"} {
-		txt, err := run("nft", "list", "chain", fam, table, hook)
-		if err != nil {
+	// -t (terse) skips printing set elements, making a single table dump fast
+	// instead of doing N+1 separate execs for each hook.
+	txt, err := run("nft", "-t", "list", "table", fam, table)
+	if err != nil {
+		return out
+	}
+
+	var curChain string
+	for _, ln := range strings.Split(txt, "\n") {
+		t := strings.TrimSpace(ln)
+
+		if strings.HasPrefix(t, "chain ") {
+			parts := strings.Fields(t)
+			if len(parts) >= 2 {
+				curChain = parts[1]
+			}
 			continue
 		}
-		cur := map[string]int64{}
-		out[hook] = cur
-		for _, ln := range strings.Split(txt, "\n") {
-			t := strings.TrimSpace(ln)
-			m := reCounter.FindStringSubmatch(t)
-			if m == nil {
-				continue
-			}
-			n, _ := strconv.ParseInt(m[1], 10, 64)
-			switch {
-			case strings.Contains(t, "established,related") && strings.HasSuffix(t, "accept"):
-				cur["established"] += n
-			case strings.Contains(t, "@whitelist") && strings.HasSuffix(t, "accept"):
-				cur["whitelist"] += n
-			case strings.Contains(t, "ct state invalid") && strings.HasSuffix(t, "drop"):
-				cur["invalid"] += n
-			}
+
+		if curChain != "input" && curChain != "output" && curChain != "forward" {
+			continue
+		}
+
+		m := reCounter.FindStringSubmatch(t)
+		if m == nil {
+			continue
+		}
+
+		if out[curChain] == nil {
+			out[curChain] = map[string]int64{}
+		}
+		cur := out[curChain]
+
+		n, _ := strconv.ParseInt(m[1], 10, 64)
+		switch {
+		case strings.Contains(t, "established,related") && strings.HasSuffix(t, "accept"):
+			cur["established"] += n
+		case strings.Contains(t, "@whitelist") && strings.HasSuffix(t, "accept"):
+			cur["whitelist"] += n
+		case strings.Contains(t, "ct state invalid") && strings.HasSuffix(t, "drop"):
+			cur["invalid"] += n
 		}
 	}
+
+	// ensure expected hooks always have at least an empty map
+	// so the caller doesn't need to check for nil maps if they iterate specific hooks
+	for _, hook := range []string{"input", "output", "forward"} {
+		if out[hook] == nil {
+			out[hook] = map[string]int64{}
+		}
+	}
+
 	return out
 }
 
