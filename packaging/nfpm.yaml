@@ -11,7 +11,7 @@ description: |
   feeds, rate-limit brute force, and edit rules from a web UI - all as one tool.
 vendor: dzaczek
 homepage: https://github.com/dzaczek/nftgeo
-license: MIT
+license: AGPL-3.0
 section: net
 priority: optional
 depends:

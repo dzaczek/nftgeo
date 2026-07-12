@@ -973,4 +973,4 @@ not manage the sysctl.
 
 ## License
 
-[MIT](../LICENSE) — Copyright (c) 2026 dzaczek
+[AGPL-3.0](../LICENSE) — Copyright (c) 2026 dzaczek
