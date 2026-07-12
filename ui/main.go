@@ -4253,6 +4253,10 @@ func main() {
 		reconcileBoot()
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "cli" {
+		startCLI(os.Args[2:])
+		return
+	}
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address (keep it local)")
 	noauth := flag.Bool("noauth", false, "run without auth (trusted localhost only)")
 	flag.Parse()
