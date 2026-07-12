@@ -27,8 +27,8 @@ var (
 
 	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
-	logHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240"))
-	dropVerdictStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	logHeaderStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240"))
+	dropVerdictStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	acceptVerdictStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 )
 
@@ -40,10 +40,10 @@ type cliModel struct {
 
 	logs []Drop
 
-	policies []PolicyRule
+	policies     []PolicyRule
 	policyCursor int
 
-	ipInput     textinput.Model
+	ipInput      textinput.Model
 	blacklistMsg string
 }
 
