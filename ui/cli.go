@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -56,7 +55,7 @@ func initialModel() cliModel {
 
 	return cliModel{
 		activeTab: 0,
-		tabs:      []string{"Policy", "Logs", "Blacklist"},
+		tabs:      []string{"Policy", "Logs"},
 		ipInput:   ti,
 	}
 }
@@ -77,119 +76,32 @@ func fetchPolicies() tea.Cmd {
 	}
 }
 
-func swapPolicy(num1, num2 int) tea.Cmd {
-	return func() tea.Msg {
-		data, err := os.ReadFile(rulesFile)
-		if err != nil {
-			return nil
-		}
-
-		lines := []string{}
-		ruleLines := []int{} // indexes of rule lines in lines slice
-
-		currentLines := string(data)
-		lineNum := 0
-		for _, line := range strings.Split(currentLines, "\n") {
-			lines = append(lines, line)
-
-			// Simple parsing to match what policy() might do to assign Num
-			// Assuming policy() assigns Num starting from 1 sequentially to non-empty non-comment lines
-			trimmed := line
-			if idx := strings.Index(trimmed, "#"); idx >= 0 {
-				trimmed = trimmed[:idx]
-			}
-			trimmed = strings.TrimSpace(trimmed)
-			if trimmed != "" {
-				lineNum++
-				ruleLines = append(ruleLines, len(lines)-1)
-			}
-		}
-
-		if num1 > 0 && num1 <= len(ruleLines) && num2 > 0 && num2 <= len(ruleLines) {
-			idx1 := ruleLines[num1-1]
-			idx2 := ruleLines[num2-1]
-
-			lines[idx1], lines[idx2] = lines[idx2], lines[idx1]
-
-			newData := []byte(strings.Join(lines, "\n"))
-			os.WriteFile(rulesFile, newData, 0644)
-
-			run(nftgeoBin, "apply", "--commit")
-		}
-
-		return policiesMsg(policy())
-	}
-}
-
 func (m cliModel) Init() tea.Cmd {
 	return tea.Batch(fetchLogs(), fetchPolicies(), textinput.Blink)
 }
 
 func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	var cmds []tea.Cmd
-
 	switch msg := msg.(type) {
 	case logsMsg:
 		m.logs = msg
 	case policiesMsg:
 		m.policies = msg
 	case tea.KeyMsg:
-		if m.activeTab == 2 {
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
-			if msg.String() == "tab" || msg.String() == "shift+tab" {
-				if msg.String() == "tab" {
-					m.activeTab = (m.activeTab + 1) % len(m.tabs)
-				} else {
-					m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
-				}
-			} else if msg.String() == "enter" {
-				val := strings.TrimSpace(m.ipInput.Value())
-				if val != "" {
-					f, err := os.OpenFile(rulesFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-					if err == nil {
-						f.WriteString(fmt.Sprintf("\ndeny in any - %s\n", val))
-						f.Close()
-						run(nftgeoBin, "apply", "--commit")
-						m.blacklistMsg = "Blacklisted IP: " + val
-						m.ipInput.SetValue("")
-						cmds = append(cmds, fetchPolicies())
-					} else {
-						m.blacklistMsg = "Error: " + err.Error()
-					}
-				}
-			} else {
-				m.ipInput, cmd = m.ipInput.Update(msg)
-				cmds = append(cmds, cmd)
-			}
-		} else {
-			switch msg.String() {
-			case "ctrl+c", "q":
-				return m, tea.Quit
-			case "tab", "l", "right":
-				m.activeTab = (m.activeTab + 1) % len(m.tabs)
-			case "shift+tab", "h", "left":
-				m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "tab", "l", "right":
+			m.activeTab = (m.activeTab + 1) % len(m.tabs)
+		case "shift+tab", "h", "left":
+			m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
 
-			case "j", "down":
-				if m.activeTab == 0 && m.policyCursor < len(m.policies)-1 {
-					m.policyCursor++
-				}
-			case "k", "up":
-				if m.activeTab == 0 && m.policyCursor > 0 {
-					m.policyCursor--
-				}
-
-			case "J": // shift+j
-				if m.activeTab == 0 && m.policyCursor < len(m.policies)-1 {
-					return m, swapPolicy(m.policies[m.policyCursor].Num, m.policies[m.policyCursor+1].Num)
-				}
-			case "K": // shift+k
-				if m.activeTab == 0 && m.policyCursor > 0 {
-					return m, swapPolicy(m.policies[m.policyCursor].Num, m.policies[m.policyCursor-1].Num)
-				}
+		case "j", "down":
+			if m.activeTab == 0 && m.policyCursor < len(m.policies)-1 {
+				m.policyCursor++
+			}
+		case "k", "up":
+			if m.activeTab == 0 && m.policyCursor > 0 {
+				m.policyCursor--
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -197,7 +109,7 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	}
 
-	return m, tea.Batch(cmds...)
+	return m, nil
 }
 
 func (m cliModel) View() string {
@@ -221,8 +133,6 @@ func (m cliModel) View() string {
 		content = m.renderPolicy()
 	case 1:
 		content = m.renderLogs()
-	case 2:
-		content = "Quick Blacklist IP\n\n" + m.ipInput.View() + "\n\n" + logHeaderStyle.Render(m.blacklistMsg)
 	}
 
 	mainContent := windowStyle.Width(m.width - 4).Height(m.height - 5).Render(content)
