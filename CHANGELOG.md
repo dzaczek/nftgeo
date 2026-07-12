@@ -8,6 +8,18 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.7] - 2026-07-12
+
+### Performance
+- `baselineCounters()` now reads the nftables counters with a single terse
+  `nft -t list table` call instead of three per-chain `list chain` execs,
+  tracking chain blocks in the parse loop. `-t` skips set-element expansion,
+  so the dashboard refresh gets the speed of one shell-out (~3x faster in
+  benchmarks) without the large-set penalty (#89).
+
+### Internal
+- Added unit tests for `parseList` (extracted from #82).
+
 ## [1.72.6] - 2026-07-12
 
 ### Security
