@@ -213,7 +213,7 @@
   .drawer .x{cursor:pointer;color:var(--mut)}
   @media(max-width:760px){.app{grid-template-columns:1fr}.side{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px}
     .brand{border:0;padding:12px 14px}.nav{display:flex;flex-wrap:wrap;padding:0 8px}.nav a{padding:8px 10px}
-    .sidefoot{margin:0 0 0 auto;border:0;display:flex;align-items:center;gap:12px;padding:6px 14px}.sidefoot .themebtn{margin-top:0}.g2,.g3{grid-template-columns:1fr!important}}
+    .sidefoot{margin:0;border:0;border-top:1px solid var(--line);flex-basis:100%;order:9;display:flex;align-items:center;justify-content:center;gap:14px;padding:8px 14px}.sidefoot .themebtn{margin-top:0}.g2,.g3{grid-template-columns:1fr!important}}
   @keyframes movePulse { 0% { background: #3d8bfd40; } 100% { background: transparent; } }
   .highlight-move td { animation: movePulse 3s ease-out; }
   .mv{display:inline-flex;gap:0;margin:0 3px;vertical-align:middle;opacity:.45}
@@ -436,19 +436,21 @@
 <div id="lock" class="lockscreen" style="display:none">
   <div class="lockcard">
     <div class="locktitle">🔒 nftgeo-ui</div>
-    <p class="muted">This panel needs a token. On the host, run:</p>
-    <pre>sudo nftgeo-ui token</pre>
-    <p class="muted">and open the printed link. For long-term read-only access:</p>
-    <pre>sudo nftgeo-ui token --ro</pre>
-    <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px;">
-      <p class="muted" style="margin-bottom:0">Or paste your token here:</p>
-      <div style="display:flex;gap:10px;">
-        <input type="text" id="manual-token" placeholder="Paste token..." style="flex:1" onkeydown="if(event.key==='Enter') submitManualToken()">
-        <button class="btn" onclick="submitManualToken()">Log In</button>
+    <div id="lockentry">
+      <p class="muted">This panel needs a token. On the host, run:</p>
+      <pre>sudo nftgeo-ui token</pre>
+      <p class="muted">and open the printed link. For long-term read-only access:</p>
+      <pre>sudo nftgeo-ui token --ro</pre>
+      <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px;">
+        <p class="muted" style="margin-bottom:0">Or paste your token here:</p>
+        <div style="display:flex;gap:10px;">
+          <input type="text" id="manual-token" placeholder="Paste token..." style="flex:1" onkeydown="if(event.key==='Enter') submitManualToken()">
+          <button class="btn" onclick="submitManualToken()">Log In</button>
+        </div>
       </div>
-      <div id="lockspin" style="display:none; text-align:center; margin-top:10px;">
-        <div class="spinner"></div>
-      </div>
+    </div>
+    <div id="lockspin" style="display:none; text-align:center; margin-top:10px;">
+      <div class="spinner"></div>
     </div>
     <p id="lockmsg" style="color:var(--drop)"></p>
   </div>
@@ -468,8 +470,10 @@ const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const j=async u=>{const r=await fetch(u);if(r.status===401||r.status===403){showLock('Session expired — generate a new token on the host.');throw new Error('unauth');}return r.json();};
 let map=null, DROPS={recent:[]}, RULES=[], MODE='rw', REFRESHER=null;
-function showLock(m){$('#lock').style.display='flex';const el=$('#lockmsg');el.textContent=m||'';el.style.color='var(--drop)';if(REFRESHER){clearInterval(REFRESHER);REFRESHER=null;}}
-function hideLock(){$('#lock').style.display='none';}
+let PENDTIMER=null;
+function clearPend(){if(PENDTIMER){clearInterval(PENDTIMER);PENDTIMER=null;}}
+function showLock(m){$('#lock').style.display='flex';clearPend();$('#lockentry').style.display='';$('#lockspin').style.display='none';const el=$('#lockmsg');el.textContent=m||'';el.style.color='var(--drop)';if(REFRESHER){clearInterval(REFRESHER);REFRESHER=null;}}
+function hideLock(){$('#lock').style.display='none';clearPend();}
 
 function nav(v){
   $$('#nav a').forEach(a=>a.classList.toggle('active',a.dataset.v===v));
@@ -1895,7 +1899,19 @@ document.addEventListener('click',e=>{const t=e.target.closest('.ipl');if(t&&t.d
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeDrawer();}});
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
 
-function showPendingLock(msg){const m=$('#lockmsg');m.textContent=msg;m.style.color='var(--fg)';$('#lock').style.display='flex';$('#lockspin').style.display='block';}
+function showPendingLock(msg){
+  const m=$('#lockmsg');m.style.color='var(--fg)';
+  $('#lockentry').style.display='none';   // hide the "paste a token" form so it reads as a wait, not a failure
+  $('#lockspin').style.display='block';
+  $('#lock').style.display='flex';
+  clearPend();
+  let left=30;
+  const render=()=>{m.textContent=left>0
+    ? '⏳ Another session is already active. This one takes over automatically in '+left+'s — please wait, do not refresh (refreshing invalidates the token).'
+    : '⏳ Taking over the session…';};
+  render();
+  PENDTIMER=setInterval(()=>{left=Math.max(0,left-1);render();},1000);
+}
 
 async function pollSession(pollId) {
   showPendingLock('Session pending: another session is already active. This one will start automatically in about 30 seconds unless that session rejects it. Please wait — do not refresh (refreshing invalidates the token and you would need a new one).');

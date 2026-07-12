@@ -1981,6 +1981,16 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		}
 		usedNonce[nonce] = time.Now()
 
+		// A fresh token presented by the browser that already holds the active rw
+		// session is the same operator re-authenticating — retire that session so
+		// the takeover is instant instead of routing through the 30s approval
+		// prompt (which nothing could answer once this tab reloads).
+		if c, err := r.Cookie("nftgeo_sess"); err == nil {
+			if s := sessions[c.Value]; s != nil && s.mode == "rw" {
+				delete(sessions, c.Value)
+			}
+		}
+
 		// Check for an existing rw session to trigger approval
 		hasActiveRW := false
 		for _, s := range sessions {
