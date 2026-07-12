@@ -812,7 +812,6 @@ func TestParseDur(t *testing.T) {
 		})
 	}
 }
-
 func TestParseList(t *testing.T) {
 	tests := []struct {
 		name  string

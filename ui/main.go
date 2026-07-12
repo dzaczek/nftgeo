@@ -1807,6 +1807,24 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	json.NewEncoder(w).Encode(v)
 }
 
+func writeJSONCached(w http.ResponseWriter, r *http.Request, v interface{}) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		writeJSON(w, v)
+		return
+	}
+	h := sha256.Sum256(b)
+	etag := `"` + hex.EncodeToString(h[:]) + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "no-cache")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(b)
+}
+
 // ---- auth: root-minted HMAC token -> HttpOnly session cookie ----------------
 
 var (
@@ -2676,7 +2694,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if fd == nil {
 			fd = []objEntry{}
 		}
-		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls, "feeds": fd})
+		writeJSONCached(w, r, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls, "feeds": fd})
 	case http.MethodPut:
 		var req struct {
 			Groups   []objEntry `json:"groups"`
@@ -2741,7 +2759,7 @@ func handleWhitelistDraft(w http.ResponseWriter, r *http.Request) {
 		if b, err := os.ReadFile(wlHostsDraftFile); err == nil {
 			wlh, wlhHasDraft = parseList(string(b)), true
 		}
-		writeJSON(w, map[string]interface{}{
+		writeJSONCached(w, r, map[string]interface{}{
 			"whitelist": wl, "whitelistHosts": wlh,
 			"hasDraft": wlHasDraft || wlhHasDraft,
 		})
@@ -3100,7 +3118,7 @@ func handleRulesDraft(w http.ResponseWriter, r *http.Request) {
 		_, hasDraft := os.Stat(rf.draft)
 		files = append(files, map[string]interface{}{"name": rf.rel, "hasDraft": hasDraft == nil})
 	}
-	writeJSON(w, map[string]interface{}{"files": files, "rules": all})
+	writeJSONCached(w, r, map[string]interface{}{"files": files, "rules": all})
 }
 
 func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
@@ -3496,7 +3514,7 @@ func findTemplate(id string) *ruleTemplate {
 func handleTemplates(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, append(builtinTemplates(), loadSavedTemplates()...))
+		writeJSONCached(w, r, append(builtinTemplates(), loadSavedTemplates()...))
 	case http.MethodPost:
 		var req struct{ Name, Description string }
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
@@ -4334,7 +4352,7 @@ func main() {
 	api("/api/rules", func(w http.ResponseWriter, r *http.Request) {
 		p := policy()
 		annotate(p, ruleCounters())
-		writeJSON(w, p)
+		writeJSONCached(w, r, p)
 	})
 	api("/api/baseline", func(w http.ResponseWriter, r *http.Request) {
 		// Merge per-chain baseline counters with each chain's default policy, so
@@ -4430,7 +4448,7 @@ func main() {
 		writeJSON(w, ipHistogram(from, buckets, limit))
 	})
 	api("/api/objects", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, objects())
+		writeJSONCached(w, r, objects())
 	})
 	api("/api/interfaces", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"interfaces": hostInterfaces()})
