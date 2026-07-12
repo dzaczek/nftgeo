@@ -78,24 +78,24 @@ var (
 // ---- keys ----
 
 type cliKeyMap struct {
-	TabNext   key.Binding
-	TabPrev   key.Binding
-	Up        key.Binding
-	Down      key.Binding
-	Jump1     key.Binding
-	Jump2     key.Binding
-	Jump3     key.Binding
-	Jump4     key.Binding
-	Jump5     key.Binding
-	Help      key.Binding
-	Quit      key.Binding
-	Enter     key.Binding
-	Back      key.Binding
-	Top       key.Binding
-	Bottom    key.Binding
-	Filter    key.Binding
-	CycleV    key.Binding
-	CycleD    key.Binding
+	TabNext key.Binding
+	TabPrev key.Binding
+	Up      key.Binding
+	Down    key.Binding
+	Jump1   key.Binding
+	Jump2   key.Binding
+	Jump3   key.Binding
+	Jump4   key.Binding
+	Jump5   key.Binding
+	Help    key.Binding
+	Quit    key.Binding
+	Enter   key.Binding
+	Back    key.Binding
+	Top     key.Binding
+	Bottom  key.Binding
+	Filter  key.Binding
+	CycleV  key.Binding
+	CycleD  key.Binding
 }
 
 func (k cliKeyMap) ShortHelp() []key.Binding {
@@ -161,17 +161,17 @@ type cliModel struct {
 	dirFilter     string // "", "ingress", "egress", "forward"
 
 	// charts
-	dropsChart     linechart.Model
-	ingressChart   barchart.Model
-	topPortsChart  barchart.Model
-	rxSparklines   map[string]sparkline.Model
-	txSparklines   map[string]sparkline.Model
+	dropsChart    linechart.Model
+	ingressChart  barchart.Model
+	topPortsChart barchart.Model
+	rxSparklines  map[string]sparkline.Model
+	txSparklines  map[string]sparkline.Model
 
-	showHelp    bool
-	showLookup  bool
-	showFilter  bool
-	loading     bool
-	lastFetch   time.Time
+	showHelp   bool
+	showLookup bool
+	showFilter bool
+	loading    bool
+	lastFetch  time.Time
 }
 
 func initialModel() cliModel {
@@ -405,19 +405,26 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, cliKeys.CycleV):
 			if m.activeTab == 1 {
 				switch m.verdictFilter {
-				case "": m.verdictFilter = "drop"
-				case "drop": m.verdictFilter = "accept"
-				default: m.verdictFilter = ""
+				case "":
+					m.verdictFilter = "drop"
+				case "drop":
+					m.verdictFilter = "accept"
+				default:
+					m.verdictFilter = ""
 				}
 				m.updateData()
 			}
 		case key.Matches(msg, cliKeys.CycleD):
 			if m.activeTab == 1 {
 				switch m.dirFilter {
-				case "": m.dirFilter = "ingress"
-				case "ingress": m.dirFilter = "egress"
-				case "egress": m.dirFilter = "forward"
-				default: m.dirFilter = ""
+				case "":
+					m.dirFilter = "ingress"
+				case "ingress":
+					m.dirFilter = "egress"
+				case "egress":
+					m.dirFilter = "forward"
+				default:
+					m.dirFilter = ""
 				}
 				m.updateData()
 			}
@@ -443,8 +450,12 @@ func (m *cliModel) updateData() {
 	var rows []bubblesTable.Row
 	txt := strings.ToLower(m.filterInput.Value())
 	for _, d := range m.drops.Recent {
-		if m.verdictFilter != "" && d.Verdict != m.verdictFilter { continue }
-		if m.dirFilter != "" && d.Dir != m.dirFilter { continue }
+		if m.verdictFilter != "" && d.Verdict != m.verdictFilter {
+			continue
+		}
+		if m.dirFilter != "" && d.Dir != m.dirFilter {
+			continue
+		}
 		if txt != "" && !strings.Contains(strings.ToLower(d.Src), txt) && !strings.Contains(strings.ToLower(d.Reason), txt) {
 			continue
 		}
@@ -466,7 +477,9 @@ func (m *cliModel) updateData() {
 	var pRows []bubblesTable.Row
 	maxHits := 1.0
 	for _, p := range m.policies {
-		if float64(p.Hits) > maxHits { maxHits = float64(p.Hits) }
+		if float64(p.Hits) > maxHits {
+			maxHits = float64(p.Hits)
+		}
 	}
 
 	for _, p := range m.policies {
@@ -478,7 +491,9 @@ func (m *cliModel) updateData() {
 		bar := ""
 		if p.Matched && p.Hits > 0 {
 			w := int(float64(p.Hits) / maxHits * 10)
-			if w < 1 { w = 1 }
+			if w < 1 {
+				w = 1
+			}
 			bar = strings.Repeat("■", w)
 			if p.Action == "deny" || p.Action == "drop" {
 				bar = cliDropVerdictStyle.Render(bar)
@@ -773,8 +788,12 @@ func (m cliModel) renderSystem() string {
 			}
 
 			flags := ""
-			if iface["veth"].(bool) { flags += " [veth]" }
-			if iface["bridge"].(bool) { flags += " [bridge]" }
+			if iface["veth"].(bool) {
+				flags += " [veth]"
+			}
+			if iface["bridge"].(bool) {
+				flags += " [bridge]"
+			}
 
 			sb.WriteString(fmt.Sprintf("%-10s [%s] Speed: %d Mbps %s\n", name, up, iface["speed_mbps"], flags))
 			sb.WriteString("  RX: " + m.rxSparklines[name].View() + " " + formatBps(iface["rx_bps"].([]float64)))
