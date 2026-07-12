@@ -173,7 +173,33 @@ func sanitizeFeedURL(u string) string {
 // feedLabels maps each UI-configured feed's cache-file name to the label the
 // operator gave it, so abuseSources shows "GREENSNOW" instead of guessing a
 // name from the URL.
+var (
+	feedLabelsCache   map[string]string
+	feedLabelsModTime time.Time
+	feedLabelsMu      sync.RWMutex
+)
+
 func feedLabels() map[string]string {
+	fi, err := os.Stat(objLiveFile)
+	if err != nil {
+		return map[string]string{}
+	}
+	mod := fi.ModTime()
+
+	feedLabelsMu.RLock()
+	if feedLabelsCache != nil && feedLabelsModTime.Equal(mod) {
+		m := feedLabelsCache
+		feedLabelsMu.RUnlock()
+		return m
+	}
+	feedLabelsMu.RUnlock()
+
+	feedLabelsMu.Lock()
+	defer feedLabelsMu.Unlock()
+	if feedLabelsCache != nil && feedLabelsModTime.Equal(mod) {
+		return feedLabelsCache
+	}
+
 	m := map[string]string{}
 	b, err := os.ReadFile(objLiveFile)
 	if err != nil {
@@ -185,6 +211,8 @@ func feedLabels() map[string]string {
 			m[sanitizeFeedURL(u)] = fd.Name
 		}
 	}
+	feedLabelsCache = m
+	feedLabelsModTime = mod
 	return m
 }
 
