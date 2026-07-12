@@ -173,7 +173,33 @@ func sanitizeFeedURL(u string) string {
 // feedLabels maps each UI-configured feed's cache-file name to the label the
 // operator gave it, so abuseSources shows "GREENSNOW" instead of guessing a
 // name from the URL.
+var (
+	feedLabelsCache   map[string]string
+	feedLabelsModTime time.Time
+	feedLabelsMu      sync.RWMutex
+)
+
 func feedLabels() map[string]string {
+	fi, err := os.Stat(objLiveFile)
+	if err != nil {
+		return map[string]string{}
+	}
+	mod := fi.ModTime()
+
+	feedLabelsMu.RLock()
+	if feedLabelsCache != nil && feedLabelsModTime.Equal(mod) {
+		m := feedLabelsCache
+		feedLabelsMu.RUnlock()
+		return m
+	}
+	feedLabelsMu.RUnlock()
+
+	feedLabelsMu.Lock()
+	defer feedLabelsMu.Unlock()
+	if feedLabelsCache != nil && feedLabelsModTime.Equal(mod) {
+		return feedLabelsCache
+	}
+
 	m := map[string]string{}
 	b, err := os.ReadFile(objLiveFile)
 	if err != nil {
@@ -185,6 +211,8 @@ func feedLabels() map[string]string {
 			m[sanitizeFeedURL(u)] = fd.Name
 		}
 	}
+	feedLabelsCache = m
+	feedLabelsModTime = mod
 	return m
 }
 
@@ -975,32 +1003,58 @@ func ruleCountersInto(m map[string]int64, out string) {
 // can explain why an "allow" rule's own hit count stays low.
 func baselineCounters() map[string]map[string]int64 {
 	out := map[string]map[string]int64{}
-	// Per-chain, not `list table` (which also dumps every set's elements — slow
-	// with a large abuse set, and this runs on every dashboard refresh).
-	for _, hook := range []string{"input", "output", "forward"} {
-		txt, err := run("nft", "list", "chain", fam, table, hook)
-		if err != nil {
+	// -t (terse) skips printing set elements, making a single table dump fast
+	// instead of doing N+1 separate execs for each hook.
+	txt, err := run("nft", "-t", "list", "table", fam, table)
+	if err != nil {
+		return out
+	}
+
+	var curChain string
+	for _, ln := range strings.Split(txt, "\n") {
+		t := strings.TrimSpace(ln)
+
+		if strings.HasPrefix(t, "chain ") {
+			parts := strings.Fields(t)
+			if len(parts) >= 2 {
+				curChain = parts[1]
+			}
 			continue
 		}
-		cur := map[string]int64{}
-		out[hook] = cur
-		for _, ln := range strings.Split(txt, "\n") {
-			t := strings.TrimSpace(ln)
-			m := reCounter.FindStringSubmatch(t)
-			if m == nil {
-				continue
-			}
-			n, _ := strconv.ParseInt(m[1], 10, 64)
-			switch {
-			case strings.Contains(t, "established,related") && strings.HasSuffix(t, "accept"):
-				cur["established"] += n
-			case strings.Contains(t, "@whitelist") && strings.HasSuffix(t, "accept"):
-				cur["whitelist"] += n
-			case strings.Contains(t, "ct state invalid") && strings.HasSuffix(t, "drop"):
-				cur["invalid"] += n
-			}
+
+		if curChain != "input" && curChain != "output" && curChain != "forward" {
+			continue
+		}
+
+		m := reCounter.FindStringSubmatch(t)
+		if m == nil {
+			continue
+		}
+
+		if out[curChain] == nil {
+			out[curChain] = map[string]int64{}
+		}
+		cur := out[curChain]
+
+		n, _ := strconv.ParseInt(m[1], 10, 64)
+		switch {
+		case strings.Contains(t, "established,related") && strings.HasSuffix(t, "accept"):
+			cur["established"] += n
+		case strings.Contains(t, "@whitelist") && strings.HasSuffix(t, "accept"):
+			cur["whitelist"] += n
+		case strings.Contains(t, "ct state invalid") && strings.HasSuffix(t, "drop"):
+			cur["invalid"] += n
 		}
 	}
+
+	// ensure expected hooks always have at least an empty map
+	// so the caller doesn't need to check for nil maps if they iterate specific hooks
+	for _, hook := range []string{"input", "output", "forward"} {
+		if out[hook] == nil {
+			out[hook] = map[string]int64{}
+		}
+	}
+
 	return out
 }
 
@@ -1777,6 +1831,24 @@ func doLookup(ip string) map[string]interface{} {
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+func writeJSONCached(w http.ResponseWriter, r *http.Request, v interface{}) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		writeJSON(w, v)
+		return
+	}
+	h := sha256.Sum256(b)
+	etag := `"` + hex.EncodeToString(h[:]) + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "no-cache")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(b)
 }
 
 // ---- auth: root-minted HMAC token -> HttpOnly session cookie ----------------
@@ -2648,7 +2720,7 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 		if fd == nil {
 			fd = []objEntry{}
 		}
-		writeJSON(w, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls, "feeds": fd})
+		writeJSONCached(w, r, map[string]interface{}{"file": objLiveFile, "hasDraft": exists == nil, "groups": g, "regions": rg, "services": sv, "hosts": hs, "zones": zn, "lists": ls, "feeds": fd})
 	case http.MethodPut:
 		var req struct {
 			Groups   []objEntry `json:"groups"`
@@ -2713,7 +2785,7 @@ func handleWhitelistDraft(w http.ResponseWriter, r *http.Request) {
 		if b, err := os.ReadFile(wlHostsDraftFile); err == nil {
 			wlh, wlhHasDraft = parseList(string(b)), true
 		}
-		writeJSON(w, map[string]interface{}{
+		writeJSONCached(w, r, map[string]interface{}{
 			"whitelist": wl, "whitelistHosts": wlh,
 			"hasDraft": wlHasDraft || wlhHasDraft,
 		})
@@ -3072,7 +3144,7 @@ func handleRulesDraft(w http.ResponseWriter, r *http.Request) {
 		_, hasDraft := os.Stat(rf.draft)
 		files = append(files, map[string]interface{}{"name": rf.rel, "hasDraft": hasDraft == nil})
 	}
-	writeJSON(w, map[string]interface{}{"files": files, "rules": all})
+	writeJSONCached(w, r, map[string]interface{}{"files": files, "rules": all})
 }
 
 func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
@@ -3468,7 +3540,7 @@ func findTemplate(id string) *ruleTemplate {
 func handleTemplates(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, append(builtinTemplates(), loadSavedTemplates()...))
+		writeJSONCached(w, r, append(builtinTemplates(), loadSavedTemplates()...))
 	case http.MethodPost:
 		var req struct{ Name, Description string }
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
@@ -4306,7 +4378,7 @@ func main() {
 	api("/api/rules", func(w http.ResponseWriter, r *http.Request) {
 		p := policy()
 		annotate(p, ruleCounters())
-		writeJSON(w, p)
+		writeJSONCached(w, r, p)
 	})
 	api("/api/baseline", func(w http.ResponseWriter, r *http.Request) {
 		// Merge per-chain baseline counters with each chain's default policy, so
@@ -4402,7 +4474,7 @@ func main() {
 		writeJSON(w, ipHistogram(from, buckets, limit))
 	})
 	api("/api/objects", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, objects())
+		writeJSONCached(w, r, objects())
 	})
 	api("/api/interfaces", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"interfaces": hostInterfaces()})

@@ -8,6 +8,30 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.72.6] - 2026-07-12
+
+### Security
+- Hardened the `resolve_*` config helpers in `nftgeo-update` to look up the
+  indirect variable into a local before printing it, dropping the
+  `eval`-of-`printf` pattern flagged as a command-injection risk (#88).
+- Sanitised the AbuseIPDB key path in the dashboard's `setAbuseIPDBKey` so a
+  crafted value can no longer inject extra config directives (#84).
+
+### Added
+- Dashboard JSON endpoints (`/api/rules`, `/api/objects`, the object,
+  whitelist, and rules drafts, and templates) now emit a strong `ETag` and
+  honour `If-None-Match`, returning `304 Not Modified` to skip re-sending
+  unchanged payloads (#87).
+
+### Performance
+- Cache interface metadata read from sysfs so a dashboard refresh no longer
+  re-reads the same files on every request (#85).
+- Cache `feedLabels()` keyed by the objects file's mtime, avoiding a re-read
+  and re-parse on every abuse-source lookup (#86).
+
+### Internal
+- Added unit tests for `parseDur` (#80) and `parseObjects` (#83).
+
 ## [1.72.5] - 2026-07-11
 
 ### Fixed

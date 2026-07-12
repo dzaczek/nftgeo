@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -149,5 +150,30 @@ func TestHistogramBucketCount(t *testing.T) {
 		if got := histogramBucketCount(tt.requested); got != tt.want {
 			t.Errorf("histogramBucketCount(%d) = %d, want %d", tt.requested, got, tt.want)
 		}
+	}
+}
+
+func BenchmarkIfStats(b *testing.B) {
+	// First initialize ifRing with some dummy data
+	ifMu.Lock()
+
+	c1 := make(map[string]ifCounters)
+	c2 := make(map[string]ifCounters)
+
+	for i := 0; i < 20; i++ {
+		name := fmt.Sprintf("eth%d", i)
+		c1[name] = ifCounters{}
+		c2[name] = ifCounters{}
+	}
+
+	ifRing = []ifSample{
+		{Ts: 1000, C: c1},
+		{Ts: 1010, C: c2},
+	}
+	ifMu.Unlock()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ifStats()
 	}
 }
