@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"sort"
 	"strings"
-	"net"
 	"time"
 
 	"github.com/NimbleMarkets/ntcharts/barchart"
@@ -79,28 +79,28 @@ var (
 // ---- keys ----
 
 type cliKeyMap struct {
-	TabNext key.Binding
-	TabPrev key.Binding
-	Up      key.Binding
-	Down    key.Binding
-	Jump1   key.Binding
-	Jump2   key.Binding
-	Jump3   key.Binding
-	Jump4   key.Binding
-	Jump5   key.Binding
-	Help    key.Binding
-	Quit    key.Binding
-	Enter   key.Binding
-	Back    key.Binding
-	Top     key.Binding
-	Bottom  key.Binding
-	Filter  key.Binding
-	CycleV  key.Binding
-	CycleD  key.Binding
-	Toggle  key.Binding
-	Move    key.Binding
-	Add     key.Binding
-	Commit  key.Binding
+	TabNext  key.Binding
+	TabPrev  key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Jump1    key.Binding
+	Jump2    key.Binding
+	Jump3    key.Binding
+	Jump4    key.Binding
+	Jump5    key.Binding
+	Help     key.Binding
+	Quit     key.Binding
+	Enter    key.Binding
+	Back     key.Binding
+	Top      key.Binding
+	Bottom   key.Binding
+	Filter   key.Binding
+	CycleV   key.Binding
+	CycleD   key.Binding
+	Toggle   key.Binding
+	Move     key.Binding
+	Add      key.Binding
+	Commit   key.Binding
 	Rollback key.Binding
 	ConfirmY key.Binding
 	ConfirmN key.Binding
@@ -120,28 +120,28 @@ func (k cliKeyMap) FullHelp() [][]key.Binding {
 }
 
 var cliKeys = cliKeyMap{
-	TabNext: key.NewBinding(key.WithKeys("tab", "l", "right"), key.WithHelp("tab/l", "next tab")),
-	TabPrev: key.NewBinding(key.WithKeys("shift+tab", "h", "left"), key.WithHelp("shift+tab/h", "prev tab")),
-	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-	Jump1:   key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "dashboard")),
-	Jump2:   key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "logs")),
-	Jump3:   key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "policy")),
-	Jump4:   key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "objects")),
-	Jump5:   key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "system")),
-	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "toggle help")),
-	Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-	Enter:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select/lookup")),
-	Back:    key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
-	Top:     key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top")),
-	Bottom:  key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom")),
-	Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter text")),
-	CycleV:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "cycle verdict")),
-	CycleD:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "cycle direction")),
-	Toggle:  key.NewBinding(key.WithKeys(" ", "t"), key.WithHelp("space/t", "toggle rule")),
-	Move:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move rule")),
-	Add:     key.NewBinding(key.WithKeys("a", "i"), key.WithHelp("a/i", "add deny rule")),
-	Commit:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "commit changes")),
+	TabNext:  key.NewBinding(key.WithKeys("tab", "l", "right"), key.WithHelp("tab/l", "next tab")),
+	TabPrev:  key.NewBinding(key.WithKeys("shift+tab", "h", "left"), key.WithHelp("shift+tab/h", "prev tab")),
+	Up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Jump1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "dashboard")),
+	Jump2:    key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "logs")),
+	Jump3:    key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "policy")),
+	Jump4:    key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "objects")),
+	Jump5:    key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "system")),
+	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "toggle help")),
+	Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select/lookup")),
+	Back:     key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
+	Top:      key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top")),
+	Bottom:   key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom")),
+	Filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter text")),
+	CycleV:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "cycle verdict")),
+	CycleD:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "cycle direction")),
+	Toggle:   key.NewBinding(key.WithKeys(" ", "t"), key.WithHelp("space/t", "toggle rule")),
+	Move:     key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move rule")),
+	Add:      key.NewBinding(key.WithKeys("a", "i"), key.WithHelp("a/i", "add deny rule")),
+	Commit:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "commit changes")),
 	Rollback: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rollback/discard")),
 	ConfirmY: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm yes")),
 	ConfirmN: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "confirm no")),
@@ -166,13 +166,13 @@ type cliModel struct {
 
 	// data
 	draftRules []*draftRule
-	status    map[string]interface{}
-	drops     DropsResp
-	policies  []PolicyRule
-	baseline  map[string]map[string]interface{}
-	objects   map[string]interface{}
-	ifStats   map[string]interface{}
-	lookupRes map[string]interface{}
+	status     map[string]interface{}
+	drops      DropsResp
+	policies   []PolicyRule
+	baseline   map[string]map[string]interface{}
+	objects    map[string]interface{}
+	ifStats    map[string]interface{}
+	lookupRes  map[string]interface{}
 
 	// components
 	logTable    bubblesTable.Model
@@ -665,7 +665,7 @@ func (m *cliModel) updateData() {
 	}
 	m.logTable.SetRows(rows)
 
-		// Update Policy Table
+	// Update Policy Table
 	var pRows []bubblesTable.Row
 	maxHits := 1.0
 	for _, r := range m.draftRules {
