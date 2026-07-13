@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"sort"
 	"strings"
@@ -78,24 +79,31 @@ var (
 // ---- keys ----
 
 type cliKeyMap struct {
-	TabNext key.Binding
-	TabPrev key.Binding
-	Up      key.Binding
-	Down    key.Binding
-	Jump1   key.Binding
-	Jump2   key.Binding
-	Jump3   key.Binding
-	Jump4   key.Binding
-	Jump5   key.Binding
-	Help    key.Binding
-	Quit    key.Binding
-	Enter   key.Binding
-	Back    key.Binding
-	Top     key.Binding
-	Bottom  key.Binding
-	Filter  key.Binding
-	CycleV  key.Binding
-	CycleD  key.Binding
+	TabNext  key.Binding
+	TabPrev  key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Jump1    key.Binding
+	Jump2    key.Binding
+	Jump3    key.Binding
+	Jump4    key.Binding
+	Jump5    key.Binding
+	Help     key.Binding
+	Quit     key.Binding
+	Enter    key.Binding
+	Back     key.Binding
+	Top      key.Binding
+	Bottom   key.Binding
+	Filter   key.Binding
+	CycleV   key.Binding
+	CycleD   key.Binding
+	Toggle   key.Binding
+	Move     key.Binding
+	Add      key.Binding
+	Commit   key.Binding
+	Rollback key.Binding
+	ConfirmY key.Binding
+	ConfirmN key.Binding
 }
 
 func (k cliKeyMap) ShortHelp() []key.Binding {
@@ -112,27 +120,43 @@ func (k cliKeyMap) FullHelp() [][]key.Binding {
 }
 
 var cliKeys = cliKeyMap{
-	TabNext: key.NewBinding(key.WithKeys("tab", "l", "right"), key.WithHelp("tab/l", "next tab")),
-	TabPrev: key.NewBinding(key.WithKeys("shift+tab", "h", "left"), key.WithHelp("shift+tab/h", "prev tab")),
-	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-	Jump1:   key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "dashboard")),
-	Jump2:   key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "logs")),
-	Jump3:   key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "policy")),
-	Jump4:   key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "objects")),
-	Jump5:   key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "system")),
-	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "toggle help")),
-	Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-	Enter:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select/lookup")),
-	Back:    key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
-	Top:     key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top")),
-	Bottom:  key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom")),
-	Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter text")),
-	CycleV:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "cycle verdict")),
-	CycleD:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "cycle direction")),
+	TabNext:  key.NewBinding(key.WithKeys("tab", "l", "right"), key.WithHelp("tab/l", "next tab")),
+	TabPrev:  key.NewBinding(key.WithKeys("shift+tab", "h", "left"), key.WithHelp("shift+tab/h", "prev tab")),
+	Up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Jump1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "dashboard")),
+	Jump2:    key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "logs")),
+	Jump3:    key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "policy")),
+	Jump4:    key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "objects")),
+	Jump5:    key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "system")),
+	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "toggle help")),
+	Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select/lookup")),
+	Back:     key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
+	Top:      key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top")),
+	Bottom:   key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom")),
+	Filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter text")),
+	CycleV:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "cycle verdict")),
+	CycleD:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "cycle direction")),
+	Toggle:   key.NewBinding(key.WithKeys(" ", "t"), key.WithHelp("space/t", "toggle rule")),
+	Move:     key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move rule")),
+	Add:      key.NewBinding(key.WithKeys("a", "i"), key.WithHelp("a/i", "add deny rule")),
+	Commit:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "commit changes")),
+	Rollback: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rollback/discard")),
+	ConfirmY: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm yes")),
+	ConfirmN: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "confirm no")),
 }
 
 // ---- model ----
+
+type policyEditState int
+
+const (
+	policyStateNormal policyEditState = iota
+	policyStateMoving
+	policyStatePrompt
+	policyStateConfirming
+)
 
 type cliModel struct {
 	activeTab int
@@ -141,13 +165,14 @@ type cliModel struct {
 	height    int
 
 	// data
-	status    map[string]interface{}
-	drops     DropsResp
-	policies  []PolicyRule
-	baseline  map[string]map[string]interface{}
-	objects   map[string]interface{}
-	ifStats   map[string]interface{}
-	lookupRes map[string]interface{}
+	draftRules []*draftRule
+	status     map[string]interface{}
+	drops      DropsResp
+	policies   []PolicyRule
+	baseline   map[string]map[string]interface{}
+	objects    map[string]interface{}
+	ifStats    map[string]interface{}
+	lookupRes  map[string]interface{}
 
 	// components
 	logTable    bubblesTable.Model
@@ -172,6 +197,11 @@ type cliModel struct {
 	showFilter bool
 	loading    bool
 	lastFetch  time.Time
+
+	// policy edit state
+	editState        policyEditState
+	moveSourceID     int
+	confirmRemaining int
 }
 
 func initialModel() cliModel {
@@ -244,6 +274,7 @@ func initialModel() cliModel {
 type tickMsg time.Time
 type fetchMsg struct {
 	status   map[string]interface{}
+	drafts   []*draftRule
 	drops    DropsResp
 	policies []PolicyRule
 	baseline map[string]map[string]interface{}
@@ -291,6 +322,7 @@ func fetchDataCmd() tea.Cmd {
 
 		return fetchMsg{
 			status:   st,
+			drafts:   cliDraftRules(),
 			drops:    dr,
 			policies: pl,
 			baseline: bs,
@@ -316,10 +348,19 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tickMsg:
+		if m.editState == policyStateConfirming {
+			m.confirmRemaining--
+			if m.confirmRemaining <= 0 {
+				run(nftgeoBin, "rollback")
+				restoreBackups()
+				m.editState = policyStateNormal
+			}
+		}
 		return m, tea.Batch(fetchDataCmd(), tickCmd())
 
 	case fetchMsg:
 		m.status = msg.status
+		m.draftRules = msg.drafts
 		m.drops = msg.drops
 		m.policies = msg.policies
 		m.baseline = msg.baseline
@@ -400,8 +441,159 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activeTab == 1 {
 				m.showFilter = true
 				m.filterInput.Focus()
+				m.filterInput.SetValue("")
 				return m, nil
 			}
+
+		case key.Matches(msg, cliKeys.Toggle):
+			if m.activeTab == 2 && len(m.draftRules) > 0 && m.editState == policyStateNormal {
+				idx := m.policyTable.Cursor()
+				if idx >= 0 && idx < len(m.draftRules) {
+					rule := m.draftRules[idx]
+					if rule.Kind != "section" {
+						cliToggleRule(rule.File, rule.ID)
+						return m, fetchDataCmd()
+					}
+				}
+			}
+
+		case key.Matches(msg, cliKeys.Move):
+			if m.activeTab == 2 && len(m.draftRules) > 0 && m.editState == policyStateNormal {
+				idx := m.policyTable.Cursor()
+				if idx >= 0 && idx < len(m.draftRules) {
+					m.editState = policyStateMoving
+					m.moveSourceID = m.draftRules[idx].ID
+					m.updateData() // highlight row immediately
+				}
+			}
+
+		case key.Matches(msg, cliKeys.Add):
+			if m.activeTab == 2 && m.editState == policyStateNormal {
+				m.editState = policyStatePrompt
+				m.filterInput.Focus()
+				m.filterInput.SetValue("")
+			}
+
+		case key.Matches(msg, cliKeys.Commit):
+			if m.activeTab == 2 && m.editState == policyStateNormal {
+				if _, err := os.Stat(sentinel); err == nil {
+					if m.status == nil {
+						m.status = make(map[string]interface{})
+					}
+					m.status["commitError"] = "a confirm is already pending on the host"
+					return m, nil
+				}
+				msgStr, ok := validateDraft()
+				if !ok {
+					if m.status == nil {
+						m.status = make(map[string]interface{})
+					}
+					m.status["commitError"] = msgStr
+					return m, nil
+				}
+				act := activeStages()
+				if len(act) > 0 {
+					for _, s := range act {
+						backupLive(s)
+					}
+					for _, s := range act {
+						copyFile(s.draft, s.live)
+					}
+					run(nftgeoBin, "apply", "--confirm", "90")
+					m.editState = policyStateConfirming
+					m.confirmRemaining = 90
+					return m, tickCmd()
+				}
+			}
+
+		case key.Matches(msg, cliKeys.ConfirmY):
+			if m.activeTab == 2 && m.editState == policyStateConfirming {
+				run(nftgeoBin, "apply", "--commit")
+				for _, s := range stages() {
+					os.Remove(s.draft)
+					os.Remove(s.backup)
+				}
+				m.editState = policyStateNormal
+				return m, fetchDataCmd()
+			}
+
+		case key.Matches(msg, cliKeys.ConfirmN), key.Matches(msg, cliKeys.Rollback):
+			if m.activeTab == 2 && m.editState == policyStateConfirming {
+				run(nftgeoBin, "rollback")
+				restoreBackups()
+				m.editState = policyStateNormal
+				return m, fetchDataCmd()
+			} else if m.activeTab == 2 && m.editState == policyStateNormal {
+				for _, s := range stages() {
+					os.Remove(s.draft)
+				}
+				return m, fetchDataCmd()
+			}
+
+		case key.Matches(msg, cliKeys.Enter):
+			if m.activeTab == 1 && len(m.logTable.Rows()) > 0 {
+				row := m.logTable.SelectedRow()
+				if len(row) > 1 {
+					return m, lookupCmd(row[1])
+				}
+			} else if m.activeTab == 2 && m.editState == policyStateMoving {
+				idx := m.policyTable.Cursor()
+				if idx >= 0 && idx < len(m.draftRules) {
+					destRule := m.draftRules[idx]
+					var sourceFile string
+					var sourceRuleID int
+					for _, r := range m.draftRules {
+						if r.ID == m.moveSourceID {
+							sourceFile = r.File
+							sourceRuleID = r.ID
+							break
+						}
+					}
+					localIdx := 0
+					for i, r := range m.draftRules {
+						if r.File == destRule.File {
+							if i == idx {
+								break
+							}
+							localIdx++
+						}
+					}
+					cliMoveRule(sourceFile, destRule.File, sourceRuleID, localIdx)
+				}
+				m.editState = policyStateNormal
+				return m, fetchDataCmd()
+			} else if m.activeTab == 2 && m.editState == policyStatePrompt {
+				m.editState = policyStateNormal
+				val := strings.TrimSpace(m.filterInput.Value())
+				if val != "" {
+					if net.ParseIP(val) == nil {
+						_, _, err := net.ParseCIDR(val)
+						if err != nil {
+							if m.status == nil {
+								m.status = make(map[string]interface{})
+							}
+							m.status["commitError"] = "Invalid IP or CIDR: " + val
+							return m, nil
+						}
+					}
+					file := "rules.conf"
+					if len(m.draftRules) > 0 {
+						idx := m.policyTable.Cursor()
+						if idx >= 0 && idx < len(m.draftRules) {
+							file = m.draftRules[idx].File
+						}
+					}
+					cliAddDenyRule(file, val)
+					return m, fetchDataCmd()
+				}
+			}
+
+		case key.Matches(msg, cliKeys.Back):
+			if m.activeTab == 2 && (m.editState == policyStateMoving || m.editState == policyStatePrompt) {
+				m.editState = policyStateNormal
+				m.updateData()
+			}
+
 		case key.Matches(msg, cliKeys.CycleV):
 			if m.activeTab == 1 {
 				switch m.verdictFilter {
@@ -476,26 +668,33 @@ func (m *cliModel) updateData() {
 	// Update Policy Table
 	var pRows []bubblesTable.Row
 	maxHits := 1.0
-	for _, p := range m.policies {
-		if float64(p.Hits) > maxHits {
-			maxHits = float64(p.Hits)
+	for _, r := range m.draftRules {
+		if float64(r.Hits) > maxHits {
+			maxHits = float64(r.Hits)
 		}
 	}
 
-	for _, p := range m.policies {
-		hits := fmt.Sprintf("%d", p.Hits)
-		if p.Hits > 1000 {
-			hits = fmt.Sprintf("%.1fk", float64(p.Hits)/1000)
+	for _, r := range m.draftRules {
+		if r.Kind == "section" {
+			pRows = append(pRows, bubblesTable.Row{
+				"", "", "", "", "", "## " + r.Title, "", "", "",
+			})
+			continue
+		}
+
+		hits := fmt.Sprintf("%d", r.Hits)
+		if r.Hits > 1000 {
+			hits = fmt.Sprintf("%.1fk", float64(r.Hits)/1000)
 		}
 
 		bar := ""
-		if p.Matched && p.Hits > 0 {
-			w := int(float64(p.Hits) / maxHits * 10)
+		if r.Matched && r.Hits > 0 && !r.Disabled {
+			w := int(float64(r.Hits) / maxHits * 10)
 			if w < 1 {
 				w = 1
 			}
 			bar = strings.Repeat("■", w)
-			if p.Action == "deny" || p.Action == "drop" {
+			if r.Action == "deny" || r.Action == "drop" {
 				bar = cliDropVerdictStyle.Render(bar)
 			} else {
 				bar = cliAcceptVerdictStyle.Render(bar)
@@ -503,11 +702,19 @@ func (m *cliModel) updateData() {
 		}
 
 		row := bubblesTable.Row{
-			fmt.Sprintf("%d", p.Num), p.Action, p.Dir, p.Proto, p.Port, p.Target, p.Iface, hits, bar,
+			fmt.Sprintf("%d", r.ID), r.Action, r.Dir, r.Proto, r.Port, r.Target, r.Iface, hits, bar,
 		}
-		if !p.Matched {
-			for i, val := range row {
-				row[i] = cliMutedStyle.Render(val)
+		if r.Disabled || !r.Matched {
+			for j, val := range row {
+				row[j] = cliMutedStyle.Render(val)
+			}
+		}
+		if r.Disabled {
+			row[1] = cliMutedStyle.Render(r.Action + " (disabled)")
+		}
+		if m.editState == policyStateMoving && m.moveSourceID == r.ID {
+			for j, val := range row {
+				row[j] = lipgloss.NewStyle().Background(lipgloss.Color("238")).Render(val)
 			}
 		}
 		pRows = append(pRows, row)
@@ -747,6 +954,19 @@ func (m cliModel) renderLogs() string {
 
 func (m cliModel) renderPolicy() string {
 	base := ""
+	if m.editState == policyStateConfirming {
+		base = cliDropVerdictStyle.Render(fmt.Sprintf("PENDING CONFIRM: Press 'y' to KEEP, 'n' to ROLLBACK (%ds remaining)\n\n", m.confirmRemaining))
+	} else if err, ok := m.status["commitError"].(string); ok && err != "" {
+		base = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("VALIDATION ERROR: %s\n\n", err))
+	} else if m.editState == policyStateMoving {
+		base = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("MOVE MODE: Use j/k to move rule, Enter to place, Esc to cancel.\n\n")
+	} else if m.editState == policyStatePrompt {
+		base = lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true).Render("ADD DENY RULE (Enter target/IP): "),
+			m.filterInput.View(),
+		) + "\n\n"
+	}
+
 	if m.baseline != nil {
 		input := m.baseline["input"]
 		base = fmt.Sprintf("Default Policies: INPUT=%s  FORWARD=%s  OUTPUT=%s\n",
@@ -861,6 +1081,7 @@ func (m cliModel) placeCenter(modal, bg string) string {
 }
 
 func startCLI() {
+	reconcileCommit()
 	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error starting CLI: %v", err)
