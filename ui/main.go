@@ -2679,6 +2679,18 @@ func sanitizeObjects(groups, regions, services, hosts, zones, lists, feeds []obj
 	if err := checkNames(lists); err != nil {
 		return err
 	}
+
+	// Validate IP/CIDR for hosts and lists
+	for _, l := range [][]objEntry{hosts, lists} {
+		for _, e := range l {
+			for _, m := range e.Members {
+				_, _, errCIDR := net.ParseCIDR(m)
+				if net.ParseIP(m) == nil && errCIDR != nil {
+					return fmt.Errorf("invalid IP/CIDR %q in %s", m, e.Name)
+				}
+			}
+		}
+	}
 	seen := map[string]bool{}
 	for _, fd := range feeds {
 		if !objNameRe.MatchString(fd.Name) {
@@ -3140,6 +3152,17 @@ func reqRuleFile(w http.ResponseWriter, rel string) *ruleFile {
 
 // handleRulesDraft returns the parsed rules across every editable file
 // (rules.conf + rules.d/*.conf, in engine order), each tagged with its file.
+func cliDraftRules() []*draftRule {
+	ctr := ruleCounters()
+	var all []*draftRule
+	for _, rf := range ruleFileList() {
+		items, _ := parseDraftRules(draftTextFor(rf))
+		annotateDraft(items, ctr)
+		all = append(all, items...)
+	}
+	return all
+}
+
 func handleRulesDraft(w http.ResponseWriter, r *http.Request) {
 	ctr := ruleCounters()
 	all := []*draftRule{}
@@ -3155,6 +3178,87 @@ func handleRulesDraft(w http.ResponseWriter, r *http.Request) {
 		files = append(files, map[string]interface{}{"name": rf.rel, "hasDraft": hasDraft == nil})
 	}
 	writeJSONCached(w, r, map[string]interface{}{"files": files, "rules": all})
+}
+
+func findRuleFileByRel(rel string) *ruleFile {
+	for _, rf := range ruleFileList() {
+		if rf.rel == rel {
+			return &rf
+		}
+	}
+	return nil
+}
+
+// cliToggleRule toggles the disabled state of a draft rule and saves it.
+func cliToggleRule(fileID string, id int) error {
+	rf := findRuleFileByRel(fileID)
+	if rf == nil {
+		return fmt.Errorf("file not found")
+	}
+	rules, tail := parseDraftRules(draftTextFor(*rf))
+	for _, rr := range rules {
+		if rr.ID == id {
+			rr.Disabled = !rr.Disabled
+			return writeDraftFor(*rf, rules, tail)
+		}
+	}
+	return fmt.Errorf("rule not found")
+}
+
+// cliMoveRule moves a draft rule to a new index.
+func cliMoveRule(fromFileID, toFileID string, fromID, toIndex int) error {
+	fromRf := findRuleFileByRel(fromFileID)
+	toRf := findRuleFileByRel(toFileID)
+	if fromRf == nil || toRf == nil {
+		return fmt.Errorf("file not found")
+	}
+	fromRules, fromTail := parseDraftRules(draftTextFor(*fromRf))
+	toRules, toTail := parseDraftRules(draftTextFor(*toRf))
+
+	var moved *draftRule
+	var kept []*draftRule
+	for _, rr := range fromRules {
+		if rr.ID == fromID && moved == nil {
+			moved = rr
+		} else {
+			kept = append(kept, rr)
+		}
+	}
+	if moved == nil {
+		return fmt.Errorf("rule not found")
+	}
+	moved.File = toRf.rel
+
+	if fromFileID == toFileID {
+		if toIndex < 0 || toIndex > len(kept) {
+			toIndex = len(kept)
+		}
+		newRules := append(kept[:toIndex], append([]*draftRule{moved}, kept[toIndex:]...)...)
+		return writeDraftFor(*fromRf, newRules, fromTail)
+	}
+
+	if err := writeDraftFor(*fromRf, kept, fromTail); err != nil {
+		return err
+	}
+	if toIndex < 0 || toIndex > len(toRules) {
+		toIndex = len(toRules)
+	}
+	newTo := make([]*draftRule, 0, len(toRules)+1)
+	newTo = append(newTo, toRules[:toIndex]...)
+	newTo = append(newTo, moved)
+	newTo = append(newTo, toRules[toIndex:]...)
+	return writeDraftFor(*toRf, newTo, toTail)
+}
+
+// cliAddDenyRule adds a new deny rule to the specified file.
+func cliAddDenyRule(fileID, target string) error {
+	rf := findRuleFileByRel(fileID)
+	if rf == nil {
+		return fmt.Errorf("file not found")
+	}
+	rules, tail := parseDraftRules(draftTextFor(*rf))
+	rules = append(rules, &draftRule{ID: -1, Body: "drop " + target, Name: "Added via CLI"})
+	return writeDraftFor(*rf, rules, tail)
 }
 
 func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
@@ -4255,13 +4359,21 @@ func reconcileCommit() {
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "token" {
-		tokenCmd(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "reconcile-boot" {
-		reconcileBoot()
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "cli":
+			geo.load()
+			startIfSampler()
+			startNflog()
+			startCLI()
+			return
+		case "token":
+			tokenCmd(os.Args[2:])
+			return
+		case "reconcile-boot":
+			reconcileBoot()
+			return
+		}
 	}
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address (keep it local)")
 	noauth := flag.Bool("noauth", false, "run without auth (trusted localhost only)")
