@@ -54,35 +54,35 @@ func TestObjectValidation(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid objects",
-			groups: []objEntry{{Name: "devs", Members: []string{"1.1.1.1"}}},
-			hosts: []objEntry{{Name: "server", Members: []string{"10.0.0.1"}}},
-			feeds: []objEntry{{Name: "abuse", Members: []string{"https://foo.com"}}},
+			name:    "valid objects",
+			groups:  []objEntry{{Name: "devs", Members: []string{"1.1.1.1"}}},
+			hosts:   []objEntry{{Name: "server", Members: []string{"10.0.0.1"}}},
+			feeds:   []objEntry{{Name: "abuse", Members: []string{"https://foo.com"}}},
 			wantErr: false,
 		},
 		{
-			name: "invalid name (space)",
-			groups: []objEntry{{Name: "my devs", Members: []string{"1.1.1.1"}}},
+			name:    "invalid name (space)",
+			groups:  []objEntry{{Name: "my devs", Members: []string{"1.1.1.1"}}},
 			wantErr: true,
 		},
 		{
-			name: "invalid feed URL",
-			feeds: []objEntry{{Name: "abuse", Members: []string{"http://foo.com/my space"}}},
+			name:    "invalid feed URL",
+			feeds:   []objEntry{{Name: "abuse", Members: []string{"http://foo.com/my space"}}},
 			wantErr: true,
 		},
 		{
-			name: "invalid host CIDR",
-			hosts: []objEntry{{Name: "server", Members: []string{"10.0.0.1/99"}}},
+			name:    "invalid host CIDR",
+			hosts:   []objEntry{{Name: "server", Members: []string{"10.0.0.1/99"}}},
 			wantErr: true,
 		},
 		{
-			name: "invalid host IP",
-			hosts: []objEntry{{Name: "server", Members: []string{"not_an_ip"}}},
+			name:    "invalid host IP",
+			hosts:   []objEntry{{Name: "server", Members: []string{"not_an_ip"}}},
 			wantErr: true,
 		},
 		{
-			name: "duplicate name",
-			groups: []objEntry{{Name: "devs", Members: []string{"1.1.1.1"}}, {Name: "devs", Members: []string{"2.2.2.2"}}},
+			name:    "duplicate name",
+			groups:  []objEntry{{Name: "devs", Members: []string{"1.1.1.1"}}, {Name: "devs", Members: []string{"2.2.2.2"}}},
 			wantErr: true,
 		},
 	}

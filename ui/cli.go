@@ -152,12 +152,12 @@ var cliKeys = cliKeyMap{
 	ConfirmY: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm yes")),
 	ConfirmN: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "confirm no")),
 
-	Delete:   key.NewBinding(key.WithKeys("d", "delete"), key.WithHelp("d", "delete")),
-	Edit:     key.NewBinding(key.WithKeys("e", "enter"), key.WithHelp("e/enter", "edit")),
-	Drop:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "drop/no")),
-	Reject:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reject/rollback")),
-	Left:     key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("left/h", "move left")),
-	Right:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("right/l", "move right")),
+	Delete: key.NewBinding(key.WithKeys("d", "delete"), key.WithHelp("d", "delete")),
+	Edit:   key.NewBinding(key.WithKeys("e", "enter"), key.WithHelp("e/enter", "edit")),
+	Drop:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "drop/no")),
+	Reject: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reject/rollback")),
+	Left:   key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("left/h", "move left")),
+	Right:  key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("right/l", "move right")),
 }
 
 // ---- model ----
@@ -178,15 +178,15 @@ type cliModel struct {
 	height    int
 
 	// data
-	draftRules []*draftRule
-	status     map[string]interface{}
-	drops      DropsResp
-	policies   []PolicyRule
-	baseline   map[string]map[string]interface{}
-	objects    map[string]interface{}
-	ifStats    map[string]interface{}
-	lookupRes  map[string]interface{}
-	objDrafts  [][]objEntry
+	draftRules  []*draftRule
+	status      map[string]interface{}
+	drops       DropsResp
+	policies    []PolicyRule
+	baseline    map[string]map[string]interface{}
+	objects     map[string]interface{}
+	ifStats     map[string]interface{}
+	lookupRes   map[string]interface{}
+	objDrafts   [][]objEntry
 	objHasDraft bool
 
 	// components
@@ -301,13 +301,13 @@ func initialModel() cliModel {
 
 type tickMsg time.Time
 type fetchMsg struct {
-	status   map[string]interface{}
-	drafts   []*draftRule
-	drops    DropsResp
-	policies []PolicyRule
-	baseline map[string]map[string]interface{}
-	objects  map[string]interface{}
-	ifStats  map[string]interface{}
+	status      map[string]interface{}
+	drafts      []*draftRule
+	drops       DropsResp
+	policies    []PolicyRule
+	baseline    map[string]map[string]interface{}
+	objects     map[string]interface{}
+	ifStats     map[string]interface{}
 	objDrafts   [][]objEntry
 	objHasDraft bool
 }
@@ -794,14 +794,14 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.objSelectedEntry = 0
 					m.objSelectedMember = 0
 				} else if m.objLevel == 1 {
-					if m.objSelectedCategory >= 0 && m.objSelectedCategory < len(m.objDrafts) && m.objSelectedEntry < len(m.objDrafts[m.objSelectedCategory]) - 1 {
+					if m.objSelectedCategory >= 0 && m.objSelectedCategory < len(m.objDrafts) && m.objSelectedEntry < len(m.objDrafts[m.objSelectedCategory])-1 {
 						m.objSelectedEntry++
 						m.objSelectedMember = 0
 					}
 				} else if m.objLevel == 2 {
 					if m.objSelectedCategory >= 0 && m.objSelectedCategory < len(m.objDrafts) && m.objSelectedEntry >= 0 && m.objSelectedEntry < len(m.objDrafts[m.objSelectedCategory]) {
 						members := m.objDrafts[m.objSelectedCategory][m.objSelectedEntry].Members
-						if m.objSelectedMember < len(members) - 1 {
+						if m.objSelectedMember < len(members)-1 {
 							m.objSelectedMember++
 						}
 					}
@@ -1170,7 +1170,7 @@ func (m cliModel) renderObjects() string {
 	var sb strings.Builder
 
 	if errStr, ok := m.status["commitError"].(string); ok && errStr != "" {
-		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: " + errStr) + "\n\n")
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: "+errStr) + "\n\n")
 	} else if m.objHasDraft {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("* Unsaved Draft (Press 'c' to commit)") + "\n\n")
 	} else {
@@ -1208,7 +1208,7 @@ func (m cliModel) renderObjects() string {
 		entries := m.objDrafts[m.objSelectedCategory]
 
 		if m.objInputMode && m.objLevel == 1 {
-			entView.WriteString(styleSelected.Render("> " + m.objInput.View()) + "\n")
+			entView.WriteString(styleSelected.Render("> "+m.objInput.View()) + "\n")
 		}
 
 		for i, e := range entries {
@@ -1228,7 +1228,7 @@ func (m cliModel) renderObjects() string {
 		if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
 			members := entries[m.objSelectedEntry].Members
 			if m.objInputMode && m.objLevel == 2 {
-				memView.WriteString(styleSelected.Render("> " + m.objInput.View()) + "\n")
+				memView.WriteString(styleSelected.Render("> "+m.objInput.View()) + "\n")
 			}
 			for i, mval := range members {
 				s := styleNormal
@@ -1353,7 +1353,6 @@ func startCLI() {
 		os.Exit(1)
 	}
 }
-
 
 func (m *cliModel) handleObjInputEnter() {
 	val := m.objInput.Value()
