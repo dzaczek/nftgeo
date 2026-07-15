@@ -4365,6 +4365,11 @@ func main() {
 			geo.load()
 			startIfSampler()
 			startNflog()
+			// Load the persisted drop store so the TUI has 24h history (timeline,
+			// top-IPs, KPIs) even when the live feed is unavailable — e.g. the web
+			// service already holds the NFLOG group, or the kernel log is
+			// unreadable in a container. Without this the dashboard is empty.
+			loadStats()
 			fs := flag.NewFlagSet("cli", flag.ExitOnError)
 			refresh := fs.Duration("refresh", 5*time.Second, "live refresh interval (e.g. 2s, 5s, 10s, 0 to disable)")
 			fs.Parse(os.Args[2:])
