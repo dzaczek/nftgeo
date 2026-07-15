@@ -4365,7 +4365,10 @@ func main() {
 			geo.load()
 			startIfSampler()
 			startNflog()
-			startCLI()
+			fs := flag.NewFlagSet("cli", flag.ExitOnError)
+			refresh := fs.Duration("refresh", 5*time.Second, "live refresh interval (e.g. 2s, 5s, 10s, 0 to disable)")
+			fs.Parse(os.Args[2:])
+			startCLI(*refresh)
 			return
 		case "token":
 			tokenCmd(os.Args[2:])
