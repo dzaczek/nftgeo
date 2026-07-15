@@ -749,22 +749,7 @@ func drops(since string) DropsResp {
 		records = collectJournalDrops(since)
 	}
 	resp := aggregateDrops(records)
-	// The live records can lose history: the NFLOG ring is in-memory only, so
-	// right after a UI restart the "24h" timeline covers just minutes. The
-	// stats store persists across restarts; take the fuller of the two per
-	// hourly bucket, and keep the total consistent with the chart.
-	for i, v := range statsTimeline(time.Now()) {
-		if v > resp.Timeline[i] {
-			resp.Timeline[i] = v
-		}
-	}
-	sum := 0
-	for _, v := range resp.Timeline {
-		sum += v
-	}
-	if sum > resp.Total {
-		resp.Total = sum
-	}
+	backfillFromStats(&resp, time.Now())
 	resp.Enabled = logDropsOn()
 	resp.Container = kernelLogHidden()
 	resp.Nflog = nflogActive()
@@ -1208,6 +1193,74 @@ func statsTimeline(now time.Time) []int {
 		}
 	}
 	return tl
+}
+
+// backfillFromStats fills a DropsResp from the persistent stats store. It always
+// merges the 24h timeline (taking the fuller of live vs stored per bucket, since
+// the NFLOG ring is in-memory and empty right after a restart) and keeps Total
+// consistent with the chart. The recent list and the per-port / per-country
+// breakdowns are only filled when the live feed produced nothing — so a working
+// live source is never overwritten, but a live-starved caller (web service holds
+// the single NFLOG group, or the kernel log is unreadable in a container) still
+// gets a populated dashboard and Logs tab. The store lacks direction/proto, so
+// reconstructed drops are attributed to ingress with an empty proto.
+func backfillFromStats(resp *DropsResp, now time.Time) {
+	statsMu.Lock()
+	defer statsMu.Unlock()
+	if len(statsData) == 0 {
+		return
+	}
+	tl := make([]int, 24)
+	ports := map[string]int{}
+	cc := map[string]int{}
+	for _, e := range statsData {
+		if age := now.Unix() - e.Ts; age >= 0 && age < 24*3600 {
+			tl[23-int(age/3600)]++
+			if e.Port != "" {
+				ports[e.Port]++
+			}
+			if e.CC != "" {
+				cc[e.CC]++
+			}
+		}
+	}
+	for i, v := range tl {
+		if v > resp.Timeline[i] {
+			resp.Timeline[i] = v
+		}
+	}
+	sum := 0
+	for _, v := range resp.Timeline {
+		sum += v
+	}
+	if sum > resp.Total {
+		resp.Total = sum
+	}
+	if len(resp.TopPorts) == 0 {
+		resp.TopPorts = ports
+	}
+	if len(resp.IngressByCC) == 0 && len(resp.EgressByCC) == 0 {
+		resp.IngressByCC = cc
+	}
+	if len(resp.Recent) == 0 {
+		// statsData is appended in ingest (≈time) order, so the tail is newest.
+		start := len(statsData) - 200
+		if start < 0 {
+			start = 0
+		}
+		for i := len(statsData) - 1; i >= start; i-- {
+			e := statsData[i]
+			resp.Recent = append(resp.Recent, Drop{
+				Time:    time.Unix(e.Ts, 0).UTC().Format(time.RFC3339),
+				Src:     e.Src,
+				Dport:   e.Port,
+				Dir:     "ingress",
+				CC:      e.CC,
+				Reason:  e.Reason,
+				Verdict: "drop",
+			})
+		}
+	}
 }
 
 // topIPs returns top source IPs by drop count within [from, to] unix timestamps.

@@ -383,6 +383,56 @@ func TestStatsTimeline(t *testing.T) {
 	}
 }
 
+func TestBackfillFromStats(t *testing.T) {
+	now := time.Unix(100000, 0)
+	statsMu.Lock()
+	saved := statsData
+	// Appended in ingest (time-ascending) order, as the real store is.
+	statsData = []statsEntry{
+		{Ts: now.Unix() - 25*3600, Src: "9.9.9.9", CC: "FR", Port: "80"},        // out of 24h window
+		{Ts: now.Unix() - 3600, Src: "1.1.1.1", CC: "US", Port: "22", Reason: "abuse"},
+		{Ts: now.Unix() - 60, Src: "2.2.2.2", CC: "DE", Port: "22", Reason: "geo"}, // newest
+	}
+	statsMu.Unlock()
+	defer func() { statsMu.Lock(); statsData = saved; statsMu.Unlock() }()
+
+	// Empty live feed -> everything is reconstructed from the store.
+	empty := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}, Timeline: make([]int, 24)}
+	backfillFromStats(&empty, now)
+	// Total / breakdowns are 24h-windowed (FR/80 excluded); Recent is not.
+	if empty.Total != 2 {
+		t.Errorf("Total = %d, want 2 (out-of-window excluded)", empty.Total)
+	}
+	if empty.TopPorts["22"] != 2 || empty.TopPorts["80"] != 0 {
+		t.Errorf("TopPorts = %v, want 22=2 80=0", empty.TopPorts)
+	}
+	if empty.IngressByCC["US"] != 1 || empty.IngressByCC["DE"] != 1 || empty.IngressByCC["FR"] != 0 {
+		t.Errorf("IngressByCC = %v, want US=1 DE=1 FR=0", empty.IngressByCC)
+	}
+	if len(empty.Recent) != 3 || empty.Recent[0].Src != "2.2.2.2" {
+		t.Errorf("Recent = %+v, want 3 rows newest-first (2.2.2.2 first)", empty.Recent)
+	}
+
+	// Live feed present -> breakdowns/recent must NOT be overwritten.
+	live := DropsResp{
+		IngressByCC: map[string]int{"PL": 5},
+		EgressByCC:  map[string]int{},
+		TopPorts:    map[string]int{"443": 9},
+		Timeline:    make([]int, 24),
+		Recent:      []Drop{{Src: "8.8.8.8", Verdict: "drop"}},
+	}
+	backfillFromStats(&live, now)
+	if live.IngressByCC["PL"] != 5 || live.IngressByCC["US"] != 0 {
+		t.Errorf("live IngressByCC overwritten: %v", live.IngressByCC)
+	}
+	if live.TopPorts["443"] != 9 || live.TopPorts["22"] != 0 {
+		t.Errorf("live TopPorts overwritten: %v", live.TopPorts)
+	}
+	if len(live.Recent) != 1 || live.Recent[0].Src != "8.8.8.8" {
+		t.Errorf("live Recent overwritten: %+v", live.Recent)
+	}
+}
+
 func TestBuildSynproxyBody(t *testing.T) {
 	cases := []struct {
 		dir, port, iface, want string
