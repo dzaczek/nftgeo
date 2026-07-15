@@ -45,6 +45,9 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           draft: false
+          # Tags with a hyphen (e.g. v1.73.0-beta.1, -rc.1) publish as a
+          # pre-release so they don't move the "Latest" pointer off a stable tag.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           files: |
             dist/nftgeo-ui-linux-amd64
