@@ -217,9 +217,10 @@ type cliModel struct {
 	lookupRes  map[string]interface{}
 
 	// components
-	logTable    bubblesTable.Model
-	policyTable bubblesTable.Model
-	viewport    viewport.Model // for lookup details
+	logTable        bubblesTable.Model
+	policyTable     bubblesTable.Model
+	objectsViewport viewport.Model
+	viewport        viewport.Model // for lookup details
 	help        help.Model
 	filterInput textinput.Model
 
@@ -304,6 +305,7 @@ func initialModel() cliModel {
 	m.topPortsChart = barchart.New(40, 10)
 	m.topPortsChart.SetShowAxis(true)
 
+	m.objectsViewport = viewport.New(60, 20)
 	m.viewport = viewport.New(60, 20)
 
 	return m
@@ -424,6 +426,9 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.lastFetch = time.Now()
 		m.updateData()
+		if m.activeTab == 3 {
+			m.objectsViewport.SetContent(m.renderObjects())
+		}
 
 	case lookupMsg:
 		m.lookupRes = msg
@@ -469,6 +474,7 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = 2
 		case key.Matches(msg, cliKeys.Jump4):
 			m.activeTab = 3
+			m.objectsViewport.SetContent(m.renderObjects())
 		case key.Matches(msg, cliKeys.Jump5):
 			m.activeTab = 4
 		case key.Matches(msg, cliKeys.Help):
@@ -495,6 +501,56 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				row := m.logTable.SelectedRow()
 				if len(row) > 1 {
 					return m, lookupCmd(row[1])
+				}
+			} else if m.activeTab == 2 && m.editState == policyStateMoving {
+				idx := m.policyTable.Cursor()
+				if idx >= 0 && idx < len(m.draftRules) {
+					destRule := m.draftRules[idx]
+					var sourceFile string
+					var sourceRuleID int
+					for _, r := range m.draftRules {
+						if r.ID == m.moveSourceID {
+							sourceFile = r.File
+							sourceRuleID = r.ID
+							break
+						}
+					}
+					localIdx := 0
+					for i, r := range m.draftRules {
+						if r.File == destRule.File {
+							if i == idx {
+								break
+							}
+							localIdx++
+						}
+					}
+					cliMoveRule(sourceFile, destRule.File, sourceRuleID, localIdx)
+				}
+				m.editState = policyStateNormal
+				return m, fetchDataCmd()
+			} else if m.activeTab == 2 && m.editState == policyStatePrompt {
+				m.editState = policyStateNormal
+				val := strings.TrimSpace(m.filterInput.Value())
+				if val != "" {
+					if net.ParseIP(val) == nil {
+						_, _, err := net.ParseCIDR(val)
+						if err != nil {
+							if m.status == nil {
+								m.status = make(map[string]interface{})
+							}
+							m.status["commitError"] = "Invalid IP or CIDR: " + val
+							return m, nil
+						}
+					}
+					file := "rules.conf"
+					if len(m.draftRules) > 0 {
+						idx := m.policyTable.Cursor()
+						if idx >= 0 && idx < len(m.draftRules) {
+							file = m.draftRules[idx].File
+						}
+					}
+					cliAddDenyRule(file, val)
+					return m, fetchDataCmd()
 				}
 			}
 		case key.Matches(msg, cliKeys.Top):
@@ -602,63 +658,6 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, fetchDataCmd()
 			}
 
-		case key.Matches(msg, cliKeys.Enter):
-			if m.activeTab == 1 && len(m.logTable.Rows()) > 0 {
-				row := m.logTable.SelectedRow()
-				if len(row) > 1 {
-					return m, lookupCmd(row[1])
-				}
-			} else if m.activeTab == 2 && m.editState == policyStateMoving {
-				idx := m.policyTable.Cursor()
-				if idx >= 0 && idx < len(m.draftRules) {
-					destRule := m.draftRules[idx]
-					var sourceFile string
-					var sourceRuleID int
-					for _, r := range m.draftRules {
-						if r.ID == m.moveSourceID {
-							sourceFile = r.File
-							sourceRuleID = r.ID
-							break
-						}
-					}
-					localIdx := 0
-					for i, r := range m.draftRules {
-						if r.File == destRule.File {
-							if i == idx {
-								break
-							}
-							localIdx++
-						}
-					}
-					cliMoveRule(sourceFile, destRule.File, sourceRuleID, localIdx)
-				}
-				m.editState = policyStateNormal
-				return m, fetchDataCmd()
-			} else if m.activeTab == 2 && m.editState == policyStatePrompt {
-				m.editState = policyStateNormal
-				val := strings.TrimSpace(m.filterInput.Value())
-				if val != "" {
-					if net.ParseIP(val) == nil {
-						_, _, err := net.ParseCIDR(val)
-						if err != nil {
-							if m.status == nil {
-								m.status = make(map[string]interface{})
-							}
-							m.status["commitError"] = "Invalid IP or CIDR: " + val
-							return m, nil
-						}
-					}
-					file := "rules.conf"
-					if len(m.draftRules) > 0 {
-						idx := m.policyTable.Cursor()
-						if idx >= 0 && idx < len(m.draftRules) {
-							file = m.draftRules[idx].File
-						}
-					}
-					cliAddDenyRule(file, val)
-					return m, fetchDataCmd()
-				}
-			}
 
 		case key.Matches(msg, cliKeys.Back):
 			if m.activeTab == 2 && (m.editState == policyStateMoving || m.editState == policyStatePrompt) {
@@ -717,6 +716,9 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.activeTab == 2 {
 			m.policyTable, cmd = m.policyTable.Update(msg)
 			return m, cmd
+			} else if m.activeTab == 3 {
+				m.objectsViewport, cmd = m.objectsViewport.Update(msg)
+				return m, cmd
 		} else if m.showLookup {
 			m.viewport, cmd = m.viewport.Update(msg)
 			return m, cmd
@@ -732,6 +734,8 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logTable, cmd = m.logTable.Update(msg)
 	} else if m.activeTab == 2 {
 		m.policyTable, cmd = m.policyTable.Update(msg)
+	} else if m.activeTab == 3 {
+		m.objectsViewport, cmd = m.objectsViewport.Update(msg)
 	}
 
 	return m, cmd
@@ -919,6 +923,8 @@ func (m *cliModel) updateLayout() {
 	m.help.Width = m.width
 	m.logTable.SetHeight(m.height - 12)
 	m.policyTable.SetHeight(m.height - 15)
+	m.objectsViewport.Width = m.width - 4
+	m.objectsViewport.Height = m.height - 8
 	m.viewport.Width = m.width - 10
 	m.viewport.Height = m.height - 10
 
@@ -958,7 +964,7 @@ func (m cliModel) View() string {
 		case 2:
 			content = m.renderPolicy()
 		case 3:
-			content = m.renderObjects()
+			content = m.objectsViewport.View()
 		case 4:
 			content = m.renderSystem()
 		}
