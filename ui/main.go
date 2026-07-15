@@ -2679,6 +2679,18 @@ func sanitizeObjects(groups, regions, services, hosts, zones, lists, feeds []obj
 	if err := checkNames(lists); err != nil {
 		return err
 	}
+
+	// Validate IP/CIDR for hosts and lists
+	for _, l := range [][]objEntry{hosts, lists} {
+		for _, e := range l {
+			for _, m := range e.Members {
+				_, _, errCIDR := net.ParseCIDR(m)
+				if net.ParseIP(m) == nil && errCIDR != nil {
+					return fmt.Errorf("invalid IP/CIDR %q in %s", m, e.Name)
+				}
+			}
+		}
+	}
 	seen := map[string]bool{}
 	for _, fd := range feeds {
 		if !objNameRe.MatchString(fd.Name) {

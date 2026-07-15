@@ -104,6 +104,12 @@ type cliKeyMap struct {
 	Rollback key.Binding
 	ConfirmY key.Binding
 	ConfirmN key.Binding
+	Delete   key.Binding
+	Edit     key.Binding
+	Drop     key.Binding
+	Reject   key.Binding
+	Left     key.Binding
+	Right    key.Binding
 }
 
 func (k cliKeyMap) ShortHelp() []key.Binding {
@@ -145,6 +151,13 @@ var cliKeys = cliKeyMap{
 	Rollback: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rollback/discard")),
 	ConfirmY: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm yes")),
 	ConfirmN: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "confirm no")),
+
+	Delete: key.NewBinding(key.WithKeys("d", "delete"), key.WithHelp("d", "delete")),
+	Edit:   key.NewBinding(key.WithKeys("e", "enter"), key.WithHelp("e/enter", "edit")),
+	Drop:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "drop/no")),
+	Reject: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reject/rollback")),
+	Left:   key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("left/h", "move left")),
+	Right:  key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("right/l", "move right")),
 }
 
 // ---- model ----
@@ -165,14 +178,16 @@ type cliModel struct {
 	height    int
 
 	// data
-	draftRules []*draftRule
-	status     map[string]interface{}
-	drops      DropsResp
-	policies   []PolicyRule
-	baseline   map[string]map[string]interface{}
-	objects    map[string]interface{}
-	ifStats    map[string]interface{}
-	lookupRes  map[string]interface{}
+	draftRules  []*draftRule
+	status      map[string]interface{}
+	drops       DropsResp
+	policies    []PolicyRule
+	baseline    map[string]map[string]interface{}
+	objects     map[string]interface{}
+	ifStats     map[string]interface{}
+	lookupRes   map[string]interface{}
+	objDrafts   [][]objEntry
+	objHasDraft bool
 
 	// components
 	logTable    bubblesTable.Model
@@ -202,6 +217,15 @@ type cliModel struct {
 	editState        policyEditState
 	moveSourceID     int
 	confirmRemaining int
+
+	// objects edit state
+	objLevel            int
+	objSelectedCategory int
+	objSelectedEntry    int
+	objSelectedMember   int
+	objInputMode        bool
+	objInputContext     string
+	objInput            textinput.Model
 }
 
 func initialModel() cliModel {
@@ -218,6 +242,10 @@ func initialModel() cliModel {
 		help:         help.New(),
 		filterInput:  ti,
 		loading:      true,
+
+		objLevel:            0,
+		objSelectedCategory: 0,
+		objInput:            textinput.New(),
 	}
 
 	// Initialize tables
@@ -273,13 +301,15 @@ func initialModel() cliModel {
 
 type tickMsg time.Time
 type fetchMsg struct {
-	status   map[string]interface{}
-	drafts   []*draftRule
-	drops    DropsResp
-	policies []PolicyRule
-	baseline map[string]map[string]interface{}
-	objects  map[string]interface{}
-	ifStats  map[string]interface{}
+	status      map[string]interface{}
+	drafts      []*draftRule
+	drops       DropsResp
+	policies    []PolicyRule
+	baseline    map[string]map[string]interface{}
+	objects     map[string]interface{}
+	ifStats     map[string]interface{}
+	objDrafts   [][]objEntry
+	objHasDraft bool
 }
 type lookupMsg map[string]interface{}
 
@@ -320,14 +350,25 @@ func fetchDataCmd() tea.Cmd {
 			bs[hook]["policy"] = p
 		}
 
+		text := readFileStr(objLiveFile)
+		_, err := os.Stat(objDraftFile)
+		hasDraft := err == nil
+		if hasDraft {
+			text = readFileStr(objDraftFile)
+		}
+		g, rg, sv, hs, zn, ls, fd := parseObjects(text)
+		objDrafts := [][]objEntry{g, rg, sv, hs, zn, ls, fd}
+
 		return fetchMsg{
-			status:   st,
-			drafts:   cliDraftRules(),
-			drops:    dr,
-			policies: pl,
-			baseline: bs,
-			objects:  objects(),
-			ifStats:  ifStats(),
+			status:      st,
+			drafts:      cliDraftRules(),
+			drops:       dr,
+			policies:    pl,
+			baseline:    bs,
+			objects:     objects(),
+			ifStats:     ifStats(),
+			objDrafts:   objDrafts,
+			objHasDraft: hasDraft,
 		}
 	}
 }
@@ -359,6 +400,9 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(fetchDataCmd(), tickCmd())
 
 	case fetchMsg:
+		if err, ok := m.status["commitError"].(string); ok && err != "" {
+			msg.status["commitError"] = err
+		}
 		m.status = msg.status
 		m.draftRules = msg.drafts
 		m.drops = msg.drops
@@ -366,6 +410,8 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.baseline = msg.baseline
 		m.objects = msg.objects
 		m.ifStats = msg.ifStats
+		m.objDrafts = msg.objDrafts
+		m.objHasDraft = msg.objHasDraft
 		m.loading = false
 		m.lastFetch = time.Now()
 		m.updateData()
@@ -383,6 +429,19 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+
+		if m.activeTab == 3 && m.objInputMode {
+			switch {
+			case key.Matches(msg, cliKeys.Enter):
+				m.handleObjInputEnter()
+				return m, fetchDataCmd()
+			case key.Matches(msg, cliKeys.Back), key.Matches(msg, cliKeys.Quit):
+				m.objInputMode = false
+				return m, nil
+			}
+			m.objInput, cmd = m.objInput.Update(msg)
 			return m, cmd
 		}
 
@@ -418,13 +477,6 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = 4
 		case key.Matches(msg, cliKeys.Help):
 			m.showHelp = !m.showHelp
-		case key.Matches(msg, cliKeys.Enter):
-			if m.activeTab == 1 && len(m.logTable.Rows()) > 0 {
-				row := m.logTable.SelectedRow()
-				if len(row) > 1 {
-					return m, lookupCmd(row[1])
-				}
-			}
 		case key.Matches(msg, cliKeys.Top):
 			if m.activeTab == 1 {
 				m.logTable.GotoTop()
@@ -436,6 +488,36 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logTable.GotoBottom()
 			} else if m.activeTab == 2 {
 				m.policyTable.GotoBottom()
+			}
+		case key.Matches(msg, cliKeys.Edit):
+			if m.activeTab == 3 && !m.objInputMode && m.objLevel > 0 {
+				if m.objSelectedCategory < 0 || m.objSelectedCategory >= len(m.objDrafts) {
+					return m, nil
+				}
+				entries := m.objDrafts[m.objSelectedCategory]
+				m.objInputMode = true
+
+				if m.objLevel == 1 {
+					m.objInputContext = "edit_entry"
+					if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
+						m.objInput.SetValue(entries[m.objSelectedEntry].Name)
+					}
+				} else {
+					m.objInputContext = "edit_member"
+					if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
+						members := entries[m.objSelectedEntry].Members
+						if m.objSelectedMember >= 0 && m.objSelectedMember < len(members) {
+							m.objInput.SetValue(members[m.objSelectedMember])
+						}
+					}
+				}
+				m.objInput.Focus()
+				return m, nil
+			}
+		case key.Matches(msg, cliKeys.Delete):
+			if m.activeTab == 3 && !m.objInputMode && m.objLevel > 0 {
+				m.handleObjDelete()
+				return m, fetchDataCmd()
 			}
 		case key.Matches(msg, cliKeys.Filter):
 			if m.activeTab == 1 {
@@ -468,14 +550,28 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, cliKeys.Add):
-			if m.activeTab == 2 && m.editState == policyStateNormal {
+			if m.activeTab == 3 && !m.objInputMode && m.objLevel > 0 {
+				m.objInputMode = true
+				if m.objLevel == 1 {
+					m.objInputContext = "entry_name"
+				} else {
+					m.objInputContext = "member_value"
+				}
+				m.objInput.SetValue("")
+				m.objInput.Focus()
+				return m, nil
+			} else if m.activeTab == 2 && m.editState == policyStateNormal {
 				m.editState = policyStatePrompt
 				m.filterInput.Focus()
 				m.filterInput.SetValue("")
 			}
 
 		case key.Matches(msg, cliKeys.Commit):
-			if m.activeTab == 2 && m.editState == policyStateNormal {
+			if m.editState == policyStateNormal {
+				act := activeStages()
+				if len(act) == 0 {
+					return m, nil
+				}
 				if _, err := os.Stat(sentinel); err == nil {
 					if m.status == nil {
 						m.status = make(map[string]interface{})
@@ -491,23 +587,20 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status["commitError"] = msgStr
 					return m, nil
 				}
-				act := activeStages()
-				if len(act) > 0 {
-					for _, s := range act {
-						backupLive(s)
-					}
-					for _, s := range act {
-						copyFile(s.draft, s.live)
-					}
-					run(nftgeoBin, "apply", "--confirm", "90")
-					m.editState = policyStateConfirming
-					m.confirmRemaining = 90
-					return m, tickCmd()
+				for _, s := range act {
+					backupLive(s)
 				}
+				for _, s := range act {
+					copyFile(s.draft, s.live)
+				}
+				run(nftgeoBin, "apply", "--confirm", "90")
+				m.editState = policyStateConfirming
+				m.confirmRemaining = 90
+				return m, tickCmd()
 			}
 
 		case key.Matches(msg, cliKeys.ConfirmY):
-			if m.activeTab == 2 && m.editState == policyStateConfirming {
+			if m.editState == policyStateConfirming {
 				run(nftgeoBin, "apply", "--commit")
 				for _, s := range stages() {
 					os.Remove(s.draft)
@@ -518,12 +611,12 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, cliKeys.ConfirmN), key.Matches(msg, cliKeys.Rollback):
-			if m.activeTab == 2 && m.editState == policyStateConfirming {
+			if m.editState == policyStateConfirming {
 				run(nftgeoBin, "rollback")
 				restoreBackups()
 				m.editState = policyStateNormal
 				return m, fetchDataCmd()
-			} else if m.activeTab == 2 && m.editState == policyStateNormal {
+			} else if m.editState == policyStateNormal {
 				for _, s := range stages() {
 					os.Remove(s.draft)
 				}
@@ -584,7 +677,7 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					cliAddDenyRule(file, val)
-					return m, fetchDataCmd()
+					return m, tea.Batch(fetchDataCmd(), tickCmd())
 				}
 			}
 
@@ -626,6 +719,95 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.updateLayout()
+	}
+
+	if msgKey, ok := msg.(tea.KeyMsg); ok {
+		if m.activeTab == 3 && !m.objInputMode {
+			switch {
+			case key.Matches(msgKey, cliKeys.Add):
+				if m.objLevel > 0 {
+					m.objInputMode = true
+					if m.objLevel == 1 {
+						m.objInputContext = "entry_name"
+					} else {
+						m.objInputContext = "member_value"
+					}
+					m.objInput.SetValue("")
+					m.objInput.Focus()
+					return m, nil
+				}
+			case key.Matches(msgKey, cliKeys.Edit):
+				if m.objLevel > 0 {
+					if m.objSelectedCategory < 0 || m.objSelectedCategory >= len(m.objDrafts) {
+						return m, nil
+					}
+					entries := m.objDrafts[m.objSelectedCategory]
+					m.objInputMode = true
+
+					if m.objLevel == 1 {
+						m.objInputContext = "edit_entry"
+						if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
+							m.objInput.SetValue(entries[m.objSelectedEntry].Name)
+						}
+					} else {
+						m.objInputContext = "edit_member"
+						if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
+							members := entries[m.objSelectedEntry].Members
+							if m.objSelectedMember >= 0 && m.objSelectedMember < len(members) {
+								m.objInput.SetValue(members[m.objSelectedMember])
+							}
+						}
+					}
+					m.objInput.Focus()
+					return m, nil
+				}
+			case key.Matches(msgKey, cliKeys.Delete):
+				if m.objLevel > 0 {
+					m.handleObjDelete()
+					return m, fetchDataCmd()
+				}
+			}
+
+			switch {
+			case key.Matches(msgKey, cliKeys.Left):
+				if m.objLevel > 0 {
+					m.objLevel--
+				}
+			case key.Matches(msgKey, cliKeys.Right):
+				if m.objLevel < 2 {
+					m.objLevel++
+				}
+			case key.Matches(msgKey, cliKeys.Up):
+				if m.objLevel == 0 && m.objSelectedCategory > 0 {
+					m.objSelectedCategory--
+					m.objSelectedEntry = 0
+					m.objSelectedMember = 0
+				} else if m.objLevel == 1 && m.objSelectedEntry > 0 {
+					m.objSelectedEntry--
+					m.objSelectedMember = 0
+				} else if m.objLevel == 2 && m.objSelectedMember > 0 {
+					m.objSelectedMember--
+				}
+			case key.Matches(msgKey, cliKeys.Down):
+				if m.objLevel == 0 && m.objSelectedCategory < 6 {
+					m.objSelectedCategory++
+					m.objSelectedEntry = 0
+					m.objSelectedMember = 0
+				} else if m.objLevel == 1 {
+					if m.objSelectedCategory >= 0 && m.objSelectedCategory < len(m.objDrafts) && m.objSelectedEntry < len(m.objDrafts[m.objSelectedCategory])-1 {
+						m.objSelectedEntry++
+						m.objSelectedMember = 0
+					}
+				} else if m.objLevel == 2 {
+					if m.objSelectedCategory >= 0 && m.objSelectedCategory < len(m.objDrafts) && m.objSelectedEntry >= 0 && m.objSelectedEntry < len(m.objDrafts[m.objSelectedCategory]) {
+						members := m.objDrafts[m.objSelectedCategory][m.objSelectedEntry].Members
+						if m.objSelectedMember < len(members)-1 {
+							m.objSelectedMember++
+						}
+					}
+				}
+			}
+		}
 	}
 
 	if m.activeTab == 1 && !m.showFilter {
@@ -978,21 +1160,104 @@ func (m cliModel) renderPolicy() string {
 }
 
 func (m cliModel) renderObjects() string {
-	var sb strings.Builder
-	renderSection := func(title string, items []map[string]string) {
-		sb.WriteString(lipgloss.NewStyle().Bold(true).Underline(true).Render(title) + "\n")
-		for _, it := range items {
-			sb.WriteString(fmt.Sprintf("  %-15s %s\n", it["name"], it["value"]))
-		}
-		sb.WriteString("\n")
+	if m.editState == policyStateConfirming {
+		return cliDropVerdictStyle.Render(fmt.Sprintf("PENDING CONFIRM: Press 'y' to KEEP, 'n' to ROLLBACK (%ds remaining)\n\n", m.confirmRemaining))
+	}
+	if m.objDrafts == nil {
+		return "Loading..."
 	}
 
-	if groups, ok := m.objects["groups"].([]map[string]string); ok {
-		renderSection("Groups", groups)
+	var sb strings.Builder
+
+	if errStr, ok := m.status["commitError"].(string); ok && errStr != "" {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: "+errStr) + "\n\n")
+	} else if m.objHasDraft {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("* Unsaved Draft (Press 'c' to commit)") + "\n\n")
+	} else {
+		sb.WriteString("\n\n")
 	}
-	if regions, ok := m.objects["regions"].([]map[string]string); ok {
-		renderSection("Regions", regions)
+
+	cats := []string{"Groups", "Regions", "Services", "Hosts", "Zones", "Lists", "Feeds"}
+
+	colWidth := (m.width - 10) / 3
+	if colWidth < 20 {
+		colWidth = 20
 	}
+
+	styleNormal := lipgloss.NewStyle().Width(colWidth).Padding(0, 1)
+	styleSelected := lipgloss.NewStyle().Width(colWidth).Padding(0, 1).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("14"))
+	styleDimmed := lipgloss.NewStyle().Width(colWidth).Padding(0, 1).Foreground(lipgloss.Color("240"))
+
+	var catView strings.Builder
+	for i, c := range cats {
+		s := styleNormal
+		if m.objLevel == 0 && i == m.objSelectedCategory {
+			s = styleSelected
+		} else if i == m.objSelectedCategory {
+			s = lipgloss.NewStyle().Width(colWidth).Padding(0, 1).Foreground(lipgloss.Color("14")).Bold(true)
+		} else if m.objLevel > 0 {
+			s = styleDimmed
+		}
+		catView.WriteString(s.Render(c) + "\n")
+	}
+
+	var entView strings.Builder
+	var memView strings.Builder
+
+	if m.objSelectedCategory >= 0 && m.objSelectedCategory < len(m.objDrafts) {
+		entries := m.objDrafts[m.objSelectedCategory]
+
+		if m.objInputMode && m.objLevel == 1 {
+			entView.WriteString(styleSelected.Render("> "+m.objInput.View()) + "\n")
+		}
+
+		for i, e := range entries {
+			s := styleNormal
+			if m.objLevel == 1 && i == m.objSelectedEntry && !m.objInputMode {
+				s = styleSelected
+			} else if i == m.objSelectedEntry && m.objLevel > 1 {
+				s = lipgloss.NewStyle().Width(colWidth).Padding(0, 1).Foreground(lipgloss.Color("14")).Bold(true)
+			} else if m.objLevel > 1 {
+				s = styleDimmed
+			} else if m.objLevel == 0 {
+				s = styleDimmed
+			}
+			entView.WriteString(s.Render(e.Name) + "\n")
+		}
+
+		if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
+			members := entries[m.objSelectedEntry].Members
+			if m.objInputMode && m.objLevel == 2 {
+				memView.WriteString(styleSelected.Render("> "+m.objInput.View()) + "\n")
+			}
+			for i, mval := range members {
+				s := styleNormal
+				if m.objLevel == 2 && i == m.objSelectedMember && !m.objInputMode {
+					s = styleSelected
+				} else if m.objLevel < 2 {
+					s = styleDimmed
+				}
+				memView.WriteString(s.Render(mval) + "\n")
+			}
+		}
+	}
+
+	headerStyle := lipgloss.NewStyle().Width(colWidth).Bold(true).Underline(true).Padding(0, 1)
+
+	row1 := lipgloss.JoinHorizontal(lipgloss.Top,
+		headerStyle.Render("Category"),
+		headerStyle.Render("Entry"),
+		headerStyle.Render("Member"),
+	)
+
+	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
+		catView.String(),
+		entView.String(),
+		memView.String(),
+	)
+
+	sb.WriteString(row1 + "\n")
+	sb.WriteString(row2)
 
 	return sb.String()
 }
@@ -1086,5 +1351,124 @@ func startCLI() {
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error starting CLI: %v", err)
 		os.Exit(1)
+	}
+}
+
+func (m *cliModel) handleObjInputEnter() {
+	val := m.objInput.Value()
+	if val == "" {
+		return
+	}
+
+	if m.objSelectedCategory < 0 || m.objSelectedCategory >= len(m.objDrafts) {
+		return
+	}
+
+	entries := make([]objEntry, len(m.objDrafts[m.objSelectedCategory]))
+	copy(entries, m.objDrafts[m.objSelectedCategory])
+
+	if m.objInputContext == "entry_name" {
+		for _, e := range entries {
+			if e.Name == val {
+				return
+			}
+		}
+		entries = append(entries, objEntry{Name: val, Members: []string{}})
+		m.objDrafts[m.objSelectedCategory] = entries
+	} else if m.objInputContext == "member_value" {
+		if m.objSelectedEntry >= len(entries) {
+			return
+		}
+		entries[m.objSelectedEntry].Members = append(entries[m.objSelectedEntry].Members, val)
+		m.objDrafts[m.objSelectedCategory] = entries
+	} else if m.objInputContext == "edit_entry" {
+		if m.objSelectedEntry >= len(entries) {
+			return
+		}
+		for i, e := range entries {
+			if i != m.objSelectedEntry && e.Name == val {
+				return // duplicate
+			}
+		}
+		entries[m.objSelectedEntry].Name = val
+		m.objDrafts[m.objSelectedCategory] = entries
+	} else if m.objInputContext == "edit_member" {
+		if m.objSelectedEntry >= len(entries) {
+			return
+		}
+		members := entries[m.objSelectedEntry].Members
+		if m.objSelectedMember >= len(members) {
+			return
+		}
+		entries[m.objSelectedEntry].Members[m.objSelectedMember] = val
+		m.objDrafts[m.objSelectedCategory] = entries
+	}
+
+	m.saveObjectsDraft()
+	m.objInputMode = false
+}
+
+func (m *cliModel) handleObjDelete() {
+	if m.objSelectedCategory < 0 || m.objSelectedCategory >= len(m.objDrafts) {
+		return
+	}
+
+	entries := make([]objEntry, len(m.objDrafts[m.objSelectedCategory]))
+	copy(entries, m.objDrafts[m.objSelectedCategory])
+
+	if m.objLevel == 1 { // Delete entry
+		if m.objSelectedEntry >= len(entries) {
+			return
+		}
+		entries = append(entries[:m.objSelectedEntry], entries[m.objSelectedEntry+1:]...)
+		m.objDrafts[m.objSelectedCategory] = entries
+		if m.objSelectedEntry > 0 {
+			m.objSelectedEntry--
+		}
+	} else if m.objLevel == 2 { // Delete member
+		if m.objSelectedEntry >= len(entries) {
+			return
+		}
+		members := entries[m.objSelectedEntry].Members
+		if m.objSelectedMember >= len(members) {
+			return
+		}
+		members = append(members[:m.objSelectedMember], members[m.objSelectedMember+1:]...)
+		entries[m.objSelectedEntry].Members = members
+		m.objDrafts[m.objSelectedCategory] = entries
+		if m.objSelectedMember > 0 {
+			m.objSelectedMember--
+		}
+	}
+
+	m.saveObjectsDraft()
+}
+
+func (m *cliModel) saveObjectsDraft() {
+	if len(m.objDrafts) < 7 {
+		return
+	}
+	g := m.objDrafts[0]
+	rg := m.objDrafts[1]
+	sv := m.objDrafts[2]
+	hs := m.objDrafts[3]
+	zn := m.objDrafts[4]
+	ls := m.objDrafts[5]
+	fd := m.objDrafts[6]
+
+	err := sanitizeObjects(g, rg, sv, hs, zn, ls, fd)
+	if err != nil {
+		if m.status == nil {
+			m.status = make(map[string]interface{})
+		}
+		m.status["commitError"] = "Invalid object: " + err.Error()
+		return
+	}
+
+	out := serializeObjects(g, rg, sv, hs, zn, ls, fd)
+	os.WriteFile(objDraftFile, []byte(out), 0644)
+	m.objHasDraft = true
+	if m.status != nil {
+		m.status["commitError"] = ""
 	}
 }
