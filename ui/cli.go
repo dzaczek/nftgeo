@@ -223,7 +223,8 @@ type cliModel struct {
 	// components
 	logTable    bubblesTable.Model
 	policyTable bubblesTable.Model
-	viewport    viewport.Model // for lookup details
+	viewport    viewport.Model // for modals (lookup / rule detail / preview)
+	sysVP       viewport.Model // for the scrollable System view
 	help        help.Model
 	filterInput textinput.Model
 
@@ -323,6 +324,7 @@ func initialModel() cliModel {
 	m.dropsChart = linechart.New(80, 10, 0, 23, 0, 100)
 
 	m.viewport = viewport.New(60, 20)
+	m.sysVP = viewport.New(80, 20)
 
 	return m
 }
@@ -839,6 +841,10 @@ func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updatePolicyKeys(msg)
 	case 3:
 		return m.updateObjectsKeys(msg)
+	case 4:
+		var cmd tea.Cmd
+		m.sysVP, cmd = m.sysVP.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -1005,6 +1011,8 @@ func (m *cliModel) updateLayout() {
 	m.policyTable.SetHeight(m.height - 13)
 	m.viewport.Width = m.width - 10
 	m.viewport.Height = m.height - 10
+	m.sysVP.Width = m.viewWidth()
+	m.sysVP.Height = m.height - 8
 
 	chartH := 10
 	if m.height < 40 {
@@ -1138,6 +1146,8 @@ func (m cliModel) renderHints() string {
 		} else {
 			viewHints = objectsHints
 		}
+	case 4:
+		viewHints = systemHints
 	default:
 		viewHints = ""
 	}

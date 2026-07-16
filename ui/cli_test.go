@@ -468,3 +468,34 @@ func TestReferenceWhitelistEdit(t *testing.T) {
 		t.Errorf("delete failed: %v", m.wlEntries)
 	}
 }
+
+func TestSystemHardening(t *testing.T) {
+	m := initialModel()
+	m.activeTab = 4
+
+	// nil ifStats must not panic and shows the empty message
+	if got := m.renderSystem(); got != "No interface data." {
+		t.Errorf("nil ifStats: %q", got)
+	}
+
+	// oddly-typed / missing keys must degrade, not panic
+	m.ifStats = map[string]interface{}{
+		"ifaces": []map[string]interface{}{
+			{"name": "eth0", "up": true, "rx_bps": []float64{1, 2, 3},
+				"errors_total": map[string]uint64{"rx_errs": 5, "tx_drop": 0}},
+			{"name": "eth1"},             // no up/speed/errors
+			{"speed_mbps": "not-an-int"}, // no name -> skipped
+		},
+		"conntrack": map[string]uint64{"count": 50, "max": 100},
+	}
+	m.updateSystemData()
+	body := m.systemBody()
+	if !strings.Contains(body, "eth0") || !strings.Contains(body, "Conntrack") {
+		t.Errorf("system body missing expected content:\n%s", body)
+	}
+	// only rx_errs is non-zero -> exactly one error column
+	cols := activeErrColumns(asIfaceList(m.ifStats, "ifaces"))
+	if len(cols) != 1 || cols[0].key != "rx_errs" {
+		t.Errorf("activeErrColumns = %+v, want [rx_errs]", cols)
+	}
+}
