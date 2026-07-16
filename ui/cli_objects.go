@@ -27,11 +27,23 @@ var objectsKeys = objectsKeyMap{
 	Delete: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 }
 
-const objectsHints = "↑↓ move · enter open · esc up · a add · e edit · d delete"
+const objectsHints = "↑↓ move · enter open · esc up · a add · e edit · d delete · w reference"
+const referenceHints = "↑↓ move · a add · d delete · w back to tree"
 
 var objCategories = []string{"Groups", "Regions", "Services", "Hosts", "Zones", "Lists", "Feeds"}
 
+// refKey toggles between the object tree and the Reference subview.
+var refKey = key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "reference"))
+
 func (m cliModel) updateObjectsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, refKey) {
+		m.objRef = !m.objRef
+		m.refSel = 0
+		return m, nil
+	}
+	if m.objRef {
+		return m.updateReferenceKeys(msg)
+	}
 	switch {
 	case key.Matches(msg, viewKeyEnter):
 		// descend: Category -> Entry -> Member
@@ -284,6 +296,9 @@ func (m *cliModel) saveObjectsDraft() {
 }
 
 func (m cliModel) renderObjects() string {
+	if m.objRef {
+		return m.renderReference()
+	}
 	if m.objDrafts == nil {
 		return "Loading..."
 	}

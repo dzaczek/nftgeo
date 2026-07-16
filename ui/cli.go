@@ -273,6 +273,15 @@ type cliModel struct {
 	objInputMode        bool
 	objInputContext     string
 	objInput            textinput.Model
+
+	// objects Reference subview (whitelist editor + feeds + sets)
+	objRef     bool
+	wlEntries  []string
+	wlHosts    []string
+	feeds      []map[string]interface{}
+	setsList   []Set
+	refSel     int
+	refAddMode bool
 }
 
 func initialModel() cliModel {
@@ -360,6 +369,15 @@ func layoutCols(total int, specs []colSpec) []int {
 		widths[last] += extra - given // remainder to the last flexible column
 	}
 	return widths
+}
+
+// joinColumns lays out fixed-width text columns side by side.
+func joinColumns(width int, cols ...string) string {
+	styled := make([]string, len(cols))
+	for i, c := range cols {
+		styled[i] = lipgloss.NewStyle().Width(width).Render(c)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, styled...)
 }
 
 func toTableColumns(specs []colSpec, widths []int) []bubblesTable.Column {
@@ -458,6 +476,10 @@ type fetchMsg struct {
 	alerts      []Alert
 	abuseLoad   map[string]interface{}
 	topIPs      []map[string]interface{}
+	wlEntries   []string
+	wlHosts     []string
+	feeds       []map[string]interface{}
+	setsList    []Set
 }
 type lookupMsg map[string]interface{}
 
@@ -531,12 +553,23 @@ func fetchDataCmd() tea.Cmd {
 
 		// dashboard extras: alerts, feed-load progress, top source IPs with
 		// per-IP 24h histograms (same sources as the web dashboard)
-		alerts := buildAlerts(tableLoaded(), abuseSources(), dr.Timeline)
+		feeds := abuseSources()
+		alerts := buildAlerts(tableLoaded(), feeds, dr.Timeline)
 		var topIPs []map[string]interface{}
 		if hist := ipHistogram(time.Now().Unix()-86400, 24, 8); hist != nil {
 			if ips, ok := hist["ips"].([]map[string]interface{}); ok {
 				topIPs = ips
 			}
+		}
+
+		// whitelist for the Reference subview: draft if present, else live
+		wlEntries := currentWhitelist()
+		if b, err := os.ReadFile(wlDraftFile); err == nil {
+			wlEntries = parseList(string(b))
+		}
+		wlHosts := currentWhitelistHosts()
+		if b, err := os.ReadFile(wlHostsDraftFile); err == nil {
+			wlHosts = parseList(string(b))
 		}
 
 		return fetchMsg{
@@ -552,6 +585,10 @@ func fetchDataCmd() tea.Cmd {
 			alerts:      alerts,
 			abuseLoad:   abuseLoadStatus(),
 			topIPs:      topIPs,
+			wlEntries:   wlEntries,
+			wlHosts:     wlHosts,
+			feeds:       feeds,
+			setsList:    sets(),
 		}
 	}
 }
@@ -602,6 +639,12 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.alerts = msg.alerts
 		m.abuseLoad = msg.abuseLoad
 		m.topIPs = msg.topIPs
+		if !m.refAddMode { // don't clobber the list the user is editing
+			m.wlEntries = msg.wlEntries
+			m.wlHosts = msg.wlHosts
+		}
+		m.feeds = msg.feeds
+		m.setsList = msg.setsList
 		m.loading = false
 		m.lastFetch = time.Now()
 		m.updateData()
@@ -672,6 +715,9 @@ func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.activeTab == 2 && m.ruleForm.active {
 		return m.updateRuleForm(msg)
+	}
+	if m.activeTab == 3 && m.refAddMode {
+		return m.updateReferenceInput(msg)
 	}
 	if m.activeTab == 3 && m.objInputMode {
 		return m.updateObjectsInput(msg)
@@ -1087,7 +1133,11 @@ func (m cliModel) renderHints() string {
 	case 2:
 		viewHints = policyHints
 	case 3:
-		viewHints = objectsHints
+		if m.objRef {
+			viewHints = referenceHints
+		} else {
+			viewHints = objectsHints
+		}
 	default:
 		viewHints = ""
 	}

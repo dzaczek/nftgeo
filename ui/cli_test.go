@@ -401,3 +401,70 @@ func TestPolicyAddOpensPicker(t *testing.T) {
 		t.Errorf("esc should close the form")
 	}
 }
+
+func TestReferenceWhitelistEdit(t *testing.T) {
+	dir := t.TempDir()
+	oldD, oldWL, oldWLH := draftDir, wlDraftFile, wlHostsDraftFile
+	draftDir = dir
+	wlDraftFile = dir + "/whitelist"
+	wlHostsDraftFile = dir + "/whitelist-hosts"
+	t.Cleanup(func() { draftDir, wlDraftFile, wlHostsDraftFile = oldD, oldWL, oldWLH })
+
+	m := initialModel()
+	m.activeTab = 3
+	m.wlEntries = []string{"10.0.0.1"}
+	m.wlHosts = nil
+
+	press := func(k string) {
+		var msg tea.KeyMsg
+		switch k {
+		case "enter":
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		case "esc":
+			msg = tea.KeyMsg{Type: tea.KeyEsc}
+		default:
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		}
+		res, _ := m.Update(msg)
+		m = res.(cliModel)
+	}
+
+	// w enters Reference; a opens the add input
+	press("w")
+	if !m.objRef {
+		t.Fatalf("w should toggle Reference on")
+	}
+	press("a")
+	if !m.refAddMode {
+		t.Fatalf("a should open the whitelist add input")
+	}
+	// type a valid CIDR and confirm — it is saved through saveWhitelistDraft
+	m.objInput.SetValue("192.168.5.0/24")
+	press("enter")
+	if m.refAddMode {
+		t.Errorf("enter should close the add input")
+	}
+	if len(m.wlEntries) != 2 || m.wlEntries[1] != "192.168.5.0/24" {
+		t.Fatalf("entry not added: %v", m.wlEntries)
+	}
+	if got := readFileStr(wlDraftFile); got != serializeListFile(m.wlEntries) {
+		t.Errorf("whitelist draft not written by the shared path: %q", got)
+	}
+
+	// invalid entry surfaces the validation error and does not persist a draft
+	m.setStatusInfo("")
+	press("a")
+	m.objInput.SetValue("not-an-ip")
+	press("enter")
+	if !m.statusErr {
+		t.Errorf("invalid whitelist entry should raise a status error")
+	}
+
+	// d deletes the selected entry
+	m.wlEntries = []string{"10.0.0.1", "192.168.5.0/24"}
+	m.refSel = 0
+	press("d")
+	if len(m.wlEntries) != 1 || m.wlEntries[0] != "192.168.5.0/24" {
+		t.Errorf("delete failed: %v", m.wlEntries)
+	}
+}
