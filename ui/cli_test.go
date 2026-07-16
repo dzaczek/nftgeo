@@ -251,3 +251,42 @@ func TestQuitGuardedDuringConfirm(t *testing.T) {
 		t.Errorf("expected a status-bar warning, got %q", m.statusMsg)
 	}
 }
+
+func TestLogsDetailAndWideFilter(t *testing.T) {
+	m := initialModel()
+	m.activeTab = 1
+	m.drops = DropsResp{Recent: []Drop{
+		{Time: "t1", Src: "1.1.1.1", Dst: "9.9.9.9", Dport: "443", Proto: "TCP", Dir: "ingress", CC: "de", Reason: "geo", Verdict: "drop"},
+		{Time: "t2", Src: "2.2.2.2", Dst: "8.8.8.8", Dport: "22", Proto: "TCP", Dir: "ingress", CC: "us", Reason: "abuse", Verdict: "drop"},
+	}}
+
+	// the text filter must match destination, port and country too
+	for filter, want := range map[string]int{"9.9.9.9": 1, "443": 1, "de": 1, "abuse": 1, "nomatch": 0} {
+		m.filterInput.SetValue(filter)
+		m.updateData()
+		if got := len(m.logTable.Rows()); got != want {
+			t.Errorf("filter %q: %d rows, want %d", filter, got, want)
+		}
+	}
+	m.filterInput.SetValue("")
+	m.updateData()
+
+	// Enter opens the detail modal for the selected (filtered) record
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = res.(cliModel)
+	if !m.showLookup || m.detailDrop == nil {
+		t.Fatalf("enter should open the detail modal with the record")
+	}
+	if m.detailDrop.Src != "1.1.1.1" || m.detailDrop.Dst != "9.9.9.9" {
+		t.Errorf("wrong record in detail: %+v", m.detailDrop)
+	}
+	if cmd == nil {
+		t.Errorf("enter should start the async PTR/RDAP lookup")
+	}
+	// esc closes and clears the record
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = res.(cliModel)
+	if m.showLookup || m.detailDrop != nil {
+		t.Errorf("esc should close the modal and clear the record")
+	}
+}

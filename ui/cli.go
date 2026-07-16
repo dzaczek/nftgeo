@@ -220,6 +220,11 @@ type cliModel struct {
 	verdictFilter string // "", "drop", "accept"
 	dirFilter     string // "", "ingress", "egress", "forward"
 
+	// logs detail: the drops behind the currently displayed (filtered) rows,
+	// and the record shown in the detail modal
+	logFiltered []Drop
+	detailDrop  *Drop
+
 	// charts
 	dropsChart    linechart.Model
 	ingressChart  barchart.Model
@@ -611,6 +616,7 @@ func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, viewKeyBack), key.Matches(msg, globalKeys.Quit):
 			m.showLookup = false
+			m.detailDrop = nil
 			return m, nil
 		}
 		m.viewport, cmd = m.viewport.Update(msg)
