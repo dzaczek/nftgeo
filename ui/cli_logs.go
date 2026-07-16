@@ -144,7 +144,7 @@ func (m cliModel) updateLogsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			d := m.logFiltered[idx]
 			m.detailDrop = &d
 			m.lookupRes = nil // fills in when the async lookup answers
-			m.showLookup = true
+			m.modal = modalLookup
 			m.viewport.SetContent(m.renderLookupDetails())
 			m.viewport.GotoTop()
 			return m, lookupCmd(d.Src)

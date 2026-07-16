@@ -3340,17 +3340,6 @@ func moveRuleDraft(fromFileID, toFileID string, fromID, toIndex int) (errMsg str
 	return "", 0
 }
 
-// cliAddDenyRule adds a new deny rule to the specified file.
-func cliAddDenyRule(fileID, target string) error {
-	rf := findRuleFileByRel(fileID)
-	if rf == nil {
-		return fmt.Errorf("file not found")
-	}
-	rules, tail := parseDraftRules(draftTextFor(*rf))
-	rules = append(rules, &draftRule{ID: -1, Body: "drop " + target, Name: "Added via CLI"})
-	return writeDraftFor(*rf, rules, tail)
-}
-
 func handleRulesReorder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		File  string `json:"file"`

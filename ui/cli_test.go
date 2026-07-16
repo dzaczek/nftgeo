@@ -275,7 +275,7 @@ func TestLogsDetailAndWideFilter(t *testing.T) {
 	// Enter opens the detail modal for the selected (filtered) record
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(cliModel)
-	if !m.showLookup || m.detailDrop == nil {
+	if m.modal != modalLookup || m.detailDrop == nil {
 		t.Fatalf("enter should open the detail modal with the record")
 	}
 	if m.detailDrop.Src != "1.1.1.1" || m.detailDrop.Dst != "9.9.9.9" {
@@ -287,7 +287,7 @@ func TestLogsDetailAndWideFilter(t *testing.T) {
 	// esc closes and clears the record
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = res.(cliModel)
-	if m.showLookup || m.detailDrop != nil {
+	if m.modal != modalNone || m.detailDrop != nil {
 		t.Errorf("esc should close the modal and clear the record")
 	}
 }
@@ -310,5 +310,94 @@ func TestDashboardTopPanels(t *testing.T) {
 	out := m.topPanel("T", []kvCount{{"us", 100}, {"pl", 1}}, 40, m.styles.Accent)
 	if !strings.Contains(out, "us") || !strings.Contains(out, "pl") || !strings.Contains(out, "▇") {
 		t.Errorf("topPanel output missing rows/bars:\n%s", out)
+	}
+}
+
+func TestRuleFormReqMapping(t *testing.T) {
+	m := initialModel()
+	// filter form -> ruleSaveReq (no Kind; dispatched by Action)
+	m.openRuleForm("filter", nil, "rules.conf")
+	set := func(key, val string) {
+		for i := range m.ruleForm.fields {
+			if m.ruleForm.fields[i].key == key {
+				m.ruleForm.fields[i].input.SetValue(val)
+			}
+		}
+	}
+	set("action", "deny")
+	set("dir", "in")
+	set("proto", "tcp")
+	set("port", "22")
+	set("target", "abuse")
+	set("log", "y")
+	req := m.ruleForm.formReq()
+	if req.Kind != "" || req.Action != "deny" || req.Port != "22" || req.Target != "abuse" || !req.Log {
+		t.Errorf("filter req = %+v", req)
+	}
+
+	// throttle -> Action forced to "throttle"
+	m.openRuleForm("throttle", nil, "rules.conf")
+	req = m.ruleForm.formReq()
+	if req.Action != "throttle" {
+		t.Errorf("throttle req.Action = %q, want throttle", req.Action)
+	}
+
+	// nat -> Kind carried through so saveRuleDraft dispatches to buildNatBody
+	m.openRuleForm("nat", nil, "rules.conf")
+	req = m.ruleForm.formReq()
+	if req.Kind != "nat" {
+		t.Errorf("nat req.Kind = %q, want nat", req.Kind)
+	}
+
+	// edit prefills and carries the ID
+	id := 7
+	edit := &draftRule{ID: id, File: "rules.conf", Action: "allow", Dir: "in", Proto: "udp", Port: "53", Target: "any", Name: "dns"}
+	m.openRuleForm("filter", edit, "rules.conf")
+	req = m.ruleForm.formReq()
+	if req.ID == nil || *req.ID != id || req.Proto != "udp" || req.Name != "dns" {
+		t.Errorf("edit req = %+v (id=%v)", req, req.ID)
+	}
+}
+
+func TestPolicyDeleteConfirm(t *testing.T) {
+	m := initialModel()
+	m.activeTab = 2
+	m.draftRules = []*draftRule{{ID: 3, File: "rules.conf", Body: "drop any", Action: "deny"}}
+	m.updateData()
+	m.policyTable.SetCursor(0)
+
+	// 'd' arms the confirm, does not delete yet
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	m = res.(cliModel)
+	if m.deleteTarget == nil || m.deleteTarget.ID != 3 {
+		t.Fatalf("d should arm delete confirm, got %v", m.deleteTarget)
+	}
+	// any non-y cancels
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	m = res.(cliModel)
+	if m.deleteTarget != nil {
+		t.Errorf("n should cancel the delete confirm")
+	}
+}
+
+func TestPolicyAddOpensPicker(t *testing.T) {
+	m := initialModel()
+	m.activeTab = 2
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = res.(cliModel)
+	if !m.ruleForm.active || !m.ruleForm.picker {
+		t.Fatalf("a should open the kind picker, form=%+v", m.ruleForm)
+	}
+	// picking a kind opens the field form
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = res.(cliModel)
+	if m.ruleForm.picker || len(m.ruleForm.fields) == 0 {
+		t.Errorf("enter should open the field form, form=%+v", m.ruleForm)
+	}
+	// esc closes it
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = res.(cliModel)
+	if m.ruleForm.active {
+		t.Errorf("esc should close the form")
 	}
 }

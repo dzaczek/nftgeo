@@ -182,8 +182,17 @@ type policyEditState int
 const (
 	policyStateNormal policyEditState = iota
 	policyStateMoving
-	policyStatePrompt
 	policyStateConfirming
+)
+
+// modalKind selects what the centered viewport modal shows.
+type modalKind int
+
+const (
+	modalNone modalKind = iota
+	modalLookup
+	modalRuleDetail
+	modalPreview
 )
 
 type cliModel struct {
@@ -233,7 +242,7 @@ type cliModel struct {
 	txSparklines map[string]sparkline.Model
 
 	showHelp   bool
-	showLookup bool
+	modal      modalKind
 	showFilter bool
 	loading    bool
 	lastFetch  time.Time
@@ -246,6 +255,15 @@ type cliModel struct {
 	editState        policyEditState
 	moveSourceID     int
 	confirmRemaining int
+	ruleForm         ruleFormState
+	deleteTarget     *draftRule
+	detailRule       *draftRule
+
+	// commit preview modal
+	previewLoading bool
+	previewPayload map[string]interface{}
+	previewErr     string
+	previewSeconds int
 
 	// objects edit state
 	objLevel            int
@@ -443,6 +461,19 @@ type fetchMsg struct {
 }
 type lookupMsg map[string]interface{}
 
+// previewMsg carries the async commitPreviewInfo result for the deploy modal.
+type previewMsg struct {
+	payload map[string]interface{}
+	errMsg  string
+}
+
+func previewCmd() tea.Cmd {
+	return func() tea.Msg {
+		payload, errMsg, _ := commitPreviewInfo()
+		return previewMsg{payload: payload, errMsg: errMsg}
+	}
+}
+
 func refreshTickCmd(d time.Duration) tea.Cmd {
 	if d <= 0 {
 		return nil
@@ -577,8 +608,18 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case lookupMsg:
 		m.lookupRes = msg
-		m.showLookup = true
-		m.viewport.SetContent(m.renderLookupDetails())
+		if m.modal == modalNone || m.modal == modalLookup {
+			m.modal = modalLookup
+			m.viewport.SetContent(m.renderLookupDetails())
+		}
+
+	case previewMsg:
+		m.previewLoading = false
+		m.previewPayload = msg.payload
+		m.previewErr = msg.errMsg
+		if m.modal == modalPreview {
+			m.viewport.SetContent(m.renderPreview())
+		}
 
 	case tea.KeyMsg:
 		return m.updateKeys(msg)
@@ -598,7 +639,7 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if m.showLookup {
+		if m.modal != modalNone {
 			m.viewport, cmd = m.viewport.Update(msg)
 			return m, cmd
 		}
@@ -626,15 +667,11 @@ func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	// 1) modal / input ownership
-	if m.showLookup {
-		switch {
-		case key.Matches(msg, viewKeyBack), key.Matches(msg, globalKeys.Quit):
-			m.showLookup = false
-			m.detailDrop = nil
-			return m, nil
-		}
-		m.viewport, cmd = m.viewport.Update(msg)
-		return m, cmd
+	if m.modal != modalNone {
+		return m.updateModalKeys(msg)
+	}
+	if m.activeTab == 2 && m.ruleForm.active {
+		return m.updateRuleForm(msg)
 	}
 	if m.activeTab == 3 && m.objInputMode {
 		return m.updateObjectsInput(msg)
@@ -650,9 +687,6 @@ func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterInput, cmd = m.filterInput.Update(msg)
 		m.updateData()
 		return m, cmd
-	}
-	if m.editState == policyStatePrompt {
-		return m.updatePolicyPrompt(msg)
 	}
 
 	// 2) pending confirm: y keeps, n/r rolls back; q is guarded
@@ -763,30 +797,112 @@ func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// startCommit runs the shared deploy pipeline (same as the web Commit button).
+// startCommit opens the deploy-preview modal (validate + plan + deadman
+// selector); the actual apply happens on 'y' in updateModalKeys.
 func (m cliModel) startCommit() (tea.Model, tea.Cmd) {
 	if len(activeStages()) == 0 {
 		m.setStatusInfo("no drafts to deploy")
 		return m, nil
 	}
-	payload, errMsg, _ := commitApply(90)
-	if errMsg != "" {
-		m.setStatusErr(errMsg)
-		return m, nil
+	m.modal = modalPreview
+	m.previewLoading = true
+	m.previewPayload = nil
+	m.previewErr = ""
+	if m.previewSeconds == 0 {
+		m.previewSeconds = 90
 	}
-	if deployed, _ := payload["deployed"].(bool); !deployed {
-		if s, _ := payload["message"].(string); s != "" {
-			m.setStatusErr(s)
+	m.viewport.SetContent(m.renderPreview())
+	m.viewport.GotoTop()
+	return m, previewCmd()
+}
+
+// updateModalKeys owns the keyboard while a centered modal is open.
+func (m cliModel) updateModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
+	if m.modal == modalPreview && !m.previewLoading {
+		valid, _ := m.previewPayload["valid"].(bool)
+		switch msg.String() {
+		case "left", "-":
+			if m.previewSeconds > 30 {
+				m.previewSeconds -= 30
+			}
+			m.viewport.SetContent(m.renderPreview())
+			return m, nil
+		case "right", "+":
+			if m.previewSeconds < 600 {
+				m.previewSeconds += 30
+			}
+			m.viewport.SetContent(m.renderPreview())
+			return m, nil
+		case "y":
+			if !valid || m.previewErr != "" {
+				return m, nil
+			}
+			m.modal = modalNone
+			payload, errMsg, _ := commitApply(m.previewSeconds)
+			if errMsg != "" {
+				m.setStatusErr(errMsg)
+				return m, nil
+			}
+			if deployed, _ := payload["deployed"].(bool); !deployed {
+				if s, _ := payload["message"].(string); s != "" {
+					m.setStatusErr(s)
+				}
+				return m, nil
+			}
+			m.editState = policyStateConfirming
+			m.confirmRemaining = m.previewSeconds
+			if s, ok := payload["seconds"].(int); ok {
+				m.confirmRemaining = s
+			}
+			m.clearStatus()
+			return m, confirmTickCmd()
 		}
+	}
+
+	// rule-detail shortcuts: jump straight into edit/delete/toggle
+	if m.modal == modalRuleDetail && m.detailRule != nil {
+		r := m.detailRule
+		switch msg.String() {
+		case "e":
+			m.modal = modalNone
+			m.detailRule = nil
+			kind := r.Kind
+			if kind == "" {
+				kind = "filter"
+			}
+			if r.Action == "throttle" {
+				kind = "throttle"
+			}
+			if _, ok := ruleFormSpecs[kind]; ok {
+				m.openRuleForm(kind, r, r.File)
+			}
+			return m, nil
+		case "d":
+			m.modal = modalNone
+			m.detailRule = nil
+			m.deleteTarget = r
+			return m, nil
+		case " ":
+			if _, errMsg, _ := toggleRuleDraft(r.File, r.ID); errMsg != "" {
+				m.setStatusErr(errMsg)
+			}
+			m.modal = modalNone
+			m.detailRule = nil
+			return m, fetchDataCmd()
+		}
+	}
+
+	switch {
+	case key.Matches(msg, viewKeyBack), key.Matches(msg, globalKeys.Quit):
+		m.modal = modalNone
+		m.detailDrop = nil
+		m.detailRule = nil
 		return m, nil
 	}
-	m.editState = policyStateConfirming
-	m.confirmRemaining = 90
-	if s, ok := payload["seconds"].(int); ok {
-		m.confirmRemaining = s
-	}
-	m.clearStatus()
-	return m, confirmTickCmd()
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
 }
 
 // ---- shared view key bindings (enter/esc reused by every view) ----
@@ -914,7 +1030,7 @@ func (m cliModel) View() string {
 	parts = append(parts, mainContent, statusLine, hints)
 	view := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
-	if m.showLookup {
+	if m.modal != modalNone {
 		modal := m.styles.Modal.Render(m.viewport.View())
 		return m.placeOverlay(modal)
 	}
