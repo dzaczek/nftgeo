@@ -3231,6 +3231,9 @@ func cliDraftRules() []*draftRule {
 	for _, rf := range ruleFileList() {
 		items, _ := parseDraftRules(draftTextFor(rf))
 		annotateDraft(items, ctr)
+		for _, it := range items {
+			it.File = rf.rel // needed so the TUI's mutations know their file
+		}
 		all = append(all, items...)
 	}
 	return all
