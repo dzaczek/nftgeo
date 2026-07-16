@@ -1,13 +1,16 @@
 package main
 
-// Dashboard view: KPI tiles, the 24h braille drops timeline and the top-N
-// charts.
+// Dashboard view: KPI tiles, the 24h braille drops timeline, alerts, the
+// abuse-load gauge and four top-N panels (countries in/out, ports, source
+// IPs with per-IP mini-histograms). The top-N panels are plain text tables
+// with inline block bars — the previous ntcharts barcharts collapsed to
+// empty bars whenever one value dominated the autoscale.
 
 import (
 	"fmt"
 	"sort"
+	"time"
 
-	"github.com/NimbleMarkets/ntcharts/barchart"
 	"github.com/NimbleMarkets/ntcharts/canvas"
 	"github.com/NimbleMarkets/ntcharts/linechart"
 	"github.com/charmbracelet/lipgloss"
@@ -30,41 +33,127 @@ func (m *cliModel) updateDashboardData() {
 			m.dropsChart.DrawBrailleLine(p1, p2)
 		}
 	}
+}
 
-	p := cliDarkPalette
-	if !m.darkTheme {
-		p = cliLightPalette
-	}
+// kvCount is one row of a top-N panel.
+type kvCount struct {
+	label string
+	n     int
+}
 
-	// Ingress CC
-	m.ingressChart.Clear()
-	var ccKeys []string
-	for k := range m.drops.IngressByCC {
-		ccKeys = append(ccKeys, k)
+// sortedCounts turns a count map into a descending top-N list.
+func sortedCounts(counts map[string]int, limit int) []kvCount {
+	out := make([]kvCount, 0, len(counts))
+	for k, v := range counts {
+		out = append(out, kvCount{k, v})
 	}
-	sort.Slice(ccKeys, func(i, j int) bool { return m.drops.IngressByCC[ccKeys[i]] > m.drops.IngressByCC[ccKeys[j]] })
-	for i := 0; i < 10 && i < len(ccKeys); i++ {
-		m.ingressChart.Push(barchart.BarData{
-			Label:  ccKeys[i],
-			Values: []barchart.BarValue{{Value: float64(m.drops.IngressByCC[ccKeys[i]]), Style: lipgloss.NewStyle().Foreground(p.Drop)}},
-		})
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].n != out[j].n {
+			return out[i].n > out[j].n
+		}
+		return out[i].label < out[j].label
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
-	m.ingressChart.Draw()
+	return out
+}
 
-	// Top Ports
-	m.topPortsChart.Clear()
-	var portKeys []string
-	for k := range m.drops.TopPorts {
-		portKeys = append(portKeys, k)
+// topPanel renders a titled "label count bar" table. Bars scale to the
+// panel's own maximum, so every row shows a visible proportion.
+func (m cliModel) topPanel(title string, rows []kvCount, width int, barStyle lipgloss.Style) string {
+	out := m.styles.PanelTitle.Render(title) + "\n"
+	if len(rows) == 0 {
+		return out + m.styles.Muted.Render("  no data")
 	}
-	sort.Slice(portKeys, func(i, j int) bool { return m.drops.TopPorts[portKeys[i]] > m.drops.TopPorts[portKeys[j]] })
-	for i := 0; i < 10 && i < len(portKeys); i++ {
-		m.topPortsChart.Push(barchart.BarData{
-			Label:  portKeys[i],
-			Values: []barchart.BarValue{{Value: float64(m.drops.TopPorts[portKeys[i]]), Style: lipgloss.NewStyle().Foreground(p.Accent)}},
-		})
+	maxN := rows[0].n
+	if maxN < 1 {
+		maxN = 1
 	}
-	m.topPortsChart.Draw()
+	labelW, countW := 8, 7
+	barW := width - labelW - countW - 4
+	if barW < 5 {
+		barW = 5
+	}
+	for _, r := range rows {
+		w := r.n * barW / maxN
+		if w < 1 {
+			w = 1
+		}
+		bar := barStyle.Render(repeatRune('▇', w))
+		out += fmt.Sprintf("  %-*s %*s %s\n", labelW, clip(r.label, labelW), countW, formatCount(r.n), bar)
+	}
+	return out
+}
+
+// miniHistogram maps per-bucket counts onto block characters (▁▂▃▄▅▆▇█).
+func miniHistogram(buckets []int) string {
+	if len(buckets) == 0 {
+		return ""
+	}
+	ramp := []rune(" ▁▂▃▄▅▆▇█")
+	maxN := 1
+	for _, b := range buckets {
+		if b > maxN {
+			maxN = b
+		}
+	}
+	out := make([]rune, len(buckets))
+	for i, b := range buckets {
+		idx := b * (len(ramp) - 1) / maxN
+		out[i] = ramp[idx]
+	}
+	return string(out)
+}
+
+// topIPsPanel renders the top source IPs with hit counts and a 24h
+// mini-histogram per IP (the web's #topip table, in text form).
+func (m cliModel) topIPsPanel(width int) string {
+	out := m.styles.PanelTitle.Render("Top Source IPs (24h)") + "\n"
+	if len(m.topIPs) == 0 {
+		return out + m.styles.Muted.Render("  no data")
+	}
+	for _, ip := range m.topIPs {
+		last := ""
+		if ts := asInt(ip, "last"); ts > 0 {
+			last = time.Unix(int64(ts), 0).Format("15:04")
+		}
+		hist := ""
+		if b, ok := ip["buckets"].([]int); ok {
+			hist = m.styles.Accent.Render(miniHistogram(b))
+		}
+		out += fmt.Sprintf("  %-16s %7s  %s  %-3s %s\n",
+			clip(asStr(ip, "ip"), 16), formatCount(asInt(ip, "hits")), hist, asStr(ip, "cc"), m.styles.Muted.Render(last))
+	}
+	return out
+}
+
+func formatCount(n int) string {
+	if n >= 1000000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1000000)
+	}
+	if n >= 10000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+func clip(s string, w int) string {
+	if len(s) <= w {
+		return s
+	}
+	if w <= 1 {
+		return s[:w]
+	}
+	return s[:w-1] + "…"
+}
+
+func repeatRune(r rune, n int) string {
+	out := make([]rune, n)
+	for i := range out {
+		out[i] = r
+	}
+	return string(out)
 }
 
 func (m cliModel) renderKPI(label, value string) string {
@@ -74,6 +163,40 @@ func (m cliModel) renderKPI(label, value string) string {
 			m.styles.KpiValue.Render(value),
 		),
 	)
+}
+
+// renderAlerts renders the buildAlerts strip (crit red, warn yellow).
+func (m cliModel) renderAlerts() string {
+	if len(m.alerts) == 0 {
+		return ""
+	}
+	out := ""
+	for _, a := range m.alerts {
+		line := "▲ " + a.Msg
+		if a.Level == "crit" {
+			out += m.styles.StatusErr.Render(line) + "\n"
+		} else {
+			out += m.styles.Warning.Render(line) + "\n"
+		}
+	}
+	return out
+}
+
+// renderAbuseLoad shows feed-loading progress while the engine ingests lists.
+func (m cliModel) renderAbuseLoad() string {
+	if !asBool(m.abuseLoad, "active") {
+		return ""
+	}
+	loaded, total := asInt(m.abuseLoad, "loaded"), asInt(m.abuseLoad, "total")
+	pct := asInt(m.abuseLoad, "pct")
+	barW := 20
+	fill := pct * barW / 100
+	if fill > barW {
+		fill = barW
+	}
+	bar := repeatRune('█', fill) + repeatRune('░', barW-fill)
+	return m.styles.Warning.Render(fmt.Sprintf("abuse feeds loading: %s %d%% (%s/%s)",
+		bar, pct, formatCount(loaded), formatCount(total))) + "\n"
 }
 
 func (m cliModel) renderDashboard() string {
@@ -105,15 +228,38 @@ func (m cliModel) renderDashboard() string {
 		m.renderKPI("Net RX/TX", fmt.Sprintf("%s / %s", formatBpsVal(rxTotal), formatBpsVal(txTotal))),
 	)
 
-	chartTitle := m.styles.PanelTitle.Render("Drops over 24h")
-	chart := m.dropsChart.View()
+	vw := m.viewWidth()
+	panelW := (vw - 4) / 3
+	if panelW < 24 {
+		panelW = 24
+	}
+	limit := 5
+	if m.height > 44 {
+		limit = 8
+	}
 
-	bottomCharts := lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.JoinVertical(lipgloss.Left, m.styles.PanelTitle.Render("Top Countries"), m.ingressChart.View()),
-		lipgloss.JoinVertical(lipgloss.Left, m.styles.PanelTitle.Render("Top Ports"), m.topPortsChart.View()),
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(panelW).Render(m.topPanel("Top Countries In", sortedCounts(m.drops.IngressByCC, limit), panelW, m.styles.DropVerdict)),
+		lipgloss.NewStyle().Width(panelW).Render(m.topPanel("Top Countries Out", sortedCounts(m.drops.EgressByCC, limit), panelW, m.styles.DropVerdict)),
+		lipgloss.NewStyle().Width(panelW).Render(m.topPanel("Top Ports", sortedCounts(m.drops.TopPorts, limit), panelW, m.styles.Accent)),
 	)
 
-	return lipgloss.JoinVertical(lipgloss.Left, kpiRow, "", chartTitle, chart, "", bottomCharts)
+	sections := []string{}
+	if a := m.renderAlerts(); a != "" {
+		sections = append(sections, a)
+	}
+	if a := m.renderAbuseLoad(); a != "" {
+		sections = append(sections, a)
+	}
+	sections = append(sections,
+		kpiRow, "",
+		m.styles.PanelTitle.Render("Drops over 24h"),
+		m.dropsChart.View(), "",
+		topRow, "",
+		m.topIPsPanel(vw),
+	)
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
 func (m cliModel) getConntrack() string {

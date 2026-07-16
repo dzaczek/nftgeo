@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -288,5 +289,26 @@ func TestLogsDetailAndWideFilter(t *testing.T) {
 	m = res.(cliModel)
 	if m.showLookup || m.detailDrop != nil {
 		t.Errorf("esc should close the modal and clear the record")
+	}
+}
+
+func TestDashboardTopPanels(t *testing.T) {
+	// sortedCounts: descending, ties alphabetical, capped at limit
+	got := sortedCounts(map[string]int{"us": 5, "de": 9, "pl": 5, "fr": 1}, 3)
+	if len(got) != 3 || got[0].label != "de" || got[1].label != "pl" || got[2].label != "us" {
+		t.Errorf("sortedCounts = %+v", got)
+	}
+	// miniHistogram: scales to its own max, empty-safe
+	if h := miniHistogram([]int{0, 1, 8}); len([]rune(h)) != 3 {
+		t.Errorf("miniHistogram len = %q", h)
+	}
+	if h := miniHistogram(nil); h != "" {
+		t.Errorf("empty buckets: %q", h)
+	}
+	// topPanel renders every row with a visible bar
+	m := initialModel()
+	out := m.topPanel("T", []kvCount{{"us", 100}, {"pl", 1}}, 40, m.styles.Accent)
+	if !strings.Contains(out, "us") || !strings.Contains(out, "pl") || !strings.Contains(out, "▇") {
+		t.Errorf("topPanel output missing rows/bars:\n%s", out)
 	}
 }

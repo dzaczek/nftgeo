@@ -11,7 +11,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/NimbleMarkets/ntcharts/barchart"
 	"github.com/NimbleMarkets/ntcharts/linechart"
 	"github.com/NimbleMarkets/ntcharts/sparkline"
 	"github.com/charmbracelet/bubbles/help"
@@ -208,6 +207,9 @@ type cliModel struct {
 	lookupRes   map[string]interface{}
 	objDrafts   [][]objEntry
 	objHasDraft bool
+	alerts      []Alert
+	abuseLoad   map[string]interface{}
+	topIPs      []map[string]interface{}
 
 	// components
 	logTable    bubblesTable.Model
@@ -226,11 +228,9 @@ type cliModel struct {
 	detailDrop  *Drop
 
 	// charts
-	dropsChart    linechart.Model
-	ingressChart  barchart.Model
-	topPortsChart barchart.Model
-	rxSparklines  map[string]sparkline.Model
-	txSparklines  map[string]sparkline.Model
+	dropsChart   linechart.Model
+	rxSparklines map[string]sparkline.Model
+	txSparklines map[string]sparkline.Model
 
 	showHelp   bool
 	showLookup bool
@@ -294,11 +294,6 @@ func initialModel() cliModel {
 
 	// Charts
 	m.dropsChart = linechart.New(80, 10, 0, 23, 0, 100)
-	m.ingressChart = barchart.New(40, 10)
-	m.ingressChart.SetHorizontal(true)
-	m.ingressChart.SetShowAxis(true)
-	m.topPortsChart = barchart.New(40, 10)
-	m.topPortsChart.SetShowAxis(true)
 
 	m.viewport = viewport.New(60, 20)
 
@@ -442,6 +437,9 @@ type fetchMsg struct {
 	ifStats     map[string]interface{}
 	objDrafts   [][]objEntry
 	objHasDraft bool
+	alerts      []Alert
+	abuseLoad   map[string]interface{}
+	topIPs      []map[string]interface{}
 }
 type lookupMsg map[string]interface{}
 
@@ -500,6 +498,16 @@ func fetchDataCmd() tea.Cmd {
 		g, rg, sv, hs, zn, ls, fd := parseObjects(text)
 		objDrafts := [][]objEntry{g, rg, sv, hs, zn, ls, fd}
 
+		// dashboard extras: alerts, feed-load progress, top source IPs with
+		// per-IP 24h histograms (same sources as the web dashboard)
+		alerts := buildAlerts(tableLoaded(), abuseSources(), dr.Timeline)
+		var topIPs []map[string]interface{}
+		if hist := ipHistogram(time.Now().Unix()-86400, 24, 8); hist != nil {
+			if ips, ok := hist["ips"].([]map[string]interface{}); ok {
+				topIPs = ips
+			}
+		}
+
 		return fetchMsg{
 			status:      st,
 			drafts:      cliDraftRules(),
@@ -510,6 +518,9 @@ func fetchDataCmd() tea.Cmd {
 			ifStats:     ifStats(),
 			objDrafts:   objDrafts,
 			objHasDraft: hasDraft,
+			alerts:      alerts,
+			abuseLoad:   abuseLoadStatus(),
+			topIPs:      topIPs,
 		}
 	}
 }
@@ -557,6 +568,9 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ifStats = msg.ifStats
 		m.objDrafts = msg.objDrafts
 		m.objHasDraft = msg.objHasDraft
+		m.alerts = msg.alerts
+		m.abuseLoad = msg.abuseLoad
+		m.topIPs = msg.topIPs
 		m.loading = false
 		m.lastFetch = time.Now()
 		m.updateData()
@@ -830,9 +844,11 @@ func (m *cliModel) updateLayout() {
 	m.viewport.Width = m.width - 10
 	m.viewport.Height = m.height - 10
 
-	m.dropsChart.Resize(vw-2, 10)
-	m.ingressChart.Resize((vw-5)/2, 10)
-	m.topPortsChart.Resize((vw-5)/2, 10)
+	chartH := 10
+	if m.height < 40 {
+		chartH = 7
+	}
+	m.dropsChart.Resize(vw-2, chartH)
 	m.updateData()
 }
 
