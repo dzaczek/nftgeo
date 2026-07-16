@@ -137,3 +137,117 @@ func TestMouseTabSwitch(t *testing.T) {
 		t.Errorf("Expected active tab 1 (Logs), got %d", m.activeTab)
 	}
 }
+
+func TestLayoutCols(t *testing.T) {
+	specs := []colSpec{{title: "a", min: 10}, {title: "b", min: 10, weight: 1}, {title: "c", min: 10, weight: 3}}
+	// plenty of space: minimums + weighted split of the extra 40
+	w := layoutCols(70, specs)
+	if w[0] != 10 || w[1] != 20 || w[2] != 40 {
+		t.Errorf("wide: %v, want [10 20 40]", w)
+	}
+	sum := w[0] + w[1] + w[2]
+	if sum != 70 {
+		t.Errorf("widths must consume the full total: %d != 70", sum)
+	}
+	// too narrow: minimums kept (degrade by clipping, not corruption)
+	w = layoutCols(20, specs)
+	if w[0] != 10 || w[1] != 10 || w[2] != 10 {
+		t.Errorf("narrow: %v, want minimums", w)
+	}
+	// no flexible columns: extra space stays unused
+	fixed := []colSpec{{title: "a", min: 5}, {title: "b", min: 5}}
+	w = layoutCols(50, fixed)
+	if w[0] != 5 || w[1] != 5 {
+		t.Errorf("fixed: %v, want [5 5]", w)
+	}
+}
+
+func TestObjectsTreeNavigation(t *testing.T) {
+	m := initialModel()
+	m.activeTab = 3
+	m.objDrafts = [][]objEntry{
+		{{Name: "G1", Members: []string{"1.1.1.1", "2.2.2.2"}}},
+		{}, {}, {}, {}, {}, {},
+	}
+
+	press := func(k string) {
+		var msg tea.KeyMsg
+		switch k {
+		case "enter":
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		case "esc":
+			msg = tea.KeyMsg{Type: tea.KeyEsc}
+		default:
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		}
+		res, _ := m.Update(msg)
+		m = res.(cliModel)
+	}
+
+	// Enter descends Category -> Entry -> Member; Esc ascends.
+	if m.objLevel != 0 {
+		t.Fatalf("start at level 0, got %d", m.objLevel)
+	}
+	press("enter")
+	if m.objLevel != 1 {
+		t.Fatalf("enter should descend to entries, level = %d", m.objLevel)
+	}
+	press("enter")
+	if m.objLevel != 2 {
+		t.Fatalf("enter should descend to members, level = %d", m.objLevel)
+	}
+	press("esc")
+	press("esc")
+	if m.objLevel != 0 {
+		t.Fatalf("esc should ascend back to categories, level = %d", m.objLevel)
+	}
+
+	// 'a' at entry level opens the input in add mode (the old build lost
+	// these keys to tab-switch collisions — guard against regressing).
+	press("enter")
+	press("a")
+	if !m.objInputMode || m.objInputContext != "entry_name" {
+		t.Errorf("a should open add-entry input, mode=%v ctx=%q", m.objInputMode, m.objInputContext)
+	}
+	// esc closes the input without leaving the level
+	press("esc")
+	if m.objInputMode || m.objLevel != 1 {
+		t.Errorf("esc should close input and stay at level 1, mode=%v level=%d", m.objInputMode, m.objLevel)
+	}
+	// tab still switches tabs from Objects (no h/l collision anymore)
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = res.(cliModel)
+	if m.activeTab != 4 {
+		t.Errorf("tab should switch tabs, activeTab = %d", m.activeTab)
+	}
+}
+
+func TestLogsDirectionCycle(t *testing.T) {
+	m := initialModel()
+	m.activeTab = 1
+	press := func(k string) {
+		res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+		m = res.(cliModel)
+	}
+	want := []string{"ingress", "egress", "forward", ""}
+	for _, w := range want {
+		press("f")
+		if m.dirFilter != w {
+			t.Fatalf("dirFilter = %q, want %q", m.dirFilter, w)
+		}
+	}
+}
+
+func TestQuitGuardedDuringConfirm(t *testing.T) {
+	m := initialModel()
+	m.editState = policyStateConfirming
+	m.confirmRemaining = 42
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m = res.(cliModel)
+	if cmd != nil {
+		t.Errorf("q must not quit while a deploy confirm is pending")
+	}
+	if m.statusMsg == "" || !m.statusErr {
+		t.Errorf("expected a status-bar warning, got %q", m.statusMsg)
+	}
+}

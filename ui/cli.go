@@ -1,15 +1,17 @@
 package main
 
+// Console TUI (nftgeo-ui cli) core: model, chrome (header/tabs/status bar),
+// global key handling and the per-view dispatch. Each tab's keys and renderer
+// live in cli_<view>.go; every mutation goes through the same shared functions
+// the web handlers use (commitApply/commitKeep/commitRollback, saveRuleDraft,
+// writeObjectsDraft, ...), so the two UIs cannot drift.
+
 import (
 	"fmt"
-	"net"
 	"os"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/NimbleMarkets/ntcharts/barchart"
-	"github.com/NimbleMarkets/ntcharts/canvas"
 	"github.com/NimbleMarkets/ntcharts/linechart"
 	"github.com/NimbleMarkets/ntcharts/sparkline"
 	"github.com/charmbracelet/bubbles/help"
@@ -80,6 +82,10 @@ type cliStyles struct {
 	Warning       lipgloss.Style
 	Highlight     lipgloss.Style
 	Dim           lipgloss.Style
+	Banner        lipgloss.Style
+	StatusErr     lipgloss.Style
+	StatusInfo    lipgloss.Style
+	PanelTitle    lipgloss.Style
 }
 
 func getStyles(dark bool) cliStyles {
@@ -92,7 +98,7 @@ func getStyles(dark bool) cliStyles {
 	s.Header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7")).Background(p.Header).Padding(0, 1)
 	s.Tab = lipgloss.NewStyle().Padding(0, 2).Border(lipgloss.NormalBorder(), false, true, false, false).BorderForeground(p.Line).Foreground(p.Muted)
 	s.ActiveTab = s.Tab.Copy().Foreground(p.Ok).Bold(true)
-	s.Window = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(p.Line).Padding(1, 2).Foreground(p.Fg).Background(p.Bg)
+	s.Window = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(p.Line).Padding(0, 1).Foreground(p.Fg)
 	s.Kpi = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(p.Line).Padding(0, 1).MarginRight(1)
 	s.KpiLabel = lipgloss.NewStyle().Foreground(p.Muted)
 	s.KpiValue = lipgloss.NewStyle().Bold(true).Foreground(p.Ok)
@@ -107,16 +113,24 @@ func getStyles(dark bool) cliStyles {
 	s.Warning = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	s.Highlight = lipgloss.NewStyle().Background(p.Line)
 	s.Dim = lipgloss.NewStyle().Foreground(p.Bg)
+	s.Banner = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(p.Drop).Padding(0, 1)
+	s.StatusErr = lipgloss.NewStyle().Foreground(p.Drop).Bold(true)
+	s.StatusInfo = lipgloss.NewStyle().Foreground(p.Muted)
+	s.PanelTitle = lipgloss.NewStyle().Bold(true).Foreground(p.Accent)
 	return s
 }
 
 // ---- keys ----
+//
+// Keys are split into a global chrome map (tabs, help, theme, refresh, the
+// commit workflow) and one small map per view. The Update loop dispatches
+// view keys only to the active tab, so views can reuse letters freely — the
+// old single keymap made h/l/enter/d/n/r collide across tabs and left the
+// Objects tree unreachable.
 
-type cliKeyMap struct {
+type globalKeyMap struct {
 	TabNext  key.Binding
 	TabPrev  key.Binding
-	Up       key.Binding
-	Down     key.Binding
 	Jump1    key.Binding
 	Jump2    key.Binding
 	Jump3    key.Binding
@@ -124,79 +138,42 @@ type cliKeyMap struct {
 	Jump5    key.Binding
 	Help     key.Binding
 	Quit     key.Binding
-	Enter    key.Binding
-	Back     key.Binding
-	Top      key.Binding
-	Bottom   key.Binding
-	Filter   key.Binding
-	CycleV   key.Binding
-	CycleD   key.Binding
-	Toggle   key.Binding
 	Theme    key.Binding
 	Refresh  key.Binding
-	Move     key.Binding
-	Add      key.Binding
 	Commit   key.Binding
-	Rollback key.Binding
+	Discard  key.Binding
 	ConfirmY key.Binding
 	ConfirmN key.Binding
-	Delete   key.Binding
-	Edit     key.Binding
-	Drop     key.Binding
-	Reject   key.Binding
-	Left     key.Binding
-	Right    key.Binding
 }
 
-func (k cliKeyMap) ShortHelp() []key.Binding {
+func (k globalKeyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Help, k.Quit}
 }
 
-func (k cliKeyMap) FullHelp() [][]key.Binding {
+func (k globalKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.TabNext, k.TabPrev},
-		{k.Jump1, k.Jump2, k.Jump3, k.Jump4, k.Jump5},
-		{k.Top, k.Bottom, k.Enter, k.Back},
-		{k.Filter, k.CycleV, k.CycleD, k.Theme, k.Refresh},
-		{k.Help, k.Quit},
+		{k.TabNext, k.TabPrev, k.Jump1, k.Jump5},
+		{k.Commit, k.Discard, k.ConfirmY, k.ConfirmN},
+		{k.Theme, k.Refresh, k.Help, k.Quit},
 	}
 }
 
-var cliKeys = cliKeyMap{
-	TabNext:  key.NewBinding(key.WithKeys("tab", "l", "right"), key.WithHelp("tab/l", "next tab")),
-	TabPrev:  key.NewBinding(key.WithKeys("shift+tab", "h", "left"), key.WithHelp("shift+tab/h", "prev tab")),
-	Up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-	Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+var globalKeys = globalKeyMap{
+	TabNext:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next tab")),
+	TabPrev:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("s-tab", "prev tab")),
 	Jump1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "dashboard")),
 	Jump2:    key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "logs")),
 	Jump3:    key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "policy")),
 	Jump4:    key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "objects")),
 	Jump5:    key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "system")),
-	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "toggle help")),
+	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-	Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select/lookup")),
-	Back:     key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
-	Top:      key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top")),
-	Bottom:   key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom")),
-	Filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter text")),
-	CycleV:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "cycle verdict")),
-	CycleD:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "cycle direction")),
-	Toggle:   key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle rule")),
-	Theme:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "toggle theme")),
-	Refresh:  key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "cycle refresh")),
-	Move:     key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move rule")),
-	Add:      key.NewBinding(key.WithKeys("a", "i"), key.WithHelp("a/i", "add deny rule")),
-	Commit:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "commit changes")),
-	Rollback: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rollback/discard")),
-	ConfirmY: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm yes")),
-	ConfirmN: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "confirm no")),
-
-	Delete: key.NewBinding(key.WithKeys("d", "delete"), key.WithHelp("d", "delete")),
-	Edit:   key.NewBinding(key.WithKeys("e", "enter"), key.WithHelp("e/enter", "edit")),
-	Drop:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "drop/no")),
-	Reject: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reject/rollback")),
-	Left:   key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("left/h", "move left")),
-	Right:  key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("right/l", "move right")),
+	Theme:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "theme")),
+	Refresh:  key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "refresh rate")),
+	Commit:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "commit drafts")),
+	Discard:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "discard drafts")),
+	ConfirmY: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "keep deploy")),
+	ConfirmN: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "roll back")),
 }
 
 // ---- model ----
@@ -218,6 +195,7 @@ type cliModel struct {
 	darkTheme       bool
 	refreshInterval time.Duration
 	styles          cliStyles
+	hostname        string
 
 	// data
 	draftRules  []*draftRule
@@ -255,6 +233,10 @@ type cliModel struct {
 	loading    bool
 	lastFetch  time.Time
 
+	// status bar (replaces the old status["commitError"] plumbing)
+	statusMsg string
+	statusErr bool
+
 	// policy edit state
 	editState        policyEditState
 	moveSourceID     int
@@ -276,6 +258,8 @@ func initialModel() cliModel {
 	ti.CharLimit = 64
 	ti.Width = 30
 
+	host, _ := os.Hostname()
+
 	m := cliModel{
 		activeTab:    0,
 		tabs:         []string{"Dashboard", "Logs", "Policy", "Objects", "System"},
@@ -284,6 +268,7 @@ func initialModel() cliModel {
 		help:         help.New(),
 		filterInput:  ti,
 		loading:      true,
+		hostname:     host,
 
 		objLevel:            0,
 		objSelectedCategory: 0,
@@ -292,34 +277,12 @@ func initialModel() cliModel {
 	}
 	m.styles = getStyles(m.darkTheme)
 
-	// Initialize tables
-	columns := []bubblesTable.Column{
-		{Title: "Time", Width: 20},
-		{Title: "Src", Width: 16},
-		{Title: "CC", Width: 4},
-		{Title: "Dport", Width: 6},
-		{Title: "Proto", Width: 6},
-		{Title: "Reason", Width: 15},
-		{Title: "Verdict", Width: 8},
-	}
 	m.logTable = bubblesTable.New(
-		bubblesTable.WithColumns(columns),
+		bubblesTable.WithColumns(logColumns(defaultViewWidth)),
 		bubblesTable.WithFocused(true),
 	)
-
-	pColumns := []bubblesTable.Column{
-		{Title: "#", Width: 4},
-		{Title: "Action", Width: 8},
-		{Title: "Dir", Width: 6},
-		{Title: "Proto", Width: 6},
-		{Title: "Port", Width: 10},
-		{Title: "Target", Width: 15},
-		{Title: "Iface", Width: 8},
-		{Title: "Hits", Width: 10},
-		{Title: "Activity", Width: 12},
-	}
 	m.policyTable = bubblesTable.New(
-		bubblesTable.WithColumns(pColumns),
+		bubblesTable.WithColumns(policyColumns(defaultViewWidth)),
 		bubblesTable.WithFocused(true),
 	)
 	m.updateStyles()
@@ -335,6 +298,129 @@ func initialModel() cliModel {
 	m.viewport = viewport.New(60, 20)
 
 	return m
+}
+
+// defaultViewWidth sizes tables before the first WindowSizeMsg arrives.
+const defaultViewWidth = 100
+
+// ---- responsive column layout ----
+
+type colSpec struct {
+	title  string
+	min    int // content width floor
+	weight int // 0 = fixed at min; leftover space is split by weight
+}
+
+// layoutCols distributes total content width among columns: every column gets
+// its min, then any leftover space is divided proportionally by weight. When
+// total is smaller than the sum of minimums the minimums are kept (the table
+// clips) — degrading a too-narrow terminal beats corrupting every row.
+func layoutCols(total int, specs []colSpec) []int {
+	widths := make([]int, len(specs))
+	need, weights := 0, 0
+	for i, s := range specs {
+		widths[i] = s.min
+		need += s.min
+		weights += s.weight
+	}
+	extra := total - need
+	if extra <= 0 || weights == 0 {
+		return widths
+	}
+	given := 0
+	last := -1
+	for i, s := range specs {
+		if s.weight == 0 {
+			continue
+		}
+		add := extra * s.weight / weights
+		widths[i] += add
+		given += add
+		last = i
+	}
+	if last >= 0 {
+		widths[last] += extra - given // remainder to the last flexible column
+	}
+	return widths
+}
+
+func toTableColumns(specs []colSpec, widths []int) []bubblesTable.Column {
+	cols := make([]bubblesTable.Column, len(specs))
+	for i, s := range specs {
+		cols[i] = bubblesTable.Column{Title: s.title, Width: widths[i]}
+	}
+	return cols
+}
+
+// ---- defensive map access ----
+//
+// The fetched status/ifStats maps come from functions that may change shape;
+// a missing or differently-typed key must degrade, never panic the render.
+
+func asStr(m map[string]interface{}, k string) string {
+	if m == nil {
+		return ""
+	}
+	s, _ := m[k].(string)
+	return s
+}
+
+func asBool(m map[string]interface{}, k string) bool {
+	if m == nil {
+		return false
+	}
+	b, _ := m[k].(bool)
+	return b
+}
+
+func asInt(m map[string]interface{}, k string) int {
+	if m == nil {
+		return 0
+	}
+	switch v := m[k].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case uint64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return 0
+}
+
+func asF64s(m map[string]interface{}, k string) []float64 {
+	if m == nil {
+		return nil
+	}
+	f, _ := m[k].([]float64)
+	return f
+}
+
+func asIfaceList(m map[string]interface{}, k string) []map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+	l, _ := m[k].([]map[string]interface{})
+	return l
+}
+
+// ---- status bar ----
+
+func (m *cliModel) setStatusErr(msg string) {
+	m.statusMsg = msg
+	m.statusErr = true
+}
+
+func (m *cliModel) setStatusInfo(msg string) {
+	m.statusMsg = msg
+	m.statusErr = false
+}
+
+func (m *cliModel) clearStatus() {
+	m.statusMsg = ""
+	m.statusErr = false
 }
 
 // ---- commands ----
@@ -449,6 +535,7 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// by commitApply) restores the file backups — nothing to run
 				// here, just leave confirm mode and refetch.
 				m.editState = policyStateNormal
+				m.setStatusInfo("deadman expired — deploy rolled back")
 				return m, fetchDataCmd()
 			}
 			return m, confirmTickCmd()
@@ -456,9 +543,6 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case fetchMsg:
-		if err, ok := m.status["commitError"].(string); ok && err != "" {
-			msg.status["commitError"] = err
-		}
 		m.status = msg.status
 		m.draftRules = msg.drafts
 		m.drops = msg.drops
@@ -478,314 +562,11 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderLookupDetails())
 
 	case tea.KeyMsg:
-		if m.showLookup {
-			switch {
-			case key.Matches(msg, cliKeys.Back), key.Matches(msg, cliKeys.Quit):
-				m.showLookup = false
-				return m, nil
-			}
-			m.viewport, cmd = m.viewport.Update(msg)
-			return m, cmd
-		}
-
-		if m.activeTab == 3 && m.objInputMode {
-			switch {
-			case key.Matches(msg, cliKeys.Enter):
-				m.handleObjInputEnter()
-				return m, fetchDataCmd()
-			case key.Matches(msg, cliKeys.Back), key.Matches(msg, cliKeys.Quit):
-				m.objInputMode = false
-				return m, nil
-			}
-			m.objInput, cmd = m.objInput.Update(msg)
-			return m, cmd
-		}
-
-		if m.showFilter {
-			switch {
-			case key.Matches(msg, cliKeys.Enter), key.Matches(msg, cliKeys.Back):
-				m.showFilter = false
-				m.filterInput.Blur()
-				m.updateData()
-				return m, nil
-			}
-			m.filterInput, cmd = m.filterInput.Update(msg)
-			m.updateData()
-			return m, cmd
-		}
-
-		switch {
-		case key.Matches(msg, cliKeys.Quit):
-			return m, tea.Quit
-		case key.Matches(msg, cliKeys.TabNext):
-			m.activeTab = (m.activeTab + 1) % len(m.tabs)
-		case key.Matches(msg, cliKeys.TabPrev):
-			m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
-		case key.Matches(msg, cliKeys.Jump1):
-			m.activeTab = 0
-		case key.Matches(msg, cliKeys.Jump2):
-			m.activeTab = 1
-		case key.Matches(msg, cliKeys.Jump3):
-			m.activeTab = 2
-		case key.Matches(msg, cliKeys.Jump4):
-			m.activeTab = 3
-		case key.Matches(msg, cliKeys.Jump5):
-			m.activeTab = 4
-		case key.Matches(msg, cliKeys.Help):
-			m.showHelp = !m.showHelp
-		case key.Matches(msg, cliKeys.Theme):
-			m.darkTheme = !m.darkTheme
-			m.updateStyles()
-		case key.Matches(msg, cliKeys.Refresh):
-			switch m.refreshInterval {
-			case 0:
-				m.refreshInterval = 2 * time.Second
-			case 2 * time.Second:
-				m.refreshInterval = 5 * time.Second
-			case 5 * time.Second:
-				m.refreshInterval = 10 * time.Second
-			default:
-				m.refreshInterval = 0
-			}
-			if m.refreshInterval > 0 {
-				return m, refreshTickCmd(m.refreshInterval)
-			}
-		case key.Matches(msg, cliKeys.Top):
-			if m.activeTab == 1 {
-				m.logTable.GotoTop()
-			} else if m.activeTab == 2 {
-				m.policyTable.GotoTop()
-			}
-		case key.Matches(msg, cliKeys.Bottom):
-			if m.activeTab == 1 {
-				m.logTable.GotoBottom()
-			} else if m.activeTab == 2 {
-				m.policyTable.GotoBottom()
-			}
-		case key.Matches(msg, cliKeys.Edit):
-			if m.activeTab == 3 && !m.objInputMode && m.objLevel > 0 {
-				if m.objSelectedCategory < 0 || m.objSelectedCategory >= len(m.objDrafts) {
-					return m, nil
-				}
-				entries := m.objDrafts[m.objSelectedCategory]
-				m.objInputMode = true
-
-				if m.objLevel == 1 {
-					m.objInputContext = "edit_entry"
-					if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
-						m.objInput.SetValue(entries[m.objSelectedEntry].Name)
-					}
-				} else {
-					m.objInputContext = "edit_member"
-					if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
-						members := entries[m.objSelectedEntry].Members
-						if m.objSelectedMember >= 0 && m.objSelectedMember < len(members) {
-							m.objInput.SetValue(members[m.objSelectedMember])
-						}
-					}
-				}
-				m.objInput.Focus()
-				return m, nil
-			}
-		case key.Matches(msg, cliKeys.Delete):
-			if m.activeTab == 3 && !m.objInputMode && m.objLevel > 0 {
-				m.handleObjDelete()
-				return m, fetchDataCmd()
-			}
-		case key.Matches(msg, cliKeys.Filter):
-			if m.activeTab == 1 {
-				m.showFilter = true
-				m.filterInput.Focus()
-				m.filterInput.SetValue("")
-				return m, nil
-			}
-
-		case key.Matches(msg, cliKeys.Toggle):
-			if m.activeTab == 2 && len(m.draftRules) > 0 && m.editState == policyStateNormal {
-				idx := m.policyTable.Cursor()
-				if idx >= 0 && idx < len(m.draftRules) {
-					rule := m.draftRules[idx]
-					if rule.Kind != "section" {
-						if _, errMsg, _ := toggleRuleDraft(rule.File, rule.ID); errMsg != "" {
-							m.setStatusErr(errMsg)
-						}
-						return m, fetchDataCmd()
-					}
-				}
-			}
-
-		case key.Matches(msg, cliKeys.Move):
-			if m.activeTab == 2 && len(m.draftRules) > 0 && m.editState == policyStateNormal {
-				idx := m.policyTable.Cursor()
-				if idx >= 0 && idx < len(m.draftRules) {
-					m.editState = policyStateMoving
-					m.moveSourceID = m.draftRules[idx].ID
-					m.updateData() // highlight row immediately
-				}
-			}
-
-		case key.Matches(msg, cliKeys.Add):
-			if m.activeTab == 3 && !m.objInputMode && m.objLevel > 0 {
-				m.objInputMode = true
-				if m.objLevel == 1 {
-					m.objInputContext = "entry_name"
-				} else {
-					m.objInputContext = "member_value"
-				}
-				m.objInput.SetValue("")
-				m.objInput.Focus()
-				return m, nil
-			} else if m.activeTab == 2 && m.editState == policyStateNormal {
-				m.editState = policyStatePrompt
-				m.filterInput.Focus()
-				m.filterInput.SetValue("")
-			}
-
-		case key.Matches(msg, cliKeys.Commit):
-			if m.editState == policyStateNormal {
-				if len(activeStages()) == 0 {
-					return m, nil
-				}
-				// Same deploy path as the web: validate, back up, promote,
-				// apply --confirm + watchDeadman. The TUI countdown below is
-				// purely presentational.
-				payload, errMsg, _ := commitApply(90)
-				if errMsg != "" {
-					m.setStatusErr(errMsg)
-					return m, nil
-				}
-				if deployed, _ := payload["deployed"].(bool); !deployed {
-					if s, _ := payload["message"].(string); s != "" {
-						m.setStatusErr(s)
-					}
-					return m, nil
-				}
-				m.editState = policyStateConfirming
-				m.confirmRemaining = 90
-				if s, ok := payload["seconds"].(int); ok {
-					m.confirmRemaining = s
-				}
-				return m, confirmTickCmd()
-			}
-
-		case key.Matches(msg, cliKeys.ConfirmY):
-			if m.editState == policyStateConfirming {
-				if _, errMsg, _ := commitKeep(); errMsg != "" {
-					m.setStatusErr(errMsg)
-				}
-				m.editState = policyStateNormal
-				return m, fetchDataCmd()
-			}
-
-		case key.Matches(msg, cliKeys.ConfirmN), key.Matches(msg, cliKeys.Rollback):
-			if m.editState == policyStateConfirming {
-				commitRollback()
-				m.editState = policyStateNormal
-				return m, fetchDataCmd()
-			} else if m.editState == policyStateNormal {
-				for _, s := range stages() {
-					os.Remove(s.draft)
-				}
-				return m, fetchDataCmd()
-			}
-
-		case key.Matches(msg, cliKeys.Enter):
-			if m.activeTab == 1 && len(m.logTable.Rows()) > 0 {
-				row := m.logTable.SelectedRow()
-				if len(row) > 1 {
-					return m, lookupCmd(row[1])
-				}
-			} else if m.activeTab == 2 && m.editState == policyStateMoving {
-				idx := m.policyTable.Cursor()
-				if idx >= 0 && idx < len(m.draftRules) {
-					destRule := m.draftRules[idx]
-					var sourceFile string
-					var sourceRuleID int
-					for _, r := range m.draftRules {
-						if r.ID == m.moveSourceID {
-							sourceFile = r.File
-							sourceRuleID = r.ID
-							break
-						}
-					}
-					localIdx := 0
-					for i, r := range m.draftRules {
-						if r.File == destRule.File {
-							if i == idx {
-								break
-							}
-							localIdx++
-						}
-					}
-					if errMsg, _ := moveRuleDraft(sourceFile, destRule.File, sourceRuleID, localIdx); errMsg != "" {
-						m.setStatusErr(errMsg)
-					}
-				}
-				m.editState = policyStateNormal
-				return m, fetchDataCmd()
-			} else if m.activeTab == 2 && m.editState == policyStatePrompt {
-				m.editState = policyStateNormal
-				val := strings.TrimSpace(m.filterInput.Value())
-				if val != "" {
-					if net.ParseIP(val) == nil {
-						_, _, err := net.ParseCIDR(val)
-						if err != nil {
-							if m.status == nil {
-								m.status = make(map[string]interface{})
-							}
-							m.status["commitError"] = "Invalid IP or CIDR: " + val
-							return m, nil
-						}
-					}
-					file := "rules.conf"
-					if len(m.draftRules) > 0 {
-						idx := m.policyTable.Cursor()
-						if idx >= 0 && idx < len(m.draftRules) {
-							file = m.draftRules[idx].File
-						}
-					}
-					cliAddDenyRule(file, val)
-					return m, tea.Batch(fetchDataCmd(), refreshTickCmd(m.refreshInterval))
-				}
-			}
-
-		case key.Matches(msg, cliKeys.Back):
-			if m.activeTab == 2 && (m.editState == policyStateMoving || m.editState == policyStatePrompt) {
-				m.editState = policyStateNormal
-				m.updateData()
-			}
-
-		case key.Matches(msg, cliKeys.CycleV):
-			if m.activeTab == 1 {
-				switch m.verdictFilter {
-				case "":
-					m.verdictFilter = "drop"
-				case "drop":
-					m.verdictFilter = "accept"
-				default:
-					m.verdictFilter = ""
-				}
-				m.updateData()
-			}
-		case key.Matches(msg, cliKeys.CycleD):
-			if m.activeTab == 1 {
-				switch m.dirFilter {
-				case "":
-					m.dirFilter = "ingress"
-				case "ingress":
-					m.dirFilter = "egress"
-				case "egress":
-					m.dirFilter = "forward"
-				default:
-					m.dirFilter = ""
-				}
-				m.updateData()
-			}
-		}
+		return m.updateKeys(msg)
 
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			// Tab click detection
+			// Tab click detection (tabs render on terminal row 1, under the header)
 			if msg.Y == 1 {
 				x := 0
 				for i, t := range m.tabs {
@@ -798,16 +579,15 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-
-		// Forward mouse events to components (avoiding double update by returning early if handled)
+		if m.showLookup {
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
 		if m.activeTab == 1 && !m.showFilter {
 			m.logTable, cmd = m.logTable.Update(msg)
 			return m, cmd
 		} else if m.activeTab == 2 {
 			m.policyTable, cmd = m.policyTable.Update(msg)
-			return m, cmd
-		} else if m.showLookup {
-			m.viewport, cmd = m.viewport.Update(msg)
 			return m, cmd
 		}
 
@@ -817,265 +597,196 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateLayout()
 	}
 
-	if msgKey, ok := msg.(tea.KeyMsg); ok {
-		if m.activeTab == 3 && !m.objInputMode {
-			switch {
-			case key.Matches(msgKey, cliKeys.Add):
-				if m.objLevel > 0 {
-					m.objInputMode = true
-					if m.objLevel == 1 {
-						m.objInputContext = "entry_name"
-					} else {
-						m.objInputContext = "member_value"
-					}
-					m.objInput.SetValue("")
-					m.objInput.Focus()
-					return m, nil
-				}
-			case key.Matches(msgKey, cliKeys.Edit):
-				if m.objLevel > 0 {
-					if m.objSelectedCategory < 0 || m.objSelectedCategory >= len(m.objDrafts) {
-						return m, nil
-					}
-					entries := m.objDrafts[m.objSelectedCategory]
-					m.objInputMode = true
-
-					if m.objLevel == 1 {
-						m.objInputContext = "edit_entry"
-						if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
-							m.objInput.SetValue(entries[m.objSelectedEntry].Name)
-						}
-					} else {
-						m.objInputContext = "edit_member"
-						if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
-							members := entries[m.objSelectedEntry].Members
-							if m.objSelectedMember >= 0 && m.objSelectedMember < len(members) {
-								m.objInput.SetValue(members[m.objSelectedMember])
-							}
-						}
-					}
-					m.objInput.Focus()
-					return m, nil
-				}
-			case key.Matches(msgKey, cliKeys.Delete):
-				if m.objLevel > 0 {
-					m.handleObjDelete()
-					return m, fetchDataCmd()
-				}
-			}
-
-			switch {
-			case key.Matches(msgKey, cliKeys.Left):
-				if m.objLevel > 0 {
-					m.objLevel--
-				}
-			case key.Matches(msgKey, cliKeys.Right):
-				if m.objLevel < 2 {
-					m.objLevel++
-				}
-			case key.Matches(msgKey, cliKeys.Up):
-				if m.objLevel == 0 && m.objSelectedCategory > 0 {
-					m.objSelectedCategory--
-					m.objSelectedEntry = 0
-					m.objSelectedMember = 0
-				} else if m.objLevel == 1 && m.objSelectedEntry > 0 {
-					m.objSelectedEntry--
-					m.objSelectedMember = 0
-				} else if m.objLevel == 2 && m.objSelectedMember > 0 {
-					m.objSelectedMember--
-				}
-			case key.Matches(msgKey, cliKeys.Down):
-				if m.objLevel == 0 && m.objSelectedCategory < 6 {
-					m.objSelectedCategory++
-					m.objSelectedEntry = 0
-					m.objSelectedMember = 0
-				} else if m.objLevel == 1 {
-					if m.objSelectedCategory >= 0 && m.objSelectedCategory < len(m.objDrafts) && m.objSelectedEntry < len(m.objDrafts[m.objSelectedCategory])-1 {
-						m.objSelectedEntry++
-						m.objSelectedMember = 0
-					}
-				} else if m.objLevel == 2 {
-					if m.objSelectedCategory >= 0 && m.objSelectedCategory < len(m.objDrafts) && m.objSelectedEntry >= 0 && m.objSelectedEntry < len(m.objDrafts[m.objSelectedCategory]) {
-						members := m.objDrafts[m.objSelectedCategory][m.objSelectedEntry].Members
-						if m.objSelectedMember < len(members)-1 {
-							m.objSelectedMember++
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if m.activeTab == 1 && !m.showFilter {
-		m.logTable, cmd = m.logTable.Update(msg)
-	} else if m.activeTab == 2 {
-		m.policyTable, cmd = m.policyTable.Update(msg)
-	}
-
 	return m, cmd
 }
 
-func (m *cliModel) updateData() {
-	// Update Logs Table
-	var rows []bubblesTable.Row
-	txt := strings.ToLower(m.filterInput.Value())
-	for _, d := range m.drops.Recent {
-		if m.verdictFilter != "" && d.Verdict != m.verdictFilter {
-			continue
-		}
-		if m.dirFilter != "" && d.Dir != m.dirFilter {
-			continue
-		}
-		if txt != "" && !strings.Contains(strings.ToLower(d.Src), txt) && !strings.Contains(strings.ToLower(d.Reason), txt) {
-			continue
-		}
+// updateKeys routes one key press: text inputs and modals own the keyboard
+// first, then the pending-confirm workflow, then global chrome keys, then the
+// active view's own keymap.
+func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 
-		v := d.Verdict
-		if d.Verdict == "drop" {
-			v = m.styles.DropVerdict.Render(v)
-		} else {
-			v = m.styles.AcceptVerdict.Render(v)
+	// 1) modal / input ownership
+	if m.showLookup {
+		switch {
+		case key.Matches(msg, viewKeyBack), key.Matches(msg, globalKeys.Quit):
+			m.showLookup = false
+			return m, nil
 		}
-
-		rows = append(rows, bubblesTable.Row{
-			d.Time, d.Src, d.CC, d.Dport, d.Proto, d.Reason, v,
-		})
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 	}
-	m.logTable.SetRows(rows)
-
-	// Update Policy Table
-	var pRows []bubblesTable.Row
-	maxHits := 1.0
-	for _, r := range m.draftRules {
-		if float64(r.Hits) > maxHits {
-			maxHits = float64(r.Hits)
+	if m.activeTab == 3 && m.objInputMode {
+		return m.updateObjectsInput(msg)
+	}
+	if m.showFilter {
+		switch {
+		case key.Matches(msg, viewKeyEnter), key.Matches(msg, viewKeyBack):
+			m.showFilter = false
+			m.filterInput.Blur()
+			m.updateData()
+			return m, nil
 		}
+		m.filterInput, cmd = m.filterInput.Update(msg)
+		m.updateData()
+		return m, cmd
+	}
+	if m.editState == policyStatePrompt {
+		return m.updatePolicyPrompt(msg)
 	}
 
-	for _, r := range m.draftRules {
-		if r.Kind == "section" {
-			pRows = append(pRows, bubblesTable.Row{
-				"", "", "", "", "", "## " + r.Title, "", "", "",
-			})
-			continue
-		}
-
-		hits := fmt.Sprintf("%d", r.Hits)
-		if r.Hits > 1000 {
-			hits = fmt.Sprintf("%.1fk", float64(r.Hits)/1000)
-		}
-
-		bar := ""
-		if r.Matched && r.Hits > 0 && !r.Disabled {
-			w := int(float64(r.Hits) / maxHits * 10)
-			if w < 1 {
-				w = 1
-			}
-			bar = strings.Repeat("■", w)
-			if r.Action == "deny" || r.Action == "drop" {
-				bar = m.styles.DropVerdict.Render(bar)
+	// 2) pending confirm: y keeps, n/r rolls back; q is guarded
+	if m.editState == policyStateConfirming {
+		switch {
+		case key.Matches(msg, globalKeys.ConfirmY):
+			if _, errMsg, _ := commitKeep(); errMsg != "" {
+				m.setStatusErr(errMsg)
 			} else {
-				bar = m.styles.AcceptVerdict.Render(bar)
+				m.setStatusInfo("deploy kept")
 			}
-		}
-
-		row := bubblesTable.Row{
-			fmt.Sprintf("%d", r.ID), r.Action, r.Dir, r.Proto, r.Port, r.Target, r.Iface, hits, bar,
-		}
-		if r.Disabled || !r.Matched {
-			for j, val := range row {
-				row[j] = m.styles.Muted.Render(val)
+			m.editState = policyStateNormal
+			return m, fetchDataCmd()
+		case key.Matches(msg, globalKeys.ConfirmN), key.Matches(msg, globalKeys.Discard):
+			commitRollback()
+			m.editState = policyStateNormal
+			m.setStatusInfo("deploy rolled back")
+			return m, fetchDataCmd()
+		case key.Matches(msg, globalKeys.Quit):
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
 			}
+			m.setStatusErr("deploy pending — press y to keep or n to roll back first")
+			return m, nil
 		}
-		if r.Disabled {
-			row[1] = m.styles.Muted.Render(r.Action + " (disabled)")
-		}
-		if m.editState == policyStateMoving && m.moveSourceID == r.ID {
-			for j, val := range row {
-				row[j] = m.styles.Highlight.Render(val)
-			}
-		}
-		pRows = append(pRows, row)
-	}
-	m.policyTable.SetRows(pRows)
-
-	// Update Charts
-	if len(m.drops.Timeline) == 24 {
-		m.dropsChart.Clear()
-		maxDrops := 1.0
-		for _, v := range m.drops.Timeline {
-			if float64(v) > maxDrops {
-				maxDrops = float64(v)
-			}
-		}
-		// Redraw with new max
-		m.dropsChart = linechart.New(m.dropsChart.Canvas.Width(), m.dropsChart.Canvas.Height(), 0, 23, 0, maxDrops)
-		for i := 1; i < 24; i++ {
-			p1 := canvas.Float64Point{X: float64(i - 1), Y: float64(m.drops.Timeline[i-1])}
-			p2 := canvas.Float64Point{X: float64(i), Y: float64(m.drops.Timeline[i])}
-			m.dropsChart.DrawBrailleLine(p1, p2)
-		}
+		// fall through: allow tab switching etc. while the countdown runs
 	}
 
-	p := cliDarkPalette
-	if !m.darkTheme {
-		p = cliLightPalette
-	}
-
-	// Ingress CC
-	m.ingressChart.Clear()
-	var ccKeys []string
-	for k := range m.drops.IngressByCC {
-		ccKeys = append(ccKeys, k)
-	}
-	sort.Slice(ccKeys, func(i, j int) bool { return m.drops.IngressByCC[ccKeys[i]] > m.drops.IngressByCC[ccKeys[j]] })
-	for i := 0; i < 10 && i < len(ccKeys); i++ {
-		m.ingressChart.Push(barchart.BarData{
-			Label:  ccKeys[i],
-			Values: []barchart.BarValue{{Value: float64(m.drops.IngressByCC[ccKeys[i]]), Style: lipgloss.NewStyle().Foreground(p.Drop)}},
-		})
-	}
-	m.ingressChart.Draw()
-
-	// Top Ports
-	m.topPortsChart.Clear()
-	var portKeys []string
-	for k := range m.drops.TopPorts {
-		portKeys = append(portKeys, k)
-	}
-	sort.Slice(portKeys, func(i, j int) bool { return m.drops.TopPorts[portKeys[i]] > m.drops.TopPorts[portKeys[j]] })
-	for i := 0; i < 10 && i < len(portKeys); i++ {
-		m.topPortsChart.Push(barchart.BarData{
-			Label:  portKeys[i],
-			Values: []barchart.BarValue{{Value: float64(m.drops.TopPorts[portKeys[i]]), Style: lipgloss.NewStyle().Foreground(p.Accent)}},
-		})
-	}
-	m.topPortsChart.Draw()
-
-	// Sparklines
-	if ifData, ok := m.ifStats["ifaces"].([]map[string]interface{}); ok {
-		for _, iface := range ifData {
-			name := iface["name"].(string)
-			if _, ok := m.rxSparklines[name]; !ok {
-				m.rxSparklines[name] = sparkline.New(20, 1)
-				m.txSparklines[name] = sparkline.New(20, 1)
-			}
-			if rx, ok := iface["rx_bps"].([]float64); ok {
-				sl := m.rxSparklines[name]
-				sl.Clear()
-				sl.PushAll(rx)
-				sl.Draw()
-				m.rxSparklines[name] = sl
-			}
-			if tx, ok := iface["tx_bps"].([]float64); ok {
-				sl := m.txSparklines[name]
-				sl.Clear()
-				sl.PushAll(tx)
-				sl.Draw()
-				m.txSparklines[name] = sl
-			}
+	// 3) global chrome keys
+	switch {
+	case key.Matches(msg, globalKeys.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, globalKeys.TabNext):
+		m.activeTab = (m.activeTab + 1) % len(m.tabs)
+		return m, nil
+	case key.Matches(msg, globalKeys.TabPrev):
+		m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
+		return m, nil
+	case key.Matches(msg, globalKeys.Jump1):
+		m.activeTab = 0
+		return m, nil
+	case key.Matches(msg, globalKeys.Jump2):
+		m.activeTab = 1
+		return m, nil
+	case key.Matches(msg, globalKeys.Jump3):
+		m.activeTab = 2
+		return m, nil
+	case key.Matches(msg, globalKeys.Jump4):
+		m.activeTab = 3
+		return m, nil
+	case key.Matches(msg, globalKeys.Jump5):
+		m.activeTab = 4
+		return m, nil
+	case key.Matches(msg, globalKeys.Help):
+		m.showHelp = !m.showHelp
+		return m, nil
+	case key.Matches(msg, globalKeys.Theme):
+		m.darkTheme = !m.darkTheme
+		m.updateStyles()
+		m.updateData()
+		return m, nil
+	case key.Matches(msg, globalKeys.Refresh):
+		switch m.refreshInterval {
+		case 0:
+			m.refreshInterval = 2 * time.Second
+		case 2 * time.Second:
+			m.refreshInterval = 5 * time.Second
+		case 5 * time.Second:
+			m.refreshInterval = 10 * time.Second
+		default:
+			m.refreshInterval = 0
 		}
+		if m.refreshInterval > 0 {
+			return m, refreshTickCmd(m.refreshInterval)
+		}
+		return m, nil
+	case key.Matches(msg, globalKeys.Commit):
+		if m.editState == policyStateNormal {
+			return m.startCommit()
+		}
+		return m, nil
+	case key.Matches(msg, globalKeys.Discard):
+		// Discard is destructive; only offer it where the draft workflow
+		// lives (Policy, Objects), and never during a pending confirm.
+		if m.editState == policyStateNormal && (m.activeTab == 2 || m.activeTab == 3) {
+			if len(activeStages()) == 0 {
+				m.setStatusInfo("no drafts to discard")
+				return m, nil
+			}
+			for _, s := range stages() {
+				os.Remove(s.draft)
+			}
+			m.setStatusInfo("drafts discarded")
+			return m, fetchDataCmd()
+		}
+		// not a chrome action here — let the view use the key
 	}
+
+	// 4) per-view keys
+	switch m.activeTab {
+	case 1:
+		return m.updateLogsKeys(msg)
+	case 2:
+		return m.updatePolicyKeys(msg)
+	case 3:
+		return m.updateObjectsKeys(msg)
+	}
+	return m, nil
+}
+
+// startCommit runs the shared deploy pipeline (same as the web Commit button).
+func (m cliModel) startCommit() (tea.Model, tea.Cmd) {
+	if len(activeStages()) == 0 {
+		m.setStatusInfo("no drafts to deploy")
+		return m, nil
+	}
+	payload, errMsg, _ := commitApply(90)
+	if errMsg != "" {
+		m.setStatusErr(errMsg)
+		return m, nil
+	}
+	if deployed, _ := payload["deployed"].(bool); !deployed {
+		if s, _ := payload["message"].(string); s != "" {
+			m.setStatusErr(s)
+		}
+		return m, nil
+	}
+	m.editState = policyStateConfirming
+	m.confirmRemaining = 90
+	if s, ok := payload["seconds"].(int); ok {
+		m.confirmRemaining = s
+	}
+	m.clearStatus()
+	return m, confirmTickCmd()
+}
+
+// ---- shared view key bindings (enter/esc reused by every view) ----
+
+var (
+	viewKeyEnter = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select"))
+	viewKeyBack  = key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back"))
+	viewKeyUp    = key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up"))
+	viewKeyDown  = key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down"))
+	viewKeyTop   = key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top"))
+	viewKeyBot   = key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom"))
+)
+
+// ---- data -> widgets ----
+
+func (m *cliModel) updateData() {
+	m.updateLogsData()
+	m.updatePolicyData()
+	m.updateDashboardData()
+	m.updateSystemData()
 }
 
 func (m *cliModel) updateStyles() {
@@ -1093,16 +804,30 @@ func (m *cliModel) updateStyles() {
 	m.filterInput.PlaceholderStyle = m.styles.Muted
 }
 
+// viewWidth is the content width inside the window border/padding.
+func (m *cliModel) viewWidth() int {
+	w := m.width - 6
+	if w < 40 {
+		w = 40
+	}
+	return w
+}
+
 func (m *cliModel) updateLayout() {
 	m.help.Width = m.width
-	m.logTable.SetHeight(m.height - 12)
-	m.policyTable.SetHeight(m.height - 15)
+	vw := m.viewWidth()
+
+	m.logTable.SetColumns(logColumns(vw))
+	m.logTable.SetHeight(m.height - 10)
+	m.policyTable.SetColumns(policyColumns(vw))
+	m.policyTable.SetHeight(m.height - 13)
 	m.viewport.Width = m.width - 10
 	m.viewport.Height = m.height - 10
 
-	m.dropsChart.Resize(m.width-10, 10)
-	m.ingressChart.Resize((m.width-15)/2, 10)
-	m.topPortsChart.Resize((m.width-15)/2, 10)
+	m.dropsChart.Resize(vw-2, 10)
+	m.ingressChart.Resize((vw-5)/2, 10)
+	m.topPortsChart.Resize((vw-5)/2, 10)
+	m.updateData()
 }
 
 // ---- view ----
@@ -1112,7 +837,7 @@ func (m cliModel) View() string {
 		return "Initializing..."
 	}
 
-	header := m.styles.Header.Render(fmt.Sprintf("nftgeo-ui console • %s", version()))
+	header := m.renderHeader()
 
 	var renderedTabs []string
 	for i, t := range m.tabs {
@@ -1123,6 +848,14 @@ func (m cliModel) View() string {
 		}
 	}
 	tabsRow := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
+
+	banner := ""
+	bannerLines := 0
+	if m.editState == policyStateConfirming {
+		banner = m.styles.Banner.Width(m.width).Render(
+			fmt.Sprintf("⏳ DEPLOY PENDING — y keep · n roll back · auto-rollback in %ds", m.confirmRemaining))
+		bannerLines = 1
+	}
 
 	var content string
 	if m.loading {
@@ -1142,280 +875,97 @@ func (m cliModel) View() string {
 		}
 	}
 
-	mainContent := m.styles.Window.Width(m.width - 4).Height(m.height - 6).Render(content)
-
-	footer := m.help.View(cliKeys)
-	if m.showHelp {
-		footer = m.help.FullHelpView(cliKeys.FullHelp())
+	// header(1) + tabs(1) + banner(0/1) + window border(2) + status(1) + hints(1)
+	contentH := m.height - 6 - bannerLines
+	if contentH < 4 {
+		contentH = 4
 	}
+	mainContent := m.styles.Window.Width(m.width - 2).Height(contentH).Render(content)
 
-	view := lipgloss.JoinVertical(lipgloss.Left, header, tabsRow, mainContent, footer)
+	statusLine := m.renderStatusBar()
+	hints := m.renderHints()
+
+	parts := []string{header, tabsRow}
+	if banner != "" {
+		parts = append(parts, banner)
+	}
+	parts = append(parts, mainContent, statusLine, hints)
+	view := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	if m.showLookup {
 		modal := m.styles.Modal.Render(m.viewport.View())
-		return m.placeCenter(modal, view)
+		return m.placeOverlay(modal)
 	}
 
 	return view
 }
 
-func (m cliModel) renderKPI(label, value string) string {
-	return m.styles.Kpi.Render(
-		lipgloss.JoinVertical(lipgloss.Left,
-			m.styles.KpiLabel.Render(label),
-			m.styles.KpiValue.Render(value),
-		),
-	)
-}
-
-func (m cliModel) renderDashboard() string {
-	ingressTotal := 0
-	for _, v := range m.drops.IngressByCC {
-		ingressTotal += v
-	}
-	egressTotal := 0
-	for _, v := range m.drops.EgressByCC {
-		egressTotal += v
+// renderHeader is the k9s-style context line: what box, what state, how live.
+func (m cliModel) renderHeader() string {
+	left := fmt.Sprintf("nftgeo console • %s", asStr(m.status, "version"))
+	if m.hostname != "" {
+		left += " • " + m.hostname
 	}
 
-	rxTotal, txTotal := 0.0, 0.0
-	if ifaces, ok := m.ifStats["ifaces"].([]map[string]interface{}); ok {
-		for _, iface := range ifaces {
-			if rx, ok := iface["rx_bps"].([]float64); ok && len(rx) > 0 {
-				rxTotal += rx[len(rx)-1]
-			}
-			if tx, ok := iface["tx_bps"].([]float64); ok && len(tx) > 0 {
-				txTotal += tx[len(tx)-1]
-			}
-		}
+	loaded := "table: –"
+	if asBool(m.status, "loaded") {
+		loaded = "table: LOADED"
 	}
-
-	kpiRow := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.renderKPI("Drops/24h", fmt.Sprintf("%d", m.drops.Total)),
-		m.renderKPI("Ingress", fmt.Sprintf("%d", ingressTotal)),
-		m.renderKPI("Egress", fmt.Sprintf("%d", egressTotal)),
-		m.renderKPI("Abuse IPs", fmt.Sprintf("%d", abuseLoadedCount())),
-		m.renderKPI("Conntrack", m.getConntrack()),
-		m.renderKPI("Net RX/TX", fmt.Sprintf("%s / %s", formatBpsVal(rxTotal), formatBpsVal(txTotal))),
-	)
-
-	chartTitle := lipgloss.NewStyle().Bold(true).MarginBottom(0).Render("Drops over 24h")
-	chart := m.dropsChart.View()
-
-	bottomCharts := lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.JoinVertical(lipgloss.Left, lipgloss.NewStyle().Bold(true).Render("Top Countries"), m.ingressChart.View()),
-		lipgloss.JoinVertical(lipgloss.Left, lipgloss.NewStyle().Bold(true).Render("Top Ports"), m.topPortsChart.View()),
-	)
-
 	refreshStr := m.refreshInterval.String()
 	if m.refreshInterval <= 0 {
-		refreshStr = "OFF"
+		refreshStr = "off"
 	}
-	systemLine := m.styles.Muted.Render(
-		fmt.Sprintf("Table: %s • Last Fetch: %s • Refresh: %s",
-			map[bool]string{true: "LOADED", false: "NOT LOADED"}[m.status["loaded"].(bool)],
-			m.lastFetch.Format("15:04:05"),
-			refreshStr),
-	)
+	right := loaded + " • refresh: " + refreshStr
+	if len(activeStages()) > 0 {
+		right += " • ● draft pending"
+	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, kpiRow, "", chartTitle, chart, "", bottomCharts, "", systemLine)
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 4
+	if gap < 1 {
+		gap = 1
+	}
+	return m.styles.Header.Width(m.width).Render(left + fmt.Sprintf("%*s", gap, "") + right)
 }
 
-func (m cliModel) getConntrack() string {
-	if ct, ok := m.ifStats["conntrack"].(map[string]uint64); ok {
-		return fmt.Sprintf("%d / %d", ct["count"], ct["max"])
+func (m cliModel) renderStatusBar() string {
+	if m.statusMsg == "" {
+		return m.styles.StatusInfo.Render(fmt.Sprintf(" last fetch %s", m.lastFetch.Format("15:04:05")))
 	}
-	return "n/a"
+	if m.statusErr {
+		return m.styles.StatusErr.Render(" ✗ " + m.statusMsg)
+	}
+	return m.styles.StatusInfo.Render(" ✓ " + m.statusMsg)
 }
 
-func (m cliModel) renderLogs() string {
-	filterInfo := "Filters: "
-	if m.verdictFilter != "" {
-		filterInfo += "Verdict=" + strings.ToUpper(m.verdictFilter) + " "
-	} else {
-		filterInfo += "Verdict=ALL "
+// renderHints shows the active view's keys plus the global chrome keys.
+func (m cliModel) renderHints() string {
+	if m.showHelp {
+		return m.help.FullHelpView(globalKeys.FullHelp())
 	}
-	if m.dirFilter != "" {
-		filterInfo += "Dir=" + strings.ToUpper(m.dirFilter) + " "
-	} else {
-		filterInfo += "Dir=ALL "
+	var viewHints string
+	switch m.activeTab {
+	case 1:
+		viewHints = logsHints
+	case 2:
+		viewHints = policyHints
+	case 3:
+		viewHints = objectsHints
+	default:
+		viewHints = ""
 	}
-	if m.filterInput.Value() != "" {
-		filterInfo += "Search='" + m.filterInput.Value() + "'"
+	global := "1-5 tabs · c commit · t theme · R rate · ? help · q quit"
+	if viewHints != "" {
+		return m.styles.Help.Render(" " + viewHints + "  |  " + global)
 	}
-
-	fLine := m.styles.Muted.Render(filterInfo)
-	if m.showFilter {
-		fLine = lipgloss.JoinHorizontal(lipgloss.Top,
-			m.styles.Accent.Copy().Bold(true).Render("FIND: "),
-			m.filterInput.View(),
-		)
-	}
-
-	return lipgloss.JoinVertical(lipgloss.Left, fLine, "", m.logTable.View())
+	return m.styles.Help.Render(" " + global)
 }
 
-func (m cliModel) renderPolicy() string {
-	base := ""
-	if m.editState == policyStateConfirming {
-		base = m.styles.DropVerdict.Render(fmt.Sprintf("PENDING CONFIRM: Press 'y' to KEEP, 'n' to ROLLBACK (%ds remaining)\n\n", m.confirmRemaining))
-	} else if err, ok := m.status["commitError"].(string); ok && err != "" {
-		base = m.styles.DropVerdict.Render(fmt.Sprintf("VALIDATION ERROR: %s\n\n", err))
-	} else if m.editState == policyStateMoving {
-		base = m.styles.Warning.Render("MOVE MODE: Use j/k to move rule, Enter to place, Esc to cancel.\n\n")
-	} else if m.editState == policyStatePrompt {
-		base = lipgloss.JoinHorizontal(lipgloss.Top,
-			m.styles.Warning.Copy().Bold(true).Render("ADD DENY RULE (Enter target/IP): "),
-			m.filterInput.View(),
-		) + "\n\n"
-	}
-
-	if m.baseline != nil {
-		input := m.baseline["input"]
-		base = fmt.Sprintf("Default Policies: INPUT=%s  FORWARD=%s  OUTPUT=%s\n",
-			input["policy"], m.baseline["forward"]["policy"], m.baseline["output"]["policy"])
-		base += fmt.Sprintf("Established: %v  Whitelist: %v  Invalid: %v\n\n",
-			input["established"], input["whitelist"], input["invalid"])
-	}
-	return base + m.policyTable.View()
-}
-
-func (m cliModel) renderObjects() string {
-	if m.editState == policyStateConfirming {
-		return m.styles.DropVerdict.Render(fmt.Sprintf("PENDING CONFIRM: Press 'y' to KEEP, 'n' to ROLLBACK (%ds remaining)\n\n", m.confirmRemaining))
-	}
-	if m.objDrafts == nil {
-		return "Loading..."
-	}
-
-	var sb strings.Builder
-
-	if errStr, ok := m.status["commitError"].(string); ok && errStr != "" {
-		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: "+errStr) + "\n\n")
-	} else if m.objHasDraft {
-		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("* Unsaved Draft (Press 'c' to commit)") + "\n\n")
-	} else {
-		sb.WriteString("\n\n")
-	}
-
-	cats := []string{"Groups", "Regions", "Services", "Hosts", "Zones", "Lists", "Feeds"}
-
-	colWidth := (m.width - 10) / 3
-	if colWidth < 20 {
-		colWidth = 20
-	}
-
-	styleNormal := lipgloss.NewStyle().Width(colWidth).Padding(0, 1)
-	styleSelected := lipgloss.NewStyle().Width(colWidth).Padding(0, 1).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("14"))
-	styleDimmed := lipgloss.NewStyle().Width(colWidth).Padding(0, 1).Foreground(lipgloss.Color("240"))
-
-	var catView strings.Builder
-	for i, c := range cats {
-		s := styleNormal
-		if m.objLevel == 0 && i == m.objSelectedCategory {
-			s = styleSelected
-		} else if i == m.objSelectedCategory {
-			s = lipgloss.NewStyle().Width(colWidth).Padding(0, 1).Foreground(lipgloss.Color("14")).Bold(true)
-		} else if m.objLevel > 0 {
-			s = styleDimmed
-		}
-		catView.WriteString(s.Render(c) + "\n")
-	}
-
-	var entView strings.Builder
-	var memView strings.Builder
-
-	if m.objSelectedCategory >= 0 && m.objSelectedCategory < len(m.objDrafts) {
-		entries := m.objDrafts[m.objSelectedCategory]
-
-		if m.objInputMode && m.objLevel == 1 {
-			entView.WriteString(styleSelected.Render("> "+m.objInput.View()) + "\n")
-		}
-
-		for i, e := range entries {
-			s := styleNormal
-			if m.objLevel == 1 && i == m.objSelectedEntry && !m.objInputMode {
-				s = styleSelected
-			} else if i == m.objSelectedEntry && m.objLevel > 1 {
-				s = lipgloss.NewStyle().Width(colWidth).Padding(0, 1).Foreground(lipgloss.Color("14")).Bold(true)
-			} else if m.objLevel > 1 {
-				s = styleDimmed
-			} else if m.objLevel == 0 {
-				s = styleDimmed
-			}
-			entView.WriteString(s.Render(e.Name) + "\n")
-		}
-
-		if m.objSelectedEntry >= 0 && m.objSelectedEntry < len(entries) {
-			members := entries[m.objSelectedEntry].Members
-			if m.objInputMode && m.objLevel == 2 {
-				memView.WriteString(styleSelected.Render("> "+m.objInput.View()) + "\n")
-			}
-			for i, mval := range members {
-				s := styleNormal
-				if m.objLevel == 2 && i == m.objSelectedMember && !m.objInputMode {
-					s = styleSelected
-				} else if m.objLevel < 2 {
-					s = styleDimmed
-				}
-				memView.WriteString(s.Render(mval) + "\n")
-			}
-		}
-	}
-
-	headerStyle := lipgloss.NewStyle().Width(colWidth).Bold(true).Underline(true).Padding(0, 1)
-
-	row1 := lipgloss.JoinHorizontal(lipgloss.Top,
-		headerStyle.Render("Category"),
-		headerStyle.Render("Entry"),
-		headerStyle.Render("Member"),
-	)
-
-	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
-		catView.String(),
-		entView.String(),
-		memView.String(),
-	)
-
-	sb.WriteString(row1 + "\n")
-	sb.WriteString(row2)
-
-	return sb.String()
-}
-
-func (m cliModel) renderSystem() string {
-	var sb strings.Builder
-	if ifaces, ok := m.ifStats["ifaces"].([]map[string]interface{}); ok {
-		for _, iface := range ifaces {
-			name := iface["name"].(string)
-			up := m.styles.DropVerdict.Render("DOWN")
-			if iface["up"].(bool) {
-				up = m.styles.AcceptVerdict.Render("UP")
-			}
-
-			flags := ""
-			if iface["veth"].(bool) {
-				flags += " [veth]"
-			}
-			if iface["bridge"].(bool) {
-				flags += " [bridge]"
-			}
-
-			sb.WriteString(fmt.Sprintf("%-10s [%s] Speed: %d Mbps %s\n", name, up, iface["speed_mbps"], flags))
-			sb.WriteString("  RX: " + m.rxSparklines[name].View() + " " + formatBps(iface["rx_bps"].([]float64)))
-			if errs, ok := iface["errors"].(map[string]uint64); ok && errs["rx_errs"] > 0 {
-				sb.WriteString(m.styles.DropVerdict.Render(fmt.Sprintf(" (Errs: %d)", errs["rx_errs"])))
-			}
-			sb.WriteString("\n")
-
-			sb.WriteString("  TX: " + m.txSparklines[name].View() + " " + formatBps(iface["tx_bps"].([]float64)))
-			if errs, ok := iface["errors"].(map[string]uint64); ok && errs["tx_errs"] > 0 {
-				sb.WriteString(m.styles.DropVerdict.Render(fmt.Sprintf(" (Errs: %d)", errs["tx_errs"])))
-			}
-			sb.WriteString("\n\n")
-		}
-	}
-	return sb.String()
+// placeOverlay centers a modal over a dotted scrim (lipgloss cannot compose
+// true overlays; a patterned backdrop reads as intentional instead of void).
+func (m cliModel) placeOverlay(modal string) string {
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal,
+		lipgloss.WithWhitespaceChars("░"),
+		lipgloss.WithWhitespaceForeground(m.styles.Muted.GetForeground()))
 }
 
 func formatBpsVal(val float64) string {
@@ -1435,37 +985,6 @@ func formatBps(data []float64) string {
 	return formatBpsVal(data[len(data)-1])
 }
 
-func (m cliModel) renderLookupDetails() string {
-	if m.lookupRes == nil {
-		return "Loading..."
-	}
-	ip := m.lookupRes["ip"].(string)
-	res := fmt.Sprintf("Lookup for: %s\n\n", m.styles.Accent.Copy().Bold(true).Render(ip))
-
-	if ptr, ok := m.lookupRes["ptr"].([]string); ok {
-		res += m.styles.Accent.Copy().Bold(true).Render("Reverse DNS:") + "\n"
-		for _, n := range ptr {
-			res += "  " + n + "\n"
-		}
-		res += "\n"
-	}
-
-	if rdap, ok := m.lookupRes["rdap"].(map[string]interface{}); ok {
-		res += m.styles.Accent.Copy().Bold(true).Render("RDAP Information:") + "\n"
-		res += fmt.Sprintf("  Org:     %v\n", rdap["org"])
-		res += fmt.Sprintf("  CIDR:    %v\n", rdap["cidr"])
-		res += fmt.Sprintf("  Country: %v\n", rdap["country"])
-		res += fmt.Sprintf("  Handle:  %v\n", rdap["handle"])
-	}
-
-	res += "\n\nPress ESC to close"
-	return res
-}
-
-func (m cliModel) placeCenter(modal, bg string) string {
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal, lipgloss.WithWhitespaceChars(" "), lipgloss.WithWhitespaceForeground(m.styles.Dim.GetForeground()))
-}
-
 func startCLI(refresh time.Duration) {
 	reconcileCommit()
 	m := initialModel()
@@ -1474,121 +993,5 @@ func startCLI(refresh time.Duration) {
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error starting CLI: %v", err)
 		os.Exit(1)
-	}
-}
-
-func (m *cliModel) handleObjInputEnter() {
-	val := m.objInput.Value()
-	if val == "" {
-		return
-	}
-
-	if m.objSelectedCategory < 0 || m.objSelectedCategory >= len(m.objDrafts) {
-		return
-	}
-
-	entries := make([]objEntry, len(m.objDrafts[m.objSelectedCategory]))
-	copy(entries, m.objDrafts[m.objSelectedCategory])
-
-	if m.objInputContext == "entry_name" {
-		for _, e := range entries {
-			if e.Name == val {
-				return
-			}
-		}
-		entries = append(entries, objEntry{Name: val, Members: []string{}})
-		m.objDrafts[m.objSelectedCategory] = entries
-	} else if m.objInputContext == "member_value" {
-		if m.objSelectedEntry >= len(entries) {
-			return
-		}
-		entries[m.objSelectedEntry].Members = append(entries[m.objSelectedEntry].Members, val)
-		m.objDrafts[m.objSelectedCategory] = entries
-	} else if m.objInputContext == "edit_entry" {
-		if m.objSelectedEntry >= len(entries) {
-			return
-		}
-		for i, e := range entries {
-			if i != m.objSelectedEntry && e.Name == val {
-				return // duplicate
-			}
-		}
-		entries[m.objSelectedEntry].Name = val
-		m.objDrafts[m.objSelectedCategory] = entries
-	} else if m.objInputContext == "edit_member" {
-		if m.objSelectedEntry >= len(entries) {
-			return
-		}
-		members := entries[m.objSelectedEntry].Members
-		if m.objSelectedMember >= len(members) {
-			return
-		}
-		entries[m.objSelectedEntry].Members[m.objSelectedMember] = val
-		m.objDrafts[m.objSelectedCategory] = entries
-	}
-
-	m.saveObjectsDraft()
-	m.objInputMode = false
-}
-
-func (m *cliModel) handleObjDelete() {
-	if m.objSelectedCategory < 0 || m.objSelectedCategory >= len(m.objDrafts) {
-		return
-	}
-
-	entries := make([]objEntry, len(m.objDrafts[m.objSelectedCategory]))
-	copy(entries, m.objDrafts[m.objSelectedCategory])
-
-	if m.objLevel == 1 { // Delete entry
-		if m.objSelectedEntry >= len(entries) {
-			return
-		}
-		entries = append(entries[:m.objSelectedEntry], entries[m.objSelectedEntry+1:]...)
-		m.objDrafts[m.objSelectedCategory] = entries
-		if m.objSelectedEntry > 0 {
-			m.objSelectedEntry--
-		}
-	} else if m.objLevel == 2 { // Delete member
-		if m.objSelectedEntry >= len(entries) {
-			return
-		}
-		members := entries[m.objSelectedEntry].Members
-		if m.objSelectedMember >= len(members) {
-			return
-		}
-		members = append(members[:m.objSelectedMember], members[m.objSelectedMember+1:]...)
-		entries[m.objSelectedEntry].Members = members
-		m.objDrafts[m.objSelectedCategory] = entries
-		if m.objSelectedMember > 0 {
-			m.objSelectedMember--
-		}
-	}
-
-	m.saveObjectsDraft()
-}
-
-// setStatusErr surfaces a mutation error in the status line shared with the
-// web-style commitError rendering.
-func (m *cliModel) setStatusErr(msg string) {
-	if m.status == nil {
-		m.status = make(map[string]interface{})
-	}
-	m.status["commitError"] = msg
-}
-
-// saveObjectsDraft stages the edited object set through the same
-// writeObjectsDraft path the web PUT handler uses.
-func (m *cliModel) saveObjectsDraft() {
-	if len(m.objDrafts) < 7 {
-		return
-	}
-	_, errMsg, _ := writeObjectsDraft(m.objDrafts[0], m.objDrafts[1], m.objDrafts[2], m.objDrafts[3], m.objDrafts[4], m.objDrafts[5], m.objDrafts[6])
-	if errMsg != "" {
-		m.setStatusErr("Invalid object: " + errMsg)
-		return
-	}
-	m.objHasDraft = true
-	if m.status != nil {
-		m.status["commitError"] = ""
 	}
 }
