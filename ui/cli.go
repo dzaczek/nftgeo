@@ -445,8 +445,9 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.editState == policyStateConfirming {
 			m.confirmRemaining--
 			if m.confirmRemaining <= 0 {
-				run(nftgeoBin, "rollback")
-				restoreBackups()
+				// The engine deadman fires on the host and watchDeadman (armed
+				// by commitApply) restores the file backups — nothing to run
+				// here, just leave confirm mode and refetch.
 				m.editState = policyStateNormal
 				return m, fetchDataCmd()
 			}
@@ -605,7 +606,9 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if idx >= 0 && idx < len(m.draftRules) {
 					rule := m.draftRules[idx]
 					if rule.Kind != "section" {
-						cliToggleRule(rule.File, rule.ID)
+						if _, errMsg, _ := toggleRuleDraft(rule.File, rule.ID); errMsg != "" {
+							m.setStatusErr(errMsg)
+						}
 						return m, fetchDataCmd()
 					}
 				}
@@ -640,43 +643,35 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, cliKeys.Commit):
 			if m.editState == policyStateNormal {
-				act := activeStages()
-				if len(act) == 0 {
+				if len(activeStages()) == 0 {
 					return m, nil
 				}
-				if _, err := os.Stat(sentinel); err == nil {
-					if m.status == nil {
-						m.status = make(map[string]interface{})
+				// Same deploy path as the web: validate, back up, promote,
+				// apply --confirm + watchDeadman. The TUI countdown below is
+				// purely presentational.
+				payload, errMsg, _ := commitApply(90)
+				if errMsg != "" {
+					m.setStatusErr(errMsg)
+					return m, nil
+				}
+				if deployed, _ := payload["deployed"].(bool); !deployed {
+					if s, _ := payload["message"].(string); s != "" {
+						m.setStatusErr(s)
 					}
-					m.status["commitError"] = "a confirm is already pending on the host"
 					return m, nil
 				}
-				msgStr, ok := validateDraft()
-				if !ok {
-					if m.status == nil {
-						m.status = make(map[string]interface{})
-					}
-					m.status["commitError"] = msgStr
-					return m, nil
-				}
-				for _, s := range act {
-					backupLive(s)
-				}
-				for _, s := range act {
-					copyFile(s.draft, s.live)
-				}
-				run(nftgeoBin, "apply", "--confirm", "90")
 				m.editState = policyStateConfirming
 				m.confirmRemaining = 90
+				if s, ok := payload["seconds"].(int); ok {
+					m.confirmRemaining = s
+				}
 				return m, confirmTickCmd()
 			}
 
 		case key.Matches(msg, cliKeys.ConfirmY):
 			if m.editState == policyStateConfirming {
-				run(nftgeoBin, "apply", "--commit")
-				for _, s := range stages() {
-					os.Remove(s.draft)
-					os.Remove(s.backup)
+				if _, errMsg, _ := commitKeep(); errMsg != "" {
+					m.setStatusErr(errMsg)
 				}
 				m.editState = policyStateNormal
 				return m, fetchDataCmd()
@@ -684,8 +679,7 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, cliKeys.ConfirmN), key.Matches(msg, cliKeys.Rollback):
 			if m.editState == policyStateConfirming {
-				run(nftgeoBin, "rollback")
-				restoreBackups()
+				commitRollback()
 				m.editState = policyStateNormal
 				return m, fetchDataCmd()
 			} else if m.editState == policyStateNormal {
@@ -723,7 +717,9 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							localIdx++
 						}
 					}
-					cliMoveRule(sourceFile, destRule.File, sourceRuleID, localIdx)
+					if errMsg, _ := moveRuleDraft(sourceFile, destRule.File, sourceRuleID, localIdx); errMsg != "" {
+						m.setStatusErr(errMsg)
+					}
 				}
 				m.editState = policyStateNormal
 				return m, fetchDataCmd()
@@ -1571,29 +1567,26 @@ func (m *cliModel) handleObjDelete() {
 	m.saveObjectsDraft()
 }
 
+// setStatusErr surfaces a mutation error in the status line shared with the
+// web-style commitError rendering.
+func (m *cliModel) setStatusErr(msg string) {
+	if m.status == nil {
+		m.status = make(map[string]interface{})
+	}
+	m.status["commitError"] = msg
+}
+
+// saveObjectsDraft stages the edited object set through the same
+// writeObjectsDraft path the web PUT handler uses.
 func (m *cliModel) saveObjectsDraft() {
 	if len(m.objDrafts) < 7 {
 		return
 	}
-	g := m.objDrafts[0]
-	rg := m.objDrafts[1]
-	sv := m.objDrafts[2]
-	hs := m.objDrafts[3]
-	zn := m.objDrafts[4]
-	ls := m.objDrafts[5]
-	fd := m.objDrafts[6]
-
-	err := sanitizeObjects(g, rg, sv, hs, zn, ls, fd)
-	if err != nil {
-		if m.status == nil {
-			m.status = make(map[string]interface{})
-		}
-		m.status["commitError"] = "Invalid object: " + err.Error()
+	_, errMsg, _ := writeObjectsDraft(m.objDrafts[0], m.objDrafts[1], m.objDrafts[2], m.objDrafts[3], m.objDrafts[4], m.objDrafts[5], m.objDrafts[6])
+	if errMsg != "" {
+		m.setStatusErr("Invalid object: " + errMsg)
 		return
 	}
-
-	out := serializeObjects(g, rg, sv, hs, zn, ls, fd)
-	os.WriteFile(objDraftFile, []byte(out), 0644)
 	m.objHasDraft = true
 	if m.status != nil {
 		m.status["commitError"] = ""

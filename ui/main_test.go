@@ -389,7 +389,7 @@ func TestBackfillFromStats(t *testing.T) {
 	saved := statsData
 	// Appended in ingest (time-ascending) order, as the real store is.
 	statsData = []statsEntry{
-		{Ts: now.Unix() - 25*3600, Src: "9.9.9.9", CC: "FR", Port: "80"},        // out of 24h window
+		{Ts: now.Unix() - 25*3600, Src: "9.9.9.9", CC: "FR", Port: "80"}, // out of 24h window
 		{Ts: now.Unix() - 3600, Src: "1.1.1.1", CC: "US", Port: "22", Reason: "abuse"},
 		{Ts: now.Unix() - 60, Src: "2.2.2.2", CC: "DE", Port: "22", Reason: "geo"}, // newest
 	}
@@ -897,5 +897,230 @@ func TestParseList(t *testing.T) {
 				t.Errorf("parseList() got = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// ---- shared mutation core (TUI + web handlers use one implementation) ----
+
+// ruleTestEnv points every rule/stage path at a temp dir so the shared
+// mutation functions can be exercised without touching the system.
+func ruleTestEnv(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	saved := []struct {
+		p   *string
+		val string
+	}{
+		{&rulesFile, filepath.Join(dir, "rules.conf")},
+		{&rulesDir, filepath.Join(dir, "rules.d")},
+		{&ingressFile, filepath.Join(dir, "ingress.conf")},
+		{&ingressDir, filepath.Join(dir, "ingress.d")},
+		{&draftDir, filepath.Join(dir, "drafts")},
+		{&backupDir, filepath.Join(dir, "backups")},
+		{&objLiveFile, filepath.Join(dir, "objects.conf")},
+		{&objDraftFile, filepath.Join(dir, "drafts", "objects")},
+		{&objBackupFile, filepath.Join(dir, "backups", "objects")},
+		{&wlDraftFile, filepath.Join(dir, "drafts", "whitelist")},
+		{&wlHostsDraftFile, filepath.Join(dir, "drafts", "whitelist-hosts")},
+		{&whitelistFile, filepath.Join(dir, "whitelist.conf")},
+		{&whitelistHostsFile, filepath.Join(dir, "whitelist-hosts.conf")},
+		{&wlBackupFile, filepath.Join(dir, "backups", "whitelist")},
+		{&wlHostsBackupFile, filepath.Join(dir, "backups", "whitelist-hosts")},
+		{&sentinel, filepath.Join(dir, ".pending-confirm")},
+	}
+	for i := range saved {
+		old := *saved[i].p
+		p := saved[i].p
+		*p = saved[i].val
+		t.Cleanup(func() { *p = old })
+	}
+	os.WriteFile(rulesFile, []byte("# rules\n"), 0644)
+	return dir
+}
+
+func TestWriteObjectsDraftShared(t *testing.T) {
+	ruleTestEnv(t)
+	groups := []objEntry{{Name: "WEB", Members: []string{"1.2.3.4"}}}
+	changed, errMsg, _ := writeObjectsDraft(groups, nil, nil, nil, nil, nil, nil)
+	if errMsg != "" {
+		t.Fatalf("valid objects rejected: %s", errMsg)
+	}
+	if changed == 0 {
+		t.Errorf("changed = 0, want >0 (draft differs from empty live)")
+	}
+	want := serializeObjects(groups, nil, nil, nil, nil, nil, nil)
+	if got := readFileStr(objDraftFile); got != want {
+		t.Errorf("draft content mismatch:\n got: %q\nwant: %q", got, want)
+	}
+	// invalid name is rejected with a 400 and no write
+	os.Remove(objDraftFile)
+	_, errMsg, code := writeObjectsDraft([]objEntry{{Name: "bad name!", Members: []string{"1.1.1.1"}}}, nil, nil, nil, nil, nil, nil)
+	if errMsg == "" || code != 400 {
+		t.Errorf("invalid object accepted: errMsg=%q code=%d", errMsg, code)
+	}
+	if _, err := os.Stat(objDraftFile); err == nil {
+		t.Errorf("draft written despite validation error")
+	}
+}
+
+func TestSaveWhitelistDraftShared(t *testing.T) {
+	ruleTestEnv(t)
+	if errMsg, _ := saveWhitelistDraft([]string{"10.0.0.1", "192.168.0.0/24"}, []string{"host.example.com"}); errMsg != "" {
+		t.Fatalf("valid whitelist rejected: %s", errMsg)
+	}
+	if got := readFileStr(wlDraftFile); got != serializeListFile([]string{"10.0.0.1", "192.168.0.0/24"}) {
+		t.Errorf("whitelist draft mismatch: %q", got)
+	}
+	if got := readFileStr(wlHostsDraftFile); got != serializeListFile([]string{"host.example.com"}) {
+		t.Errorf("whitelist-hosts draft mismatch: %q", got)
+	}
+	if errMsg, code := saveWhitelistDraft([]string{"not an ip"}, nil); errMsg == "" || code != 400 {
+		t.Errorf("invalid entry accepted: errMsg=%q code=%d", errMsg, code)
+	}
+	if errMsg, code := saveWhitelistDraft(nil, []string{"bad host!"}); errMsg == "" || code != 400 {
+		t.Errorf("invalid host accepted: errMsg=%q code=%d", errMsg, code)
+	}
+}
+
+func TestSaveRuleDraftKinds(t *testing.T) {
+	ruleTestEnv(t)
+	cases := []struct {
+		name string
+		req  ruleSaveReq
+		want func() (string, error)
+	}{
+		{"filter", ruleSaveReq{File: "rules.conf", Action: "allow", Dir: "in", Proto: "tcp", Port: "22", Target: "any", Name: "ssh"},
+			func() (string, error) { return buildRuleBody("allow", "in", "tcp", "22", "any", "") }},
+		{"throttle", ruleSaveReq{File: "rules.conf", Action: "throttle", Dir: "in", Proto: "tcp", Port: "22", Rate: "5/minute", Name: "tt"},
+			func() (string, error) { return buildThrottleBody("in", "tcp", "22", "5/minute", "", "") }},
+		{"synproxy", ruleSaveReq{File: "rules.conf", Kind: "synproxy", Dir: "in", Port: "443", Name: "sp"},
+			func() (string, error) { return buildSynproxyBody("in", "443", "") }},
+		{"zone", ruleSaveReq{File: "rules.conf", Kind: "zone", Action: "allow", Src: "lan", Dst: "wan", Proto: "tcp", Port: "80", Name: "z"},
+			func() (string, error) { return buildZoneBody("allow", "lan", "wan", "tcp", "80", "") }},
+		{"ingress", ruleSaveReq{File: "rules.conf", Kind: "ingress", Action: "drop", Target: "abuse", Proto: "tcp", Port: "25", Name: "ig"},
+			func() (string, error) { return buildIngressBody("drop", "abuse", "tcp", "25", false) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			os.RemoveAll(draftDir)
+			if errMsg, _ := saveRuleDraft(c.req); errMsg != "" {
+				t.Fatalf("saveRuleDraft: %s", errMsg)
+			}
+			wantBody, err := c.want()
+			if err != nil {
+				t.Fatalf("builder: %v", err)
+			}
+			rf := findRuleFileByRel("rules.conf")
+			rules, _ := parseDraftRules(draftTextFor(*rf))
+			if len(rules) != 1 {
+				t.Fatalf("rules = %d, want 1", len(rules))
+			}
+			if rules[0].Body != wantBody {
+				t.Errorf("body = %q, want %q (must match the web builder)", rules[0].Body, wantBody)
+			}
+		})
+	}
+	// edit in place: append then edit by ID
+	os.RemoveAll(draftDir)
+	saveRuleDraft(ruleSaveReq{File: "rules.conf", Action: "deny", Dir: "in", Proto: "any", Target: "1.2.3.4", Name: "old"})
+	rf := findRuleFileByRel("rules.conf")
+	rules, _ := parseDraftRules(draftTextFor(*rf))
+	id := rules[0].ID
+	if errMsg, _ := saveRuleDraft(ruleSaveReq{File: "rules.conf", ID: &id, Action: "deny", Dir: "in", Proto: "any", Target: "5.6.7.8", Name: "new"}); errMsg != "" {
+		t.Fatalf("edit: %s", errMsg)
+	}
+	rules, _ = parseDraftRules(draftTextFor(*rf))
+	if len(rules) != 1 || !strings.Contains(rules[0].Body, "5.6.7.8") || rules[0].Name != "new" {
+		t.Errorf("edit did not replace in place: %+v", rules[0])
+	}
+	// error paths
+	if errMsg, code := saveRuleDraft(ruleSaveReq{File: "nope.conf", Action: "deny", Dir: "in", Proto: "any", Target: "1.1.1.1"}); errMsg != "unknown rule file" || code != 400 {
+		t.Errorf("unknown file: errMsg=%q code=%d", errMsg, code)
+	}
+	if errMsg, code := saveRuleDraft(ruleSaveReq{File: "rules.conf", Action: "bogus", Dir: "in", Proto: "tcp", Port: "1", Target: "any"}); errMsg == "" || code != 400 {
+		t.Errorf("bad action accepted: errMsg=%q code=%d", errMsg, code)
+	}
+}
+
+func TestToggleMoveDeleteRuleDraft(t *testing.T) {
+	ruleTestEnv(t)
+	for _, target := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"} {
+		saveRuleDraft(ruleSaveReq{File: "rules.conf", Action: "deny", Dir: "in", Proto: "any", Target: target})
+	}
+	rf := findRuleFileByRel("rules.conf")
+	rules, _ := parseDraftRules(draftTextFor(*rf))
+	if len(rules) != 3 {
+		t.Fatalf("seed: %d rules, want 3", len(rules))
+	}
+	// toggle
+	disabled, errMsg, _ := toggleRuleDraft("rules.conf", rules[1].ID)
+	if errMsg != "" || !disabled {
+		t.Fatalf("toggle: errMsg=%q disabled=%v", errMsg, disabled)
+	}
+	rules, _ = parseDraftRules(draftTextFor(*rf))
+	if !rules[1].Disabled {
+		t.Errorf("rule not disabled after toggle")
+	}
+	if _, errMsg, code := toggleRuleDraft("rules.conf", 9999); errMsg != "no such rule" || code != 400 {
+		t.Errorf("toggle missing: errMsg=%q code=%d", errMsg, code)
+	}
+	if _, errMsg, code := toggleRuleDraft("nope.conf", 1); errMsg != "unknown rule file" || code != 400 {
+		t.Errorf("toggle unknown file: errMsg=%q code=%d", errMsg, code)
+	}
+	// move within the file: last rule to the top
+	rules, _ = parseDraftRules(draftTextFor(*rf))
+	if errMsg, _ := moveRuleDraft("rules.conf", "rules.conf", rules[2].ID, 0); errMsg != "" {
+		t.Fatalf("move: %s", errMsg)
+	}
+	rules, _ = parseDraftRules(draftTextFor(*rf))
+	if !strings.Contains(rules[0].Body, "3.3.3.3") {
+		t.Errorf("move did not reorder: first body = %q", rules[0].Body)
+	}
+	if errMsg, code := moveRuleDraft("rules.conf", "rules.conf", 9999, 0); errMsg != "rule not found in source file" || code != 400 {
+		t.Errorf("move missing: errMsg=%q code=%d", errMsg, code)
+	}
+	// delete the middle rule
+	rules, _ = parseDraftRules(draftTextFor(*rf))
+	if errMsg, _ := deleteRuleDraft("rules.conf", rules[1].ID); errMsg != "" {
+		t.Fatalf("delete: %s", errMsg)
+	}
+	rules, _ = parseDraftRules(draftTextFor(*rf))
+	if len(rules) != 2 {
+		t.Errorf("delete: %d rules left, want 2", len(rules))
+	}
+	if errMsg, code := deleteRuleDraft("rules.conf", 9999); errMsg != "no such rule" || code != 400 {
+		t.Errorf("delete missing: errMsg=%q code=%d", errMsg, code)
+	}
+}
+
+func TestCommitApplyGuards(t *testing.T) {
+	ruleTestEnv(t)
+	// remove the seeded live rules file so no stage has a draft
+	os.Remove(rulesFile)
+	savedPending := pending
+	t.Cleanup(func() { commitMu.Lock(); pending = savedPending; commitMu.Unlock() })
+
+	if _, errMsg, code := commitApply(90); errMsg != "no draft to deploy" || code != 400 {
+		t.Errorf("no drafts: errMsg=%q code=%d", errMsg, code)
+	}
+	os.WriteFile(sentinel, []byte("x"), 0644)
+	if _, errMsg, code := commitApply(90); errMsg != "a confirm is already pending on the host" || code != 409 {
+		t.Errorf("sentinel: errMsg=%q code=%d", errMsg, code)
+	}
+	os.Remove(sentinel)
+	commitMu.Lock()
+	pending.active = true
+	commitMu.Unlock()
+	if _, errMsg, code := commitApply(90); errMsg == "" || code != 409 {
+		t.Errorf("pending: errMsg=%q code=%d", errMsg, code)
+	}
+	commitMu.Lock()
+	pending.active = false
+	commitMu.Unlock()
+
+	for in, want := range map[int]int{0: 90, 19: 90, 20: 20, 90: 90, 600: 600, 601: 90, -5: 90} {
+		if got := clampDeadman(in); got != want {
+			t.Errorf("clampDeadman(%d) = %d, want %d", in, got, want)
+		}
 	}
 }

@@ -2765,6 +2765,25 @@ func sanitizeObjects(groups, regions, services, hosts, zones, lists, feeds []obj
 	return checkZones(zones)
 }
 
+// writeObjectsDraft validates the full object set and stages it into the
+// objects draft file, returning the number of changed lines vs live. It is the
+// single objects write path shared by the web PUT handler and the console TUI.
+// Extracted mutations follow one convention: errMsg is "" on success, else a
+// human message plus the HTTP status the web wrapper should return (the TUI
+// just shows the message).
+func writeObjectsDraft(groups, regions, services, hosts, zones, lists, feeds []objEntry) (changed int, errMsg string, code int) {
+	if err := sanitizeObjects(groups, regions, services, hosts, zones, lists, feeds); err != nil {
+		return 0, err.Error(), http.StatusBadRequest
+	}
+	out := serializeObjects(groups, regions, services, hosts, zones, lists, feeds)
+	os.MkdirAll(filepath.Dir(objDraftFile), 0755)
+	if err := os.WriteFile(objDraftFile, []byte(out), 0644); err != nil {
+		return 0, "cannot write objects draft", http.StatusInternalServerError
+	}
+	_, changed = diffText(readFileStr(objLiveFile), out)
+	return changed, "", 0
+}
+
 func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -2810,17 +2829,11 @@ func handleObjectsDraft(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
-		if err := sanitizeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists, req.Feeds); err != nil {
-			http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
+		changed, errMsg, code := writeObjectsDraft(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists, req.Feeds)
+		if errMsg != "" {
+			http.Error(w, `{"error":`+strconv.Quote(errMsg)+`}`, code)
 			return
 		}
-		out := serializeObjects(req.Groups, req.Regions, req.Services, req.Hosts, req.Zones, req.Lists, req.Feeds)
-		os.MkdirAll(filepath.Dir(objDraftFile), 0755)
-		if err := os.WriteFile(objDraftFile, []byte(out), 0644); err != nil {
-			http.Error(w, `{"error":"cannot write objects draft"}`, http.StatusInternalServerError)
-			return
-		}
-		_, changed := diffText(readFileStr(objLiveFile), out)
 		writeJSON(w, map[string]interface{}{"saved": true, "changed": changed})
 	default:
 		http.Error(w, `{"error":"method"}`, http.StatusMethodNotAllowed)
@@ -2844,6 +2857,36 @@ func parseList(s string) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// saveWhitelistDraft validates and stages the whitelist + whitelist-hosts
+// drafts. Single write path shared by the web POST handler and the console
+// TUI; same errMsg/code convention as writeObjectsDraft.
+func saveWhitelistDraft(entries, hosts []string) (errMsg string, code int) {
+	for _, e := range entries {
+		if e = strings.TrimSpace(e); e == "" || strings.HasPrefix(e, "#") {
+			continue
+		}
+		if !validWhitelistEntry(e) {
+			return "invalid whitelist entry: " + e, http.StatusBadRequest
+		}
+	}
+	for _, e := range hosts {
+		if e = strings.TrimSpace(e); e == "" || strings.HasPrefix(e, "#") {
+			continue
+		}
+		if !validHostname(e) {
+			return "invalid whitelist host: " + e, http.StatusBadRequest
+		}
+	}
+	os.MkdirAll(filepath.Dir(wlDraftFile), 0755)
+	if err := os.WriteFile(wlDraftFile, []byte(serializeListFile(entries)), 0644); err != nil {
+		return "cannot write whitelist draft", http.StatusInternalServerError
+	}
+	if err := os.WriteFile(wlHostsDraftFile, []byte(serializeListFile(hosts)), 0644); err != nil {
+		return "cannot write whitelist-hosts draft", http.StatusInternalServerError
+	}
+	return "", 0
 }
 
 // handleWhitelistDraft GETs the current whitelist (draft if present, else the
@@ -2873,31 +2916,8 @@ func handleWhitelistDraft(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 			return
 		}
-		for _, e := range req.Whitelist {
-			if e = strings.TrimSpace(e); e == "" || strings.HasPrefix(e, "#") {
-				continue
-			}
-			if !validWhitelistEntry(e) {
-				http.Error(w, `{"error":"invalid whitelist entry: `+strconv.Quote(e)+`"}`, http.StatusBadRequest)
-				return
-			}
-		}
-		for _, e := range req.WhitelistHosts {
-			if e = strings.TrimSpace(e); e == "" || strings.HasPrefix(e, "#") {
-				continue
-			}
-			if !validHostname(e) {
-				http.Error(w, `{"error":"invalid whitelist host: `+strconv.Quote(e)+`"}`, http.StatusBadRequest)
-				return
-			}
-		}
-		os.MkdirAll(filepath.Dir(wlDraftFile), 0755)
-		if err := os.WriteFile(wlDraftFile, []byte(serializeListFile(req.Whitelist)), 0644); err != nil {
-			http.Error(w, `{"error":"cannot write whitelist draft"}`, http.StatusInternalServerError)
-			return
-		}
-		if err := os.WriteFile(wlHostsDraftFile, []byte(serializeListFile(req.WhitelistHosts)), 0644); err != nil {
-			http.Error(w, `{"error":"cannot write whitelist-hosts draft"}`, http.StatusInternalServerError)
+		if errMsg, code := saveWhitelistDraft(req.Whitelist, req.WhitelistHosts); errMsg != "" {
+			http.Error(w, `{"error":`+strconv.Quote(errMsg)+`}`, code)
 			return
 		}
 		writeJSON(w, map[string]interface{}{"saved": true})
@@ -3242,28 +3262,39 @@ func findRuleFileByRel(rel string) *ruleFile {
 	return nil
 }
 
-// cliToggleRule toggles the disabled state of a draft rule and saves it.
-func cliToggleRule(fileID string, id int) error {
+// toggleRuleDraft flips a draft rule's disabled state and saves the draft.
+// Single toggle path shared by the web handler and the console TUI; sections
+// cannot be toggled. Same errMsg/code convention as writeObjectsDraft.
+func toggleRuleDraft(fileID string, id int) (disabled bool, errMsg string, code int) {
 	rf := findRuleFileByRel(fileID)
 	if rf == nil {
-		return fmt.Errorf("file not found")
+		return false, "unknown rule file", http.StatusBadRequest
 	}
 	rules, tail := parseDraftRules(draftTextFor(*rf))
+	var found *draftRule
 	for _, rr := range rules {
 		if rr.ID == id {
-			rr.Disabled = !rr.Disabled
-			return writeDraftFor(*rf, rules, tail)
+			found = rr
 		}
 	}
-	return fmt.Errorf("rule not found")
+	if found == nil || found.Kind == "section" {
+		return false, "no such rule", http.StatusBadRequest
+	}
+	found.Disabled = !found.Disabled
+	if err := writeDraftFor(*rf, rules, tail); err != nil {
+		return false, "cannot write draft", http.StatusInternalServerError
+	}
+	return found.Disabled, "", 0
 }
 
-// cliMoveRule moves a draft rule to a new index.
-func cliMoveRule(fromFileID, toFileID string, fromID, toIndex int) error {
+// moveRuleDraft moves a draft rule to a new index, within one file or across
+// files. Single move path shared by the web handler (cross-file) and the
+// console TUI (both); same errMsg/code convention as writeObjectsDraft.
+func moveRuleDraft(fromFileID, toFileID string, fromID, toIndex int) (errMsg string, code int) {
 	fromRf := findRuleFileByRel(fromFileID)
 	toRf := findRuleFileByRel(toFileID)
 	if fromRf == nil || toRf == nil {
-		return fmt.Errorf("file not found")
+		return "unknown rule file", http.StatusBadRequest
 	}
 	fromRules, fromTail := parseDraftRules(draftTextFor(*fromRf))
 	toRules, toTail := parseDraftRules(draftTextFor(*toRf))
@@ -3278,7 +3309,7 @@ func cliMoveRule(fromFileID, toFileID string, fromID, toIndex int) error {
 		}
 	}
 	if moved == nil {
-		return fmt.Errorf("rule not found")
+		return "rule not found in source file", http.StatusBadRequest
 	}
 	moved.File = toRf.rel
 
@@ -3287,11 +3318,14 @@ func cliMoveRule(fromFileID, toFileID string, fromID, toIndex int) error {
 			toIndex = len(kept)
 		}
 		newRules := append(kept[:toIndex], append([]*draftRule{moved}, kept[toIndex:]...)...)
-		return writeDraftFor(*fromRf, newRules, fromTail)
+		if err := writeDraftFor(*fromRf, newRules, fromTail); err != nil {
+			return "cannot write draft", http.StatusInternalServerError
+		}
+		return "", 0
 	}
 
 	if err := writeDraftFor(*fromRf, kept, fromTail); err != nil {
-		return err
+		return "cannot write source draft", http.StatusInternalServerError
 	}
 	if toIndex < 0 || toIndex > len(toRules) {
 		toIndex = len(toRules)
@@ -3300,7 +3334,10 @@ func cliMoveRule(fromFileID, toFileID string, fromID, toIndex int) error {
 	newTo = append(newTo, toRules[:toIndex]...)
 	newTo = append(newTo, moved)
 	newTo = append(newTo, toRules[toIndex:]...)
-	return writeDraftFor(*toRf, newTo, toTail)
+	if err := writeDraftFor(*toRf, newTo, toTail); err != nil {
+		return "cannot write destination draft", http.StatusInternalServerError
+	}
+	return "", 0
 }
 
 // cliAddDenyRule adds a new deny rule to the specified file.
@@ -3373,47 +3410,8 @@ func handleRulesMove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"same file — use reorder"}`, http.StatusBadRequest)
 		return
 	}
-	fromRf := reqRuleFile(w, req.FromFile)
-	if fromRf == nil {
-		return
-	}
-	toRf := reqRuleFile(w, req.ToFile)
-	if toRf == nil {
-		return
-	}
-	fromRules, fromTail := parseDraftRules(draftTextFor(*fromRf))
-	toRules, toTail := parseDraftRules(draftTextFor(*toRf))
-
-	var moved *draftRule
-	kept := make([]*draftRule, 0, len(fromRules))
-	for _, rr := range fromRules {
-		if rr.ID == req.FromID && moved == nil {
-			moved = rr
-		} else {
-			kept = append(kept, rr)
-		}
-	}
-	if moved == nil {
-		http.Error(w, `{"error":"rule not found in source file"}`, http.StatusBadRequest)
-		return
-	}
-	moved.File = toRf.rel
-
-	idx := req.ToIndex
-	if idx < 0 || idx > len(toRules) {
-		idx = len(toRules)
-	}
-	newTo := make([]*draftRule, 0, len(toRules)+1)
-	newTo = append(newTo, toRules[:idx]...)
-	newTo = append(newTo, moved)
-	newTo = append(newTo, toRules[idx:]...)
-
-	if err := writeDraftFor(*fromRf, kept, fromTail); err != nil {
-		http.Error(w, `{"error":"cannot write source draft"}`, http.StatusInternalServerError)
-		return
-	}
-	if err := writeDraftFor(*toRf, newTo, toTail); err != nil {
-		http.Error(w, `{"error":"cannot write destination draft"}`, http.StatusInternalServerError)
+	if errMsg, code := moveRuleDraft(req.FromFile, req.ToFile, req.FromID, req.ToIndex); errMsg != "" {
+		http.Error(w, `{"error":`+strconv.Quote(errMsg)+`}`, code)
 		return
 	}
 	writeJSON(w, map[string]interface{}{"saved": true})
@@ -3428,27 +3426,12 @@ func handleRulesToggle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
-	rf := reqRuleFile(w, req.File)
-	if rf == nil {
+	disabled, errMsg, code := toggleRuleDraft(req.File, req.ID)
+	if errMsg != "" {
+		http.Error(w, `{"error":`+strconv.Quote(errMsg)+`}`, code)
 		return
 	}
-	rules, tail := parseDraftRules(draftTextFor(*rf))
-	var found *draftRule
-	for _, rr := range rules {
-		if rr.ID == req.ID {
-			found = rr
-		}
-	}
-	if found == nil || found.Kind == "section" {
-		http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
-		return
-	}
-	found.Disabled = !found.Disabled
-	if err := writeDraftFor(*rf, rules, tail); err != nil {
-		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]interface{}{"saved": true, "disabled": found.Disabled})
+	writeJSON(w, map[string]interface{}{"saved": true, "disabled": disabled})
 }
 
 // handleRulesToggleLog flips per-rule connection logging on a filter rule by
@@ -4116,24 +4099,28 @@ func buildNatBody(natType, proto, port, target, geo, iface, lan string) (string,
 	return "", fmt.Errorf("nat type must be masquerade / snat / dnat")
 }
 
-func handleRulesSave(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		File                                    string
-		ID                                      *int
-		Kind                                    string
-		Action, Dir, Proto, Port, Target, Iface string
-		Src, Dst, Geo, NatType, Lan             string
-		Rate, Ban                               string
-		Name                                    string
-		Log                                     bool
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
-		return
-	}
-	rf := reqRuleFile(w, req.File)
+// ruleSaveReq mirrors the web's /api/rules/draft/save request body; the
+// console TUI's rule forms build the same struct so both paths share
+// saveRuleDraft. ID nil = append a new rule, else edit that rule in place.
+type ruleSaveReq struct {
+	File                                    string
+	ID                                      *int
+	Kind                                    string
+	Action, Dir, Proto, Port, Target, Iface string
+	Src, Dst, Geo, NatType, Lan             string
+	Rate, Ban                               string
+	Name                                    string
+	Log                                     bool
+}
+
+// saveRuleDraft builds the rule body for the request's kind (via the same
+// build*Body validators the web uses) and appends or edits it in the file's
+// draft. Single rule-save path shared by the web handler and the console TUI;
+// same errMsg/code convention as writeObjectsDraft.
+func saveRuleDraft(req ruleSaveReq) (errMsg string, code int) {
+	rf := findRuleFileByRel(req.File)
 	if rf == nil {
-		return
+		return "unknown rule file", http.StatusBadRequest
 	}
 	var body string
 	var err error
@@ -4155,8 +4142,7 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		http.Error(w, `{"error":`+strconv.Quote(err.Error())+`}`, http.StatusBadRequest)
-		return
+		return err.Error(), http.StatusBadRequest
 	}
 	name := sanitizeComment(req.Name)
 	rules, tail := parseDraftRules(draftTextFor(*rf))
@@ -4168,18 +4154,61 @@ func handleRulesSave(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if found == nil {
-			http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
-			return
+			return "no such rule", http.StatusBadRequest
 		}
 		found.Body, found.Name = body, name
 	} else {
 		rules = append(rules, &draftRule{ID: -1, Body: body, Name: name})
 	}
 	if err := writeDraftFor(*rf, rules, tail); err != nil {
-		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+		return "cannot write draft", http.StatusInternalServerError
+	}
+	return "", 0
+}
+
+func handleRulesSave(w http.ResponseWriter, r *http.Request) {
+	var req ruleSaveReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
+		return
+	}
+	if errMsg, code := saveRuleDraft(req); errMsg != "" {
+		http.Error(w, `{"error":`+strconv.Quote(errMsg)+`}`, code)
 		return
 	}
 	writeJSON(w, map[string]interface{}{"saved": true})
+}
+
+// deleteRuleDraft removes a rule from the file's draft, preserving its leading
+// comments/blanks with the following rule (or the file tail) so section
+// headers survive. Single delete path shared by the web handler and the
+// console TUI; same errMsg/code convention as writeObjectsDraft.
+func deleteRuleDraft(fileID string, id int) (errMsg string, code int) {
+	rf := findRuleFileByRel(fileID)
+	if rf == nil {
+		return "unknown rule file", http.StatusBadRequest
+	}
+	rules, tail := parseDraftRules(draftTextFor(*rf))
+	idx := -1
+	for i, rr := range rules {
+		if rr.ID == id {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return "no such rule", http.StatusBadRequest
+	}
+	trivia := rules[idx].Trivia
+	if idx+1 < len(rules) {
+		rules[idx+1].Trivia = append(append([]string{}, trivia...), rules[idx+1].Trivia...)
+	} else {
+		tail = append(append([]string{}, trivia...), tail...)
+	}
+	rules = append(rules[:idx], rules[idx+1:]...)
+	if err := writeDraftFor(*rf, rules, tail); err != nil {
+		return "cannot write draft", http.StatusInternalServerError
+	}
+	return "", 0
 }
 
 func handleRulesDelete(w http.ResponseWriter, r *http.Request) {
@@ -4191,32 +4220,8 @@ func handleRulesDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"bad json"}`, http.StatusBadRequest)
 		return
 	}
-	rf := reqRuleFile(w, req.File)
-	if rf == nil {
-		return
-	}
-	rules, tail := parseDraftRules(draftTextFor(*rf))
-	idx := -1
-	for i, rr := range rules {
-		if rr.ID == req.ID {
-			idx = i
-		}
-	}
-	if idx < 0 {
-		http.Error(w, `{"error":"no such rule"}`, http.StatusBadRequest)
-		return
-	}
-	// Keep the deleted rule's leading comments/blanks with the following rule
-	// (or the file tail if it was last), so section headers survive.
-	trivia := rules[idx].Trivia
-	if idx+1 < len(rules) {
-		rules[idx+1].Trivia = append(append([]string{}, trivia...), rules[idx+1].Trivia...)
-	} else {
-		tail = append(append([]string{}, trivia...), tail...)
-	}
-	rules = append(rules[:idx], rules[idx+1:]...)
-	if err := writeDraftFor(*rf, rules, tail); err != nil {
-		http.Error(w, `{"error":"cannot write draft"}`, http.StatusInternalServerError)
+	if errMsg, code := deleteRuleDraft(req.File, req.ID); errMsg != "" {
+		http.Error(w, `{"error":`+strconv.Quote(errMsg)+`}`, code)
 		return
 	}
 	writeJSON(w, map[string]interface{}{"deleted": true})
@@ -4224,20 +4229,31 @@ func handleRulesDelete(w http.ResponseWriter, r *http.Request) {
 
 // ---- commit pipeline (all stages) ----
 
-func handleCommitPreview(w http.ResponseWriter, r *http.Request) {
+// commitPreviewInfo validates the assembled draft and returns the preview
+// payload (validate output + plan). Single preview path shared by the web
+// handler and the console TUI; same errMsg/code convention as
+// writeObjectsDraft.
+func commitPreviewInfo() (payload map[string]interface{}, errMsg string, code int) {
 	if len(activeStages()) == 0 {
-		http.Error(w, `{"error":"no draft to preview"}`, http.StatusBadRequest)
-		return
+		return nil, "no draft to preview", http.StatusBadRequest
 	}
 	msg, ok := validateDraft()
 	if !ok {
-		writeJSON(w, map[string]interface{}{"valid": false, "message": msg})
-		return
+		return map[string]interface{}{"valid": false, "message": msg}, "", 0
 	}
 	envv, cl := previewEnv()
 	defer cl()
 	plan, _ := runEnv(envv, nftgeoBin, "plan")
-	writeJSON(w, map[string]interface{}{"valid": true, "message": msg, "plan": strings.TrimSpace(plan)})
+	return map[string]interface{}{"valid": true, "message": msg, "plan": strings.TrimSpace(plan)}, "", 0
+}
+
+func handleCommitPreview(w http.ResponseWriter, r *http.Request) {
+	payload, errMsg, code := commitPreviewInfo()
+	if errMsg != "" {
+		http.Error(w, `{"error":`+strconv.Quote(errMsg)+`}`, code)
+		return
+	}
+	writeJSON(w, payload)
 }
 
 func commitStatus() map[string]interface{} {
@@ -4265,27 +4281,69 @@ func handleCommitStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, commitStatus())
 }
 
-func handleCommitApply(w http.ResponseWriter, r *http.Request) {
+// clampDeadman maps a requested confirm window to the allowed 20-600s range,
+// defaulting to 90s for anything out of range (including 0/unset).
+func clampDeadman(t int) int {
+	if t < 20 || t > 600 {
+		return 90
+	}
+	return t
+}
+
+// commitApply runs the deadman deploy: validate the assembled draft, back up
+// every live file, promote each draft, then `apply --confirm <T>` and start
+// the deadman watcher. Single deploy path shared by the web handler and the
+// console TUI; same errMsg/code convention as writeObjectsDraft (validation
+// and apply failures are 200 payloads with deployed=false, matching the web
+// contract).
+func commitApply(seconds int) (payload map[string]interface{}, errMsg string, code int) {
 	commitMu.Lock()
 	defer commitMu.Unlock()
 	if pending.active {
-		http.Error(w, `{"error":"a deploy is already pending; keep or roll it back first"}`, http.StatusConflict)
-		return
+		return nil, "a deploy is already pending; keep or roll it back first", http.StatusConflict
 	}
 	if _, err := os.Stat(sentinel); err == nil {
-		http.Error(w, `{"error":"a confirm is already pending on the host"}`, http.StatusConflict)
-		return
+		return nil, "a confirm is already pending on the host", http.StatusConflict
 	}
 	act := activeStages()
 	if len(act) == 0 {
-		http.Error(w, `{"error":"no draft to deploy"}`, http.StatusBadRequest)
-		return
+		return nil, "no draft to deploy", http.StatusBadRequest
 	}
 	// Never deploy an invalid ruleset - validate the draft before touching live.
 	if msg, ok := validateDraft(); !ok {
-		writeJSON(w, map[string]interface{}{"deployed": false, "valid": false, "message": msg})
-		return
+		return map[string]interface{}{"deployed": false, "valid": false, "message": msg}, "", 0
 	}
+	T := clampDeadman(seconds)
+	// Back up every live file, promote each draft, then apply with the deadman.
+	for _, s := range act {
+		if err := backupLive(s); err != nil {
+			restoreBackups()
+			return nil, "cannot back up live files", http.StatusInternalServerError
+		}
+	}
+	for _, s := range act {
+		if err := copyFile(s.draft, s.live); err != nil {
+			restoreBackups()
+			return nil, "cannot stage draft to live", http.StatusInternalServerError
+		}
+	}
+	out, err := run(nftgeoBin, "apply", "--confirm", strconv.Itoa(T))
+	if err != nil {
+		restoreBackups()
+		return map[string]interface{}{"deployed": false, "message": strings.TrimSpace(out)}, "", 0
+	}
+	pending.active = true
+	pending.deadline = time.Now().Add(time.Duration(T) * time.Second)
+	pending.seconds = T
+	go watchDeadman(T)
+	return map[string]interface{}{"deployed": true, "seconds": T, "message": strings.TrimSpace(out)}, "", 0
+}
+
+func handleCommitApply(w http.ResponseWriter, r *http.Request) {
+	// Note: the request body is decoded before commitApply's guards run; the
+	// original inline handler checked pending/sentinel/drafts first. The only
+	// visible difference is which error a malformed body gets during a pending
+	// deploy — no real client hits it.
 	var req struct {
 		Seconds int `json:"seconds"`
 	}
@@ -4293,36 +4351,12 @@ func handleCommitApply(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
 		return
 	}
-	T := req.Seconds
-	if T < 20 || T > 600 {
-		T = 90
-	}
-	// Back up every live file, promote each draft, then apply with the deadman.
-	for _, s := range act {
-		if err := backupLive(s); err != nil {
-			restoreBackups()
-			http.Error(w, `{"error":"cannot back up live files"}`, http.StatusInternalServerError)
-			return
-		}
-	}
-	for _, s := range act {
-		if err := copyFile(s.draft, s.live); err != nil {
-			restoreBackups()
-			http.Error(w, `{"error":"cannot stage draft to live"}`, http.StatusInternalServerError)
-			return
-		}
-	}
-	out, err := run(nftgeoBin, "apply", "--confirm", strconv.Itoa(T))
-	if err != nil {
-		restoreBackups()
-		writeJSON(w, map[string]interface{}{"deployed": false, "message": strings.TrimSpace(out)})
+	payload, errMsg, code := commitApply(req.Seconds)
+	if errMsg != "" {
+		http.Error(w, `{"error":`+strconv.Quote(errMsg)+`}`, code)
 		return
 	}
-	pending.active = true
-	pending.deadline = time.Now().Add(time.Duration(T) * time.Second)
-	pending.seconds = T
-	go watchDeadman(T)
-	writeJSON(w, map[string]interface{}{"deployed": true, "seconds": T, "message": strings.TrimSpace(out)})
+	writeJSON(w, payload)
 }
 
 // watchDeadman restores the live files from backup if the engine deadman fires
@@ -4343,30 +4377,47 @@ func watchDeadman(T int) {
 	}
 }
 
-func handleCommitKeep(w http.ResponseWriter, r *http.Request) {
+// commitKeep confirms the pending deploy (`apply --commit`) and clears every
+// stage's draft and backup. Single keep path shared by the web handler and the
+// console TUI; same errMsg/code convention as writeObjectsDraft.
+func commitKeep() (payload map[string]interface{}, errMsg string, code int) {
 	commitMu.Lock()
 	defer commitMu.Unlock()
 	out, err := run(nftgeoBin, "apply", "--commit")
 	if err != nil {
-		http.Error(w, `{"error":`+strconv.Quote(strings.TrimSpace(out))+`}`, http.StatusInternalServerError)
-		return
+		return nil, strings.TrimSpace(out), http.StatusInternalServerError
 	}
 	for _, s := range stages() {
 		os.Remove(s.draft)
 		os.Remove(s.backup)
 	}
 	pending.active = false
-	writeJSON(w, map[string]interface{}{"kept": true, "message": strings.TrimSpace(out)})
+	return map[string]interface{}{"kept": true, "message": strings.TrimSpace(out)}, "", 0
 }
 
-func handleCommitRollback(w http.ResponseWriter, r *http.Request) {
+func handleCommitKeep(w http.ResponseWriter, r *http.Request) {
+	payload, errMsg, code := commitKeep()
+	if errMsg != "" {
+		http.Error(w, `{"error":`+strconv.Quote(errMsg)+`}`, code)
+		return
+	}
+	writeJSON(w, payload)
+}
+
+// commitRollback reverts the pending deploy: engine rollback + restore the
+// pre-apply file backups. Drafts are kept so the operator can fix and retry.
+// Single rollback path shared by the web handler and the console TUI.
+func commitRollback() map[string]interface{} {
 	commitMu.Lock()
 	defer commitMu.Unlock()
 	out, _ := run(nftgeoBin, "rollback")
 	restoreBackups()
 	pending.active = false
-	// Keep the drafts so the operator can fix and retry.
-	writeJSON(w, map[string]interface{}{"rolledBack": true, "message": strings.TrimSpace(out)})
+	return map[string]interface{}{"rolledBack": true, "message": strings.TrimSpace(out)}
+}
+
+func handleCommitRollback(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, commitRollback())
 }
 
 // reconcileCommit recovers a deploy interrupted by a UI restart: leftover
