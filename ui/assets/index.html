@@ -349,7 +349,7 @@
         <input id="lf-ip" placeholder="search IP…" oninput="renderLogs()">
         <span class="meta" id="lf-count" style="align-self:center"></span>
       </div>
-      <div class="card"><div class="tablewrap"><table>
+      <div class="card"><div class="tablewrap" id="logs-wrap"><table>
         <thead><tr><th>time (UTC)</th><th>dir</th><th>source → destination</th><th>port</th><th>proto</th><th>cc</th><th>policy</th></tr></thead>
         <tbody id="recent"></tbody></table></div></div>
     </section>
@@ -469,7 +469,8 @@
 const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const j=async u=>{const r=await fetch(u);if(r.status===401||r.status===403){showLock('Session expired — generate a new token on the host.');throw new Error('unauth');}return r.json();};
-let map=null, DROPS={recent:[]}, RULES=[], MODE='rw', REFRESHER=null;
+const LOG_PAGE_SIZE=200;
+let map=null, DROPS={recent:[]}, RULES=[], MODE='rw', REFRESHER=null, LOG_LOADING=false;
 let PENDTIMER=null;
 function clearPend(){if(PENDTIMER){clearInterval(PENDTIMER);PENDTIMER=null;}}
 function showLock(m){$('#lock').style.display='flex';clearPend();$('#lockentry').style.display='';$('#lockspin').style.display='none';const el=$('#lockmsg');el.textContent=m||'';el.style.color='var(--drop)';if(REFRESHER){clearInterval(REFRESHER);REFRESHER=null;}}
@@ -855,7 +856,8 @@ async function refresh(){
     $('#loadtxt').textContent=s.loaded?'table loaded':'not loaded';
     $('#upd').textContent=new Date().toLocaleTimeString();
     renderHealth(s.health);
-    const d=await j('/api/drops?since=-24h'); DROPS=d;
+    const logLimit=Math.max(LOG_PAGE_SIZE,(DROPS.recent||[]).length);
+    const d=await j('/api/drops?since=-24h&limit='+logLimit); DROPS=d;
     updateLogWarn(d);
     const ing=Object.values(d.ingressByCC).reduce((a,b)=>a+b,0), egr=Object.values(d.egressByCC).reduce((a,b)=>a+b,0);
     $('#k-total').textContent=d.total; $('#k-in').textContent=ing; $('#k-out').textContent=egr;
@@ -894,13 +896,28 @@ function reasonBadge(x){if(!x)return '<span class="muted">—</span>';
 function renderLogs(){
   const dir=$('#lf-dir').value,cc=$('#lf-cc').value.toUpperCase(),port=$('#lf-port').value,ip=$('#lf-ip').value;
   const rows=(DROPS.recent||[]).filter(r=>(!dir||r.dir===dir)&&(!cc||(r.cc||'').toUpperCase().includes(cc))&&(!port||r.dport===port)&&(!ip||(r.src+r.dst).includes(ip)));
-  $('#lf-count').textContent=rows.length+' shown';
-  $('#recent').innerHTML=rows.slice(0,300).map(r=>{
+  $('#lf-count').textContent=rows.length+' shown'+(DROPS.hasMore?' · scroll for more':'');
+  $('#recent').innerHTML=rows.map(r=>{
     const acc=r.verdict==='accept';
     const vpill=`<span class="pill" style="background:${acc?'#173a2a':'#3a1720'};color:${acc?'#2ecc71':'#ff8a9c'}" title="${acc?'accepted (per-rule log)':'dropped'}">${acc?'ACCEPT':'DROP'}</span>`;
     return `<tr style="border-left:3px solid ${reasonColor(r.reason)}"><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td>${vpill} <span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td><td>${reasonBadge(r.reason)}</td></tr>`;
-  }).join('')||'<tr><td colspan="7" class="muted">no log entries (enable LOG_DROPS or per-rule logging)</td></tr>';
+  }).join('')+(DROPS.hasMore?'<tr><td colspan="7" class="muted" style="text-align:center">Scroll down to load more log entries…</td></tr>':'')||'<tr><td colspan="7" class="muted">no log entries (enable LOG_DROPS or per-rule logging)</td></tr>';
 }
+async function loadMoreLogs(){
+  if(LOG_LOADING||!DROPS.hasMore)return;
+  LOG_LOADING=true;
+  try{
+    const offset=(DROPS.recent||[]).length;
+    const p=await j('/api/drops?since=-24h&offset='+offset+'&limit='+LOG_PAGE_SIZE);
+    const extra=p.recent||[];
+    DROPS={...DROPS,...p,recent:[...(DROPS.recent||[]),...extra]};
+    renderLogs();
+  }catch(e){console.error(e);}finally{LOG_LOADING=false;}
+}
+$('#logs-wrap').addEventListener('scroll',e=>{
+  const el=e.currentTarget;
+  if(el.scrollTop+el.clientHeight>=el.scrollHeight-80)loadMoreLogs();
+});
 
 // ---- policy table (M6B.3 + multi-file): enterprise view of the draft rules ----
 let OBJMAP={}, SVCS=[], ZONES=[], IFACES=[], FILES=[], BUILTIN_SVCS=[]; // tooltips; service/zone/iface autocomplete; rule files; built-in services

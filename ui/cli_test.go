@@ -65,6 +65,17 @@ func TestUpdateDataFilter(t *testing.T) {
 	}
 }
 
+func TestLogsLoadNextPageAtCursor(t *testing.T) {
+	m := initialModel()
+	m.drops = DropsResp{HasMore: true, Recent: make([]Drop, 20)}
+	m.updateData()
+	m.logTable.SetCursor(19)
+	cmd := m.maybeLoadMoreLogs()
+	if cmd == nil || !m.logLoading || m.logLimit != 2*defaultRecentLogLimit {
+		t.Errorf("next page state: cmd=%v loading=%v limit=%d", cmd != nil, m.logLoading, m.logLimit)
+	}
+}
+
 func TestThemeCycling(t *testing.T) {
 	m := initialModel()
 	if !m.darkTheme {
@@ -160,6 +171,21 @@ func TestLayoutCols(t *testing.T) {
 	w = layoutCols(50, fixed)
 	if w[0] != 5 || w[1] != 5 {
 		t.Errorf("fixed: %v, want [5 5]", w)
+	}
+}
+
+func TestTablesMatchViewportWidth(t *testing.T) {
+	m := initialModel()
+	m.width = 100
+	m.height = 30
+	m.updateLayout()
+
+	want := m.viewWidth()
+	if got := m.logTable.Width(); got != want {
+		t.Errorf("log table width = %d, want %d", got, want)
+	}
+	if got := m.policyTable.Width(); got != want {
+		t.Errorf("policy table width = %d, want %d", got, want)
 	}
 }
 

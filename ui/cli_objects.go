@@ -157,7 +157,7 @@ func (m cliModel) updateObjectsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, objectsKeys.Delete):
 		if m.objLevel > 0 {
 			m.handleObjDelete()
-			return m, fetchDataCmd()
+			return m, fetchDataCmd(m.logLimit)
 		}
 		return m, nil
 	}
@@ -170,7 +170,7 @@ func (m cliModel) updateObjectsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, viewKeyEnter):
 		m.handleObjInputEnter()
-		return m, fetchDataCmd()
+		return m, fetchDataCmd(m.logLimit)
 	case key.Matches(msg, viewKeyBack):
 		m.objInputMode = false
 		return m, nil

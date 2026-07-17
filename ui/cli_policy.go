@@ -315,7 +315,7 @@ func (m cliModel) updateRuleForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatusInfo(fmt.Sprintf("%s rule %s — c to commit", f.kind, verb))
 		m.ruleForm = ruleFormState{}
-		return m, fetchDataCmd()
+		return m, fetchDataCmd(m.logLimit)
 	case "tab", "down":
 		f.fields[f.focus].input.Blur()
 		f.focus = (f.focus + 1) % len(f.fields)
@@ -422,7 +422,7 @@ func (m cliModel) updatePolicyKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatusInfo(fmt.Sprintf("rule #%d deleted — c to commit", m.deleteTarget.ID))
 			}
 			m.deleteTarget = nil
-			return m, fetchDataCmd()
+			return m, fetchDataCmd(m.logLimit)
 		default:
 			m.deleteTarget = nil
 			m.setStatusInfo("delete cancelled")
@@ -437,7 +437,7 @@ func (m cliModel) updatePolicyKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if _, errMsg, _ := toggleRuleDraft(r.File, r.ID); errMsg != "" {
 					m.setStatusErr(errMsg)
 				}
-				return m, fetchDataCmd()
+				return m, fetchDataCmd(m.logLimit)
 			}
 		}
 		return m, nil
@@ -524,7 +524,7 @@ func (m cliModel) updatePolicyKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.editState = policyStateNormal
-			return m, fetchDataCmd()
+			return m, fetchDataCmd(m.logLimit)
 		}
 		if r := m.selectedRule(); r != nil && r.Kind != "section" {
 			m.detailRule = r

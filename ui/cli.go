@@ -236,6 +236,8 @@ type cliModel struct {
 	// and the record shown in the detail modal
 	logFiltered []Drop
 	detailDrop  *Drop
+	logLimit    int
+	logLoading  bool
 
 	// charts
 	dropsChart   linechart.Model
@@ -302,6 +304,7 @@ func initialModel() cliModel {
 		filterInput:  ti,
 		loading:      true,
 		hostname:     host,
+		logLimit:     defaultRecentLogLimit,
 
 		objLevel:            0,
 		objSelectedCategory: 0,
@@ -312,10 +315,12 @@ func initialModel() cliModel {
 
 	m.logTable = bubblesTable.New(
 		bubblesTable.WithColumns(logColumns(defaultViewWidth)),
+		bubblesTable.WithWidth(defaultViewWidth),
 		bubblesTable.WithFocused(true),
 	)
 	m.policyTable = bubblesTable.New(
 		bubblesTable.WithColumns(policyColumns(defaultViewWidth)),
+		bubblesTable.WithWidth(defaultViewWidth),
 		bubblesTable.WithFocused(true),
 	)
 	m.updateStyles()
@@ -513,7 +518,7 @@ func confirmTickCmd() tea.Cmd {
 	})
 }
 
-func fetchDataCmd() tea.Cmd {
+func fetchDataCmd(logLimit int) tea.Cmd {
 	return func() tea.Msg {
 		ch := chains()
 		st := map[string]interface{}{
@@ -523,7 +528,7 @@ func fetchDataCmd() tea.Cmd {
 			"health":  health(ch),
 			"time":    time.Now().UTC().Format(time.RFC3339),
 		}
-		dr := drops("-24h")
+		dr := dropsPage("-24h", 0, logLimit)
 		pl := policy()
 		annotate(pl, ruleCounters())
 
@@ -604,14 +609,14 @@ func lookupCmd(ip string) tea.Cmd {
 // ---- update ----
 
 func (m cliModel) Init() tea.Cmd {
-	return tea.Batch(fetchDataCmd(), refreshTickCmd(m.refreshInterval))
+	return tea.Batch(fetchDataCmd(m.logLimit), refreshTickCmd(m.refreshInterval))
 }
 
 func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case refreshTickMsg:
-		return m, tea.Batch(fetchDataCmd(), refreshTickCmd(m.refreshInterval))
+		return m, tea.Batch(fetchDataCmd(m.logLimit), refreshTickCmd(m.refreshInterval))
 
 	case confirmTickMsg:
 		if m.editState == policyStateConfirming {
@@ -622,7 +627,7 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// here, just leave confirm mode and refetch.
 				m.editState = policyStateNormal
 				m.setStatusInfo("deadman expired — deploy rolled back")
-				return m, fetchDataCmd()
+				return m, fetchDataCmd(m.logLimit)
 			}
 			return m, confirmTickCmd()
 		}
@@ -632,6 +637,7 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = msg.status
 		m.draftRules = msg.drafts
 		m.drops = msg.drops
+		m.logLoading = false
 		m.policies = msg.policies
 		m.baseline = msg.baseline
 		m.objects = msg.objects
@@ -690,6 +696,9 @@ func (m cliModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.activeTab == 1 && !m.showFilter {
 			m.logTable, cmd = m.logTable.Update(msg)
+			if more := m.maybeLoadMoreLogs(); more != nil {
+				return m, tea.Batch(cmd, more)
+			}
 			return m, cmd
 		} else if m.activeTab == 2 {
 			m.policyTable, cmd = m.policyTable.Update(msg)
@@ -747,12 +756,12 @@ func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatusInfo("deploy kept")
 			}
 			m.editState = policyStateNormal
-			return m, fetchDataCmd()
+			return m, fetchDataCmd(m.logLimit)
 		case key.Matches(msg, globalKeys.ConfirmN), key.Matches(msg, globalKeys.Discard):
 			commitRollback()
 			m.editState = policyStateNormal
 			m.setStatusInfo("deploy rolled back")
-			return m, fetchDataCmd()
+			return m, fetchDataCmd(m.logLimit)
 		case key.Matches(msg, globalKeys.Quit):
 			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
@@ -828,7 +837,7 @@ func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				os.Remove(s.draft)
 			}
 			m.setStatusInfo("drafts discarded")
-			return m, fetchDataCmd()
+			return m, fetchDataCmd(m.logLimit)
 		}
 		// not a chrome action here — let the view use the key
 	}
@@ -942,7 +951,7 @@ func (m cliModel) updateModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.modal = modalNone
 			m.detailRule = nil
-			return m, fetchDataCmd()
+			return m, fetchDataCmd(m.logLimit)
 		}
 	}
 
@@ -1006,8 +1015,10 @@ func (m *cliModel) updateLayout() {
 	vw := m.viewWidth()
 
 	m.logTable.SetColumns(logColumns(vw))
+	m.logTable.SetWidth(vw)
 	m.logTable.SetHeight(m.height - 10)
 	m.policyTable.SetColumns(policyColumns(vw))
+	m.policyTable.SetWidth(vw)
 	m.policyTable.SetHeight(m.height - 13)
 	m.viewport.Width = m.width - 10
 	m.viewport.Height = m.height - 10

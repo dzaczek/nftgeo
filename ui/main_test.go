@@ -433,6 +433,20 @@ func TestBackfillFromStats(t *testing.T) {
 	}
 }
 
+func TestPageRecent(t *testing.T) {
+	resp := DropsResp{Recent: []Drop{{Src: "1"}, {Src: "2"}, {Src: "3"}}}
+	pageRecent(&resp, 1, 1)
+	if resp.RecentTotal != 3 || !resp.HasMore || len(resp.Recent) != 1 || resp.Recent[0].Src != "2" {
+		t.Errorf("page = %+v, want second of three with more pages", resp)
+	}
+
+	resp = DropsResp{Recent: []Drop{{Src: "1"}, {Src: "2"}, {Src: "3"}}}
+	pageRecent(&resp, 3, 1)
+	if resp.HasMore || len(resp.Recent) != 0 {
+		t.Errorf("past-end page = %+v, want empty final page", resp)
+	}
+}
+
 func TestBuildSynproxyBody(t *testing.T) {
 	cases := []struct {
 		dir, port, iface, want string

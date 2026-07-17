@@ -709,7 +709,14 @@ type DropsResp struct {
 	TopPorts    map[string]int `json:"topPorts"`
 	Timeline    []int          `json:"timeline"` // last 24h, hourly buckets (oldest first)
 	Recent      []Drop         `json:"recent"`
+	RecentTotal int            `json:"recentTotal"`
+	HasMore     bool           `json:"hasMore"`
 }
+
+const (
+	defaultRecentLogLimit = 200
+	maxRecentLogLimit     = 5000
+)
 
 // kernelLogHidden reports whether nftables `log` output can't reach this
 // process. In an LXC/OpenVZ container the netfilter `log` target writes to the
@@ -742,14 +749,30 @@ var reReason = regexp.MustCompile(`nftgeo-(drop|accept):(.+?)\s+(?:IN|OUT|MAC|PH
 // listener when it's active (works in containers), else from the kernel log via
 // journalctl.
 func drops(since string) DropsResp {
+	return dropsPage(since, 0, defaultRecentLogLimit)
+}
+
+// dropsPage returns one bounded page of the newest matching log records while
+// retaining the complete 24-hour aggregates used by the dashboard.
+func dropsPage(since string, offset, limit int) DropsResp {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = defaultRecentLogLimit
+	}
+	if limit > maxRecentLogLimit {
+		limit = maxRecentLogLimit
+	}
 	var records []Drop
 	if nflogActive() {
 		records = nflogDropsSince(since)
 	} else {
 		records = collectJournalDrops(since)
 	}
-	resp := aggregateDrops(records)
-	backfillFromStats(&resp, time.Now())
+	resp := aggregateDropsAll(records)
+	backfillFromStatsLimit(&resp, time.Now(), offset+limit)
+	pageRecent(&resp, offset, limit)
 	resp.Enabled = logDropsOn()
 	resp.Container = kernelLogHidden()
 	resp.Nflog = nflogActive()
@@ -761,6 +784,12 @@ func drops(since string) DropsResp {
 // timeline, and the recent list. accept records show in Recent but do not feed
 // the drop analytics.
 func aggregateDrops(records []Drop) DropsResp {
+	resp := aggregateDropsAll(records)
+	pageRecent(&resp, 0, defaultRecentLogLimit)
+	return resp
+}
+
+func aggregateDropsAll(records []Drop) DropsResp {
 	resp := DropsResp{IngressByCC: map[string]int{}, EgressByCC: map[string]int{}, TopPorts: map[string]int{}, Timeline: make([]int, 24)}
 	for _, d := range records {
 		drop := d.Verdict == "drop"
@@ -788,10 +817,22 @@ func aggregateDrops(records []Drop) DropsResp {
 		resp.Recent = append(resp.Recent, d)
 	}
 	sort.Slice(resp.Recent, func(i, j int) bool { return resp.Recent[i].Time > resp.Recent[j].Time })
-	if len(resp.Recent) > 200 {
-		resp.Recent = resp.Recent[:200]
-	}
 	return resp
+}
+
+func pageRecent(resp *DropsResp, offset, limit int) {
+	resp.RecentTotal = len(resp.Recent)
+	if offset >= resp.RecentTotal {
+		resp.Recent = nil
+		resp.HasMore = false
+		return
+	}
+	end := offset + limit
+	if end > resp.RecentTotal {
+		end = resp.RecentTotal
+	}
+	resp.Recent = resp.Recent[offset:end]
+	resp.HasMore = end < resp.RecentTotal
 }
 
 // collectJournalDrops parses nftgeo log lines from the kernel log (journalctl),
@@ -1205,6 +1246,10 @@ func statsTimeline(now time.Time) []int {
 // gets a populated dashboard and Logs tab. The store lacks direction/proto, so
 // reconstructed drops are attributed to ingress with an empty proto.
 func backfillFromStats(resp *DropsResp, now time.Time) {
+	backfillFromStatsLimit(resp, now, defaultRecentLogLimit)
+}
+
+func backfillFromStatsLimit(resp *DropsResp, now time.Time, recentLimit int) {
 	statsMu.Lock()
 	defer statsMu.Unlock()
 	if len(statsData) == 0 {
@@ -1244,7 +1289,7 @@ func backfillFromStats(resp *DropsResp, now time.Time) {
 	}
 	if len(resp.Recent) == 0 {
 		// statsData is appended in ingest (≈time) order, so the tail is newest.
-		start := len(statsData) - 200
+		start := len(statsData) - recentLimit
 		if start < 0 {
 			start = 0
 		}
@@ -4777,7 +4822,9 @@ func main() {
 		if since == "" {
 			since = "-24h"
 		}
-		writeJSON(w, drops(since))
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		writeJSON(w, dropsPage(since, offset, limit))
 	})
 	api("/api/lookup", func(w http.ResponseWriter, r *http.Request) {
 		ip := r.URL.Query().Get("ip")

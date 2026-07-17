@@ -37,7 +37,7 @@ func (m cliModel) updateReferenceKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.refSel--
 			}
 			m.saveWhitelist()
-			return m, fetchDataCmd()
+			return m, fetchDataCmd(m.logLimit)
 		}
 		return m, nil
 	}
@@ -59,7 +59,7 @@ func (m cliModel) updateReferenceInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.wlEntries = append(m.wlEntries, val)
 		m.saveWhitelist()
-		return m, fetchDataCmd()
+		return m, fetchDataCmd(m.logLimit)
 	}
 	m.objInput, cmd = m.objInput.Update(msg)
 	return m, cmd

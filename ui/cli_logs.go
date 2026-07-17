@@ -152,7 +152,21 @@ func (m cliModel) updateLogsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.logTable, cmd = m.logTable.Update(msg)
+	if more := m.maybeLoadMoreLogs(); more != nil {
+		return m, tea.Batch(cmd, more)
+	}
 	return m, cmd
+}
+
+// maybeLoadMoreLogs extends the in-memory prefix when the cursor reaches the
+// final page. The guard prevents key repeats from starting duplicate loads.
+func (m *cliModel) maybeLoadMoreLogs() tea.Cmd {
+	if m.logLoading || !m.drops.HasMore || len(m.logFiltered) == 0 || m.logTable.Cursor() < len(m.logFiltered)-20 {
+		return nil
+	}
+	m.logLoading = true
+	m.logLimit += defaultRecentLogLimit
+	return fetchDataCmd(m.logLimit)
 }
 
 func (m cliModel) renderLogs() string {
