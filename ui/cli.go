@@ -1013,9 +1013,10 @@ func (m *cliModel) viewWidth() int {
 func (m *cliModel) updateLayout() {
 	m.help.Width = m.width
 	vw := m.viewWidth()
+	lw := logTableWidth(vw)
 
-	m.logTable.SetColumns(logColumns(vw))
-	m.logTable.SetWidth(vw)
+	m.logTable.SetColumns(logColumns(lw))
+	m.logTable.SetWidth(lw)
 	m.logTable.SetHeight(m.height - 10)
 	m.policyTable.SetColumns(policyColumns(vw))
 	m.policyTable.SetWidth(vw)

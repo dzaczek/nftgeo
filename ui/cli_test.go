@@ -65,13 +65,12 @@ func TestUpdateDataFilter(t *testing.T) {
 	}
 }
 
-func TestLogEndpointsKeepBothSidesOnOneLine(t *testing.T) {
-	got := logEndpoints("2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff", "fd00:1111:2222:3333:4444:5555:6666:7777", 31)
-	if strings.Contains(got, "\n") || !strings.Contains(got, " → ") {
-		t.Errorf("endpoint cell = %q, want one line with an arrow", got)
+func TestLogAddressShowsValueOrUnavailableMarker(t *testing.T) {
+	if got := logAddress("2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff", 12); !strings.HasPrefix(got, "2001") || lipgloss.Width(got) > 12 {
+		t.Errorf("logAddress() = %q, want clipped address", got)
 	}
-	if lipgloss.Width(got) > 31 || !strings.HasPrefix(got, "2001") || !strings.Contains(got, "fd00") {
-		t.Errorf("endpoint cell = %q, want balanced source and destination", got)
+	if got := logAddress("", 12); got != "—" {
+		t.Errorf("logAddress(empty) = %q, want unavailable marker", got)
 	}
 }
 
@@ -190,12 +189,22 @@ func TestTablesMatchViewportWidth(t *testing.T) {
 	m.height = 30
 	m.updateLayout()
 
-	want := m.viewWidth()
+	want := logTableWidth(m.viewWidth())
 	if got := m.logTable.Width(); got != want {
 		t.Errorf("log table width = %d, want %d", got, want)
 	}
-	if got := m.policyTable.Width(); got != want {
-		t.Errorf("policy table width = %d, want %d", got, want)
+	if got := m.policyTable.Width(); got != m.viewWidth() {
+		t.Errorf("policy table width = %d, want %d", got, m.viewWidth())
+	}
+}
+
+func TestLogTableCapsVeryWideViewport(t *testing.T) {
+	m := initialModel()
+	m.width = 240
+	m.height = 30
+	m.updateLayout()
+	if got := m.logTable.Width(); got != maxLogTableWidth {
+		t.Errorf("log table width = %d, want cap %d", got, maxLogTableWidth)
 	}
 }
 

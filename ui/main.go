@@ -1189,8 +1189,11 @@ const maxStatsEntries = 500000 // ~40 MB of drop events; oldest evicted first
 type statsEntry struct {
 	Ts     int64  `json:"ts"` // unix timestamp
 	Src    string `json:"src"`
+	Dst    string `json:"dst,omitempty"`
 	CC     string `json:"cc"`
 	Port   string `json:"port"`
+	Proto  string `json:"proto,omitempty"`
+	Dir    string `json:"dir,omitempty"`
 	Reason string `json:"reason"`
 }
 
@@ -1298,8 +1301,10 @@ func backfillFromStatsLimit(resp *DropsResp, now time.Time, recentLimit int) {
 			resp.Recent = append(resp.Recent, Drop{
 				Time:    time.Unix(e.Ts, 0).UTC().Format(time.RFC3339),
 				Src:     e.Src,
+				Dst:     e.Dst,
 				Dport:   e.Port,
-				Dir:     "ingress",
+				Proto:   e.Proto,
+				Dir:     e.Dir,
 				CC:      e.CC,
 				Reason:  e.Reason,
 				Verdict: "drop",
@@ -1499,7 +1504,7 @@ func filterNewDrops(recent []Drop, after, now int64) ([]statsEntry, int64) {
 		if ts > hw {
 			hw = ts
 		}
-		entries = append(entries, statsEntry{Ts: ts, Src: dr.Src, CC: dr.CC, Port: dr.Dport, Reason: dr.Reason})
+		entries = append(entries, statsEntry{Ts: ts, Src: dr.Src, Dst: dr.Dst, CC: dr.CC, Port: dr.Dport, Proto: dr.Proto, Dir: dr.Dir, Reason: dr.Reason})
 	}
 	return entries, hw
 }

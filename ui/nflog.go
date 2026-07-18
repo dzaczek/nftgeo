@@ -146,7 +146,7 @@ func recordNflogDrop(d Drop) {
 	if t, err := time.Parse(time.RFC3339, d.Time); err == nil {
 		ts = t.Unix()
 	}
-	recordStats([]statsEntry{{Ts: ts, Src: d.Src, CC: d.CC, Port: d.Dport, Reason: d.Reason}})
+	recordStats([]statsEntry{{Ts: ts, Src: d.Src, Dst: d.Dst, CC: d.CC, Port: d.Dport, Proto: d.Proto, Dir: d.Dir, Reason: d.Reason}})
 }
 
 // parseNflog turns one NFLOG packet (prefix + raw IP payload + in/out ifindex)

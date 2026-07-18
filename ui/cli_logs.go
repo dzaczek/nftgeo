@@ -30,8 +30,9 @@ const logsHints = "↑↓ move · enter details · / search · v verdict · f di
 
 var logColSpecs = []colSpec{
 	{title: "Time", min: 14},
-	{title: "Dir", min: 6},
-	{title: "Src → Dst", min: 31, weight: 6},
+	{title: "Dir", min: 8},
+	{title: "Src", min: 22, weight: 3},
+	{title: "Dst", min: 22, weight: 3},
 	{title: "Port", min: 5},
 	{title: "Proto", min: 5},
 	{title: "CC", min: 3},
@@ -44,6 +45,18 @@ func logColumns(width int) []bubblesTable.Column {
 	return toTableColumns(logColSpecs, layoutCols(width-2*len(logColSpecs), logColSpecs))
 }
 
+// logTableWidth keeps a very wide terminal from stretching address columns
+// into an unreadable empty expanse. Narrow terminals still use all available
+// space, while normal and wide terminals get a compact, scannable log grid.
+const maxLogTableWidth = 180
+
+func logTableWidth(width int) int {
+	if width > maxLogTableWidth {
+		return maxLogTableWidth
+	}
+	return width
+}
+
 func logTime(s string) string {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t.UTC().Format("01-02 15:04:05")
@@ -51,29 +64,13 @@ func logTime(s string) string {
 	return s
 }
 
-// logEndpoints keeps source and destination visible in one fixed-width cell.
-// Splitting the available width between them is more useful than letting the
-// table truncate the whole string after the source address (notably for IPv6).
-func logEndpoints(src, dst string, width int) string {
-	if dst == "" {
-		return clip(src, width)
+func logAddress(addr string, width int) string {
+	if addr == "" {
+		// Older persisted entries did not contain destination/protocol data.
+		// Make that distinction explicit instead of leaving a misleading gap.
+		return "—"
 	}
-	const separator = " → "
-	if width <= len(separator)+2 {
-		return clip(src, width)
-	}
-	available := width - len(separator)
-	srcWidth := (available + 1) / 2
-	dstWidth := available - srcWidth
-	if len(src) < srcWidth {
-		dstWidth += srcWidth - len(src)
-		srcWidth = len(src)
-	}
-	if len(dst) < dstWidth {
-		srcWidth += dstWidth - len(dst)
-		dstWidth = len(dst)
-	}
-	return clip(src, srcWidth) + separator + clip(dst, dstWidth)
+	return clip(addr, width)
 }
 
 // logMatches applies the active verdict/direction/text filters to one record.
@@ -111,15 +108,20 @@ func (m *cliModel) updateLogsData() {
 			v = m.styles.AcceptVerdict.Render(v)
 		}
 
-		endpointWidth := 31
-		if cols := m.logTable.Columns(); len(cols) > 2 && cols[2].Width > 0 {
-			endpointWidth = cols[2].Width
+		srcWidth, dstWidth := 22, 22
+		if cols := m.logTable.Columns(); len(cols) > 3 {
+			if cols[2].Width > 0 {
+				srcWidth = cols[2].Width
+			}
+			if cols[3].Width > 0 {
+				dstWidth = cols[3].Width
+			}
 		}
-		srcDst := logEndpoints(d.Src, d.Dst, endpointWidth)
 
 		m.logFiltered = append(m.logFiltered, d)
 		rows = append(rows, bubblesTable.Row{
-			logTime(d.Time), d.Dir, srcDst, d.Dport, d.Proto, d.CC, d.Reason, v,
+			logTime(d.Time), d.Dir, logAddress(d.Src, srcWidth), logAddress(d.Dst, dstWidth),
+			d.Dport, d.Proto, d.CC, d.Reason, v,
 		})
 	}
 	m.logTable.SetRows(rows)
