@@ -56,9 +56,33 @@ var (
 		Accent:   lipgloss.Color("27"),
 		Drop:     lipgloss.Color("1"),
 		Ok:       lipgloss.Color("2"),
-		Line:     lipgloss.Color("251"),
+		Line:     lipgloss.Color("248"),
 		Header:   lipgloss.Color("31"),
 		Selected: lipgloss.Color("253"),
+	}
+
+	cliOceanPalette = cliPalette{
+		Bg:       lipgloss.Color("17"),
+		Fg:       lipgloss.Color("230"),
+		Muted:    lipgloss.Color("24"),
+		Accent:   lipgloss.Color("45"),
+		Drop:     lipgloss.Color("196"),
+		Ok:       lipgloss.Color("40"),
+		Line:     lipgloss.Color("24"),
+		Header:   lipgloss.Color("24"),
+		Selected: lipgloss.Color("23"),
+	}
+
+	cliDraculaPalette = cliPalette{
+		Bg:       lipgloss.Color("236"),
+		Fg:       lipgloss.Color("231"),
+		Muted:    lipgloss.Color("60"),
+		Accent:   lipgloss.Color("141"),
+		Drop:     lipgloss.Color("203"),
+		Ok:       lipgloss.Color("84"),
+		Line:     lipgloss.Color("60"),
+		Header:   lipgloss.Color("61"),
+		Selected: lipgloss.Color("238"),
 	}
 )
 
@@ -87,10 +111,17 @@ type cliStyles struct {
 	PanelTitle    lipgloss.Style
 }
 
-func getStyles(dark bool) cliStyles {
-	p := cliDarkPalette
-	if !dark {
+func getStyles(themeID int) cliStyles {
+	var p cliPalette
+	switch themeID {
+	case 1:
 		p = cliLightPalette
+	case 2:
+		p = cliOceanPalette
+	case 3:
+		p = cliDraculaPalette
+	default:
+		p = cliDarkPalette
 	}
 
 	s := cliStyles{}
@@ -102,7 +133,7 @@ func getStyles(dark bool) cliStyles {
 	s.KpiLabel = lipgloss.NewStyle().Foreground(p.Muted)
 	s.KpiValue = lipgloss.NewStyle().Bold(true).Foreground(p.Ok)
 	s.TableHeader = lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder()).BorderForeground(p.Line).BorderBottom(true).Bold(true)
-	s.TableSelected = lipgloss.NewStyle().Background(p.Selected).Foreground(p.Fg)
+	s.TableSelected = lipgloss.NewStyle().Background(p.Selected).Foreground(p.Fg).Bold(false)
 	s.Help = lipgloss.NewStyle().Foreground(p.Muted)
 	s.Modal = lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).BorderForeground(p.Accent).Padding(1, 2).Background(p.Bg).Foreground(p.Fg)
 	s.DropVerdict = lipgloss.NewStyle().Foreground(p.Drop)
@@ -200,7 +231,7 @@ type cliModel struct {
 	tabs            []string
 	width           int
 	height          int
-	darkTheme       bool
+	themeID         int
 	refreshInterval time.Duration
 	styles          cliStyles
 	hostname        string
@@ -309,9 +340,9 @@ func initialModel() cliModel {
 		objLevel:            0,
 		objSelectedCategory: 0,
 		objInput:            textinput.New(),
-		darkTheme:           true,
+		themeID:             0,
 	}
-	m.styles = getStyles(m.darkTheme)
+	m.styles = getStyles(m.themeID)
 
 	m.logTable = bubblesTable.New(
 		bubblesTable.WithColumns(logColumns(defaultViewWidth)),
@@ -801,7 +832,7 @@ func (m cliModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = !m.showHelp
 		return m, nil
 	case key.Matches(msg, globalKeys.Theme):
-		m.darkTheme = !m.darkTheme
+		m.themeID = (m.themeID + 1) % 4
 		m.updateStyles()
 		m.updateData()
 		return m, nil
@@ -987,7 +1018,7 @@ func (m *cliModel) updateData() {
 }
 
 func (m *cliModel) updateStyles() {
-	m.styles = getStyles(m.darkTheme)
+	m.styles = getStyles(m.themeID)
 	ts := bubblesTable.DefaultStyles()
 	ts.Header = m.styles.TableHeader
 	ts.Selected = m.styles.TableSelected
