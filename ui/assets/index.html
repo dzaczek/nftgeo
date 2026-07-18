@@ -343,14 +343,14 @@
     <!-- LOGS -->
     <section class="view" id="v-logs">
       <div class="filters">
-        <select id="lf-dir" onchange="renderLogs()"><option value="">all directions</option><option>ingress</option><option>egress</option><option>forward</option></select>
+        <select id="lf-dir" onchange="renderLogs()"><option value="">all flows</option><option>incoming</option><option>outgoing</option><option>forwarded</option></select>
         <input id="lf-cc" placeholder="country (e.g. RU)" oninput="renderLogs()" size="10">
         <input id="lf-port" placeholder="port" oninput="renderLogs()" size="6">
         <input id="lf-ip" placeholder="search IP…" oninput="renderLogs()">
         <span class="meta" id="lf-count" style="align-self:center"></span>
       </div>
       <div class="card"><div class="tablewrap" id="logs-wrap"><table>
-        <thead><tr><th>time (UTC)</th><th>dir</th><th>source → destination</th><th>port</th><th>proto</th><th>cc</th><th>policy</th></tr></thead>
+        <thead><tr><th>time (UTC)</th><th>hook</th><th>flow</th><th>source → destination</th><th>port</th><th>proto</th><th>cc</th><th>policy</th></tr></thead>
         <tbody id="recent"></tbody></table></div></div>
     </section>
 
@@ -900,7 +900,7 @@ function renderLogs(){
   $('#recent').innerHTML=rows.map(r=>{
     const acc=r.verdict==='accept';
     const vpill=`<span class="pill" style="background:${acc?'#173a2a':'#3a1720'};color:${acc?'#2ecc71':'#ff8a9c'}" title="${acc?'accepted (per-rule log)':'dropped'}">${acc?'ACCEPT':'DROP'}</span>`;
-    return `<tr style="border-left:3px solid ${reasonColor(r.reason)}"><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td>${vpill} <span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td><td>${reasonBadge(r.reason)}</td></tr>`;
+    return `<tr style="border-left:3px solid ${reasonColor(r.reason)}"><td>${esc((r.time||'').replace('T',' ').replace('Z',''))}</td><td><span class="pill dir">${esc(r.hook||'—')}</span></td><td>${vpill} <span class="pill dir">${esc(r.dir)}</span></td><td class="mono"><span class="ipl" data-ip="${esc(r.src)}">${esc(r.src)}</span> → <span class="ipl" data-ip="${esc(r.dst)}">${esc(r.dst)}</span></td><td>${esc(r.dport)}</td><td>${esc(r.proto)}</td><td>${esc((r.cc||'').toUpperCase())}</td><td>${reasonBadge(r.reason)}</td></tr>`;
   }).join('')+(DROPS.hasMore?'<tr><td colspan="7" class="muted" style="text-align:center">Scroll down to load more log entries…</td></tr>':'')||'<tr><td colspan="7" class="muted">no log entries (enable LOG_DROPS or per-rule logging)</td></tr>';
 }
 async function loadMoreLogs(){

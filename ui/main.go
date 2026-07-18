@@ -694,7 +694,8 @@ type Drop struct {
 	Dst     string `json:"dst"`
 	Dport   string `json:"dport"`
 	Proto   string `json:"proto"`
-	Dir     string `json:"dir"` // ingress|egress|forward
+	Hook    string `json:"hook,omitempty"` // ingress|prerouting|input|forward|output|postrouting
+	Dir     string `json:"dir"`            // incoming|outgoing|forwarded (kept as "dir" for API compatibility)
 	CC      string `json:"cc"`
 	Reason  string `json:"reason"`  // which rule matched: abuse|geo|deny|default-deny or a rule name
 	Verdict string `json:"verdict"` // accept|drop (per-rule connection logging)
@@ -740,10 +741,34 @@ func kernelLogHidden() bool {
 
 var reKV = regexp.MustCompile(`(\w+)=(\S+)`)
 
-// The log prefix is "nftgeo-<drop|accept>:<label>" where <label> is the rule's
-// name or a policy category; capture the verdict and label up to the nft "KEY="
-// fields (labels may contain spaces). accept lines come from per-rule logging.
-var reReason = regexp.MustCompile(`nftgeo-(drop|accept):(.+?)\s+(?:IN|OUT|MAC|PHYSIN|PHYSOUT|SRC|DST)=`)
+// New log prefixes carry the exact nftables hook:
+// nftgeo-<drop|accept>@<hook>:<label>. The hook is optional so records written
+// by older releases remain readable.
+var reLogPrefix = regexp.MustCompile(`nftgeo-(drop|accept)(?:@([a-z]+))?:(.+?)\s+(?:IN|OUT|MAC|PHYSIN|PHYSOUT|SRC|DST)=`)
+
+func flowFromDevices(in, out bool) string {
+	switch {
+	case in && !out:
+		return "incoming"
+	case out && !in:
+		return "outgoing"
+	default:
+		return "forwarded"
+	}
+}
+
+func normalizeFlow(flow string) string {
+	switch flow {
+	case "ingress":
+		return "incoming"
+	case "egress":
+		return "outgoing"
+	case "forward":
+		return "forwarded"
+	default:
+		return flow
+	}
+}
 
 // drops builds the dashboard's 24h drop summary. Records come from the NFLOG
 // listener when it's active (works in containers), else from the kernel log via
@@ -798,12 +823,12 @@ func aggregateDropsAll(records []Drop) DropsResp {
 				resp.Timeline[23-ha]++
 			}
 		}
-		switch d.Dir {
-		case "ingress":
+		switch normalizeFlow(d.Dir) {
+		case "incoming":
 			if drop && d.CC != "" {
 				resp.IngressByCC[d.CC]++
 			}
-		case "egress":
+		case "outgoing":
 			if drop && d.CC != "" {
 				resp.EgressByCC[d.CC]++
 			}
@@ -875,23 +900,22 @@ func collectJournalDrops(since string) []Drop {
 			f[m[1]] = m[2]
 		}
 		d := Drop{Src: f["SRC"], Dst: f["DST"], Dport: f["DPT"], Proto: f["PROTO"], Verdict: "drop"}
-		if m := reReason.FindStringSubmatch(rec.Msg); m != nil {
+		if m := reLogPrefix.FindStringSubmatch(rec.Msg); m != nil {
 			d.Verdict = m[1]
-			d.Reason = m[2]
+			d.Hook = m[2]
+			d.Reason = m[3]
 		}
 		if us, e := strconv.ParseInt(rec.TS, 10, 64); e == nil {
 			d.Time = time.UnixMicro(us).UTC().Format(time.RFC3339)
 		}
 		in, out2 := f["IN"] != "", f["OUT"] != ""
-		switch {
-		case in && !out2:
-			d.Dir = "ingress"
+		d.Dir = flowFromDevices(in, out2)
+		switch d.Dir {
+		case "incoming":
 			d.CC = geo.lookup(d.Src)
-		case out2 && !in:
-			d.Dir = "egress"
+		case "outgoing":
 			d.CC = geo.lookup(d.Dst)
 		default:
-			d.Dir = "forward"
 			d.CC = geo.lookup(d.Src)
 		}
 		out = append(out, d)
@@ -1193,6 +1217,7 @@ type statsEntry struct {
 	CC     string `json:"cc"`
 	Port   string `json:"port"`
 	Proto  string `json:"proto,omitempty"`
+	Hook   string `json:"hook,omitempty"`
 	Dir    string `json:"dir,omitempty"`
 	Reason string `json:"reason"`
 }
@@ -1304,7 +1329,8 @@ func backfillFromStatsLimit(resp *DropsResp, now time.Time, recentLimit int) {
 				Dst:     e.Dst,
 				Dport:   e.Port,
 				Proto:   e.Proto,
-				Dir:     e.Dir,
+				Hook:    e.Hook,
+				Dir:     normalizeFlow(e.Dir),
 				CC:      e.CC,
 				Reason:  e.Reason,
 				Verdict: "drop",
@@ -1504,7 +1530,7 @@ func filterNewDrops(recent []Drop, after, now int64) ([]statsEntry, int64) {
 		if ts > hw {
 			hw = ts
 		}
-		entries = append(entries, statsEntry{Ts: ts, Src: dr.Src, Dst: dr.Dst, CC: dr.CC, Port: dr.Dport, Proto: dr.Proto, Dir: dr.Dir, Reason: dr.Reason})
+		entries = append(entries, statsEntry{Ts: ts, Src: dr.Src, Dst: dr.Dst, CC: dr.CC, Port: dr.Dport, Proto: dr.Proto, Hook: dr.Hook, Dir: dr.Dir, Reason: dr.Reason})
 	}
 	return entries, hw
 }

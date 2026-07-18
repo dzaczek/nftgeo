@@ -35,9 +35,9 @@ func TestUpdateDataFilter(t *testing.T) {
 	m := initialModel()
 	m.drops = DropsResp{
 		Recent: []Drop{
-			{Verdict: "drop", Dir: "ingress", Src: "1.1.1.1", Reason: "abuse"},
-			{Verdict: "accept", Dir: "ingress", Src: "2.2.2.2", Reason: "allow"},
-			{Verdict: "drop", Dir: "egress", Src: "3.3.3.3", Reason: "out-block"},
+			{Verdict: "drop", Hook: "input", Dir: "incoming", Src: "1.1.1.1", Reason: "abuse"},
+			{Verdict: "accept", Hook: "input", Dir: "incoming", Src: "2.2.2.2", Reason: "allow"},
+			{Verdict: "drop", Hook: "output", Dir: "outgoing", Src: "3.3.3.3", Reason: "out-block"},
 		},
 	}
 
@@ -50,7 +50,7 @@ func TestUpdateDataFilter(t *testing.T) {
 
 	// Test direction filter
 	m.verdictFilter = ""
-	m.dirFilter = "egress"
+	m.dirFilter = "outgoing"
 	m.updateData()
 	if len(m.logTable.Rows()) != 1 {
 		t.Errorf("Dir=egress filter failed, got %d rows, want 1", len(m.logTable.Rows()))
@@ -275,7 +275,7 @@ func TestLogsDirectionCycle(t *testing.T) {
 		res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
 		m = res.(cliModel)
 	}
-	want := []string{"ingress", "egress", "forward", ""}
+	want := []string{"incoming", "outgoing", "forwarded", ""}
 	for _, w := range want {
 		press("f")
 		if m.dirFilter != w {
@@ -302,8 +302,8 @@ func TestLogsDetailAndWideFilter(t *testing.T) {
 	m := initialModel()
 	m.activeTab = 1
 	m.drops = DropsResp{Recent: []Drop{
-		{Time: "t1", Src: "1.1.1.1", Dst: "9.9.9.9", Dport: "443", Proto: "TCP", Dir: "ingress", CC: "de", Reason: "geo", Verdict: "drop"},
-		{Time: "t2", Src: "2.2.2.2", Dst: "8.8.8.8", Dport: "22", Proto: "TCP", Dir: "ingress", CC: "us", Reason: "abuse", Verdict: "drop"},
+		{Time: "t1", Hook: "input", Src: "1.1.1.1", Dst: "9.9.9.9", Dport: "443", Proto: "TCP", Dir: "incoming", CC: "de", Reason: "geo", Verdict: "drop"},
+		{Time: "t2", Hook: "input", Src: "2.2.2.2", Dst: "8.8.8.8", Dport: "22", Proto: "TCP", Dir: "incoming", CC: "us", Reason: "abuse", Verdict: "drop"},
 	}}
 
 	// the text filter must match destination, port and country too

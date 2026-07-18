@@ -1,1 +1,1 @@
-+ log prefix "nftgeo-drop:abuse " group 5
++ log prefix "nftgeo-drop@input:abuse " group 5

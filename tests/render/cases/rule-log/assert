@@ -1,5 +1,5 @@
-# Per-rule "log": accept -> nftgeo-accept:<name>, deny -> nftgeo-drop, none without "log".
-+ log prefix "nftgeo-accept:allow-ssh
-+ tcp dport 80 limit rate 10/second log prefix "nftgeo-drop:deny
+# Per-rule "log" carries the nftables hook alongside the rule label.
++ log prefix "nftgeo-accept@input:allow-ssh
++ tcp dport 80 limit rate 10/second log prefix "nftgeo-drop@input:deny
 - tcp dport 443 ip6 saddr @
 ~ open to all other sources

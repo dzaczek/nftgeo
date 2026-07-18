@@ -17,20 +17,21 @@ import (
 type logsKeyMap struct {
 	Filter key.Binding
 	CycleV key.Binding
-	CycleD key.Binding
+	CycleF key.Binding
 }
 
 var logsKeys = logsKeyMap{
 	Filter: key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 	CycleV: key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "verdict")),
-	CycleD: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "direction")),
+	CycleF: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "flow")),
 }
 
-const logsHints = "↑↓ move · enter details · / search · v verdict · f dir"
+const logsHints = "↑↓ move · enter details · / search · v verdict · f flow"
 
 var logColSpecs = []colSpec{
 	{title: "Time", min: 14},
-	{title: "Dir", min: 8},
+	{title: "Hook", min: 12},
+	{title: "Flow", min: 10},
 	{title: "Src", min: 22, weight: 3},
 	{title: "Dst", min: 22, weight: 3},
 	{title: "Port", min: 5},
@@ -79,7 +80,7 @@ func (m *cliModel) logMatches(d Drop, txt string) bool {
 	if m.verdictFilter != "" && d.Verdict != m.verdictFilter {
 		return false
 	}
-	if m.dirFilter != "" && d.Dir != m.dirFilter {
+	if m.dirFilter != "" && normalizeFlow(d.Dir) != m.dirFilter {
 		return false
 	}
 	if txt == "" {
@@ -87,6 +88,8 @@ func (m *cliModel) logMatches(d Drop, txt string) bool {
 	}
 	return strings.Contains(strings.ToLower(d.Src), txt) ||
 		strings.Contains(strings.ToLower(d.Dst), txt) ||
+		strings.Contains(strings.ToLower(d.Hook), txt) ||
+		strings.Contains(strings.ToLower(normalizeFlow(d.Dir)), txt) ||
 		strings.Contains(strings.ToLower(d.Reason), txt) ||
 		strings.Contains(strings.ToLower(d.CC), txt) ||
 		strings.Contains(d.Dport, txt)
@@ -109,18 +112,18 @@ func (m *cliModel) updateLogsData() {
 		}
 
 		srcWidth, dstWidth := 22, 22
-		if cols := m.logTable.Columns(); len(cols) > 3 {
-			if cols[2].Width > 0 {
-				srcWidth = cols[2].Width
-			}
+		if cols := m.logTable.Columns(); len(cols) > 4 {
 			if cols[3].Width > 0 {
-				dstWidth = cols[3].Width
+				srcWidth = cols[3].Width
+			}
+			if cols[4].Width > 0 {
+				dstWidth = cols[4].Width
 			}
 		}
 
 		m.logFiltered = append(m.logFiltered, d)
 		rows = append(rows, bubblesTable.Row{
-			logTime(d.Time), d.Dir, logAddress(d.Src, srcWidth), logAddress(d.Dst, dstWidth),
+			logTime(d.Time), logAddress(d.Hook, 12), normalizeFlow(d.Dir), logAddress(d.Src, srcWidth), logAddress(d.Dst, dstWidth),
 			d.Dport, d.Proto, d.CC, d.Reason, v,
 		})
 	}
@@ -155,14 +158,14 @@ func (m cliModel) updateLogsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.updateData()
 		return m, nil
-	case key.Matches(msg, logsKeys.CycleD):
+	case key.Matches(msg, logsKeys.CycleF):
 		switch m.dirFilter {
 		case "":
-			m.dirFilter = "ingress"
-		case "ingress":
-			m.dirFilter = "egress"
-		case "egress":
-			m.dirFilter = "forward"
+			m.dirFilter = "incoming"
+		case "incoming":
+			m.dirFilter = "outgoing"
+		case "outgoing":
+			m.dirFilter = "forwarded"
 		default:
 			m.dirFilter = ""
 		}
@@ -213,9 +216,9 @@ func (m cliModel) renderLogs() string {
 		filterInfo += "Verdict=ALL "
 	}
 	if m.dirFilter != "" {
-		filterInfo += "Dir=" + strings.ToUpper(m.dirFilter) + " "
+		filterInfo += "Flow=" + strings.ToUpper(m.dirFilter) + " "
 	} else {
-		filterInfo += "Dir=ALL "
+		filterInfo += "Flow=ALL "
 	}
 	if m.filterInput.Value() != "" {
 		filterInfo += "Search='" + m.filterInput.Value() + "'"
@@ -250,7 +253,8 @@ func (m cliModel) renderLookupDetails() string {
 		b.WriteString(label.Render("  Time:     ") + d.Time + "\n")
 		b.WriteString(label.Render("  Verdict:  ") + verdict + "\n")
 		b.WriteString(label.Render("  Reason:   ") + d.Reason + "\n")
-		b.WriteString(label.Render("  Dir:      ") + d.Dir + "\n")
+		b.WriteString(label.Render("  Hook:     ") + logAddress(d.Hook, 40) + "\n")
+		b.WriteString(label.Render("  Flow:     ") + normalizeFlow(d.Dir) + "\n")
 		b.WriteString(label.Render("  Source:   ") + d.Src + "\n")
 		dst := d.Dst
 		if d.Dport != "" {

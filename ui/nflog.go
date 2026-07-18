@@ -35,7 +35,7 @@ var (
 	nflogConn *nflog.Nflog // kept alive for the process lifetime
 )
 
-var reNflogPrefix = regexp.MustCompile(`^nftgeo-(drop|accept):(.+?)\s*$`)
+var reNflogPrefix = regexp.MustCompile(`^nftgeo-(drop|accept)(?:@([a-z]+))?:(.+?)\s*$`)
 
 const (
 	defaultNFLOGGroup = 5
@@ -146,7 +146,7 @@ func recordNflogDrop(d Drop) {
 	if t, err := time.Parse(time.RFC3339, d.Time); err == nil {
 		ts = t.Unix()
 	}
-	recordStats([]statsEntry{{Ts: ts, Src: d.Src, Dst: d.Dst, CC: d.CC, Port: d.Dport, Proto: d.Proto, Dir: d.Dir, Reason: d.Reason}})
+	recordStats([]statsEntry{{Ts: ts, Src: d.Src, Dst: d.Dst, CC: d.CC, Port: d.Dport, Proto: d.Proto, Hook: d.Hook, Dir: d.Dir, Reason: d.Reason}})
 }
 
 // parseNflog turns one NFLOG packet (prefix + raw IP payload + in/out ifindex)
@@ -156,7 +156,8 @@ func parseNflog(prefix string, payload []byte, inDev, outDev *uint32, ts *time.T
 	d := Drop{Verdict: "drop"}
 	if m := reNflogPrefix.FindStringSubmatch(prefix); m != nil {
 		d.Verdict = m[1]
-		d.Reason = strings.TrimSpace(m[2])
+		d.Hook = m[2]
+		d.Reason = strings.TrimSpace(m[3])
 	}
 	t := time.Now()
 	if ts != nil {
@@ -185,15 +186,13 @@ func parseNflog(prefix string, payload []byte, inDev, outDev *uint32, ts *time.T
 
 	in := inDev != nil && *inDev != 0
 	out := outDev != nil && *outDev != 0
-	switch {
-	case in && !out:
-		d.Dir = "ingress"
+	d.Dir = flowFromDevices(in, out)
+	switch d.Dir {
+	case "incoming":
 		d.CC = geo.lookup(d.Src)
-	case out && !in:
-		d.Dir = "egress"
+	case "outgoing":
 		d.CC = geo.lookup(d.Dst)
 	default:
-		d.Dir = "forward"
 		d.CC = geo.lookup(d.Src)
 	}
 	return d

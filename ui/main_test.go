@@ -164,21 +164,21 @@ func TestBuildRuleBody(t *testing.T) {
 }
 
 func TestDropReasonRegex(t *testing.T) {
-	cases := map[string]string{
-		"nftgeo-drop:abuse IN=eth0 SRC=1.2.3.4 DPT=22": "abuse",
-		"nftgeo-drop:block others IN=eth0 SRC=1.2.3.4": "block others",
-		"nftgeo-drop:default-deny IN=eth0 SRC=9.9.9.9": "default-deny",
-		"nftgeo-drop:geo IN=eth0 SRC=1.2.3.4":          "geo",
-		"nftgeo-drop IN=eth0 SRC=1.2.3.4":              "",          // old prefix, no reason
-		"nftgeo-accept:allow-ssh IN=eth0 SRC=1.2.3.4":  "allow-ssh", // per-rule accept log
+	cases := map[string]struct{ hook, reason string }{
+		"nftgeo-drop@input:abuse IN=eth0 SRC=1.2.3.4 DPT=22":   {"input", "abuse"},
+		"nftgeo-drop@forward:block others IN=eth0 SRC=1.2.3.4": {"forward", "block others"},
+		"nftgeo-drop@input:default-deny IN=eth0 SRC=9.9.9.9":   {"input", "default-deny"},
+		"nftgeo-drop:geo IN=eth0 SRC=1.2.3.4":                  {"", "geo"}, // pre-hook prefix remains readable
+		"nftgeo-drop IN=eth0 SRC=1.2.3.4":                      {"", ""},    // old prefix, no reason
+		"nftgeo-accept@output:allow-ssh IN=eth0 SRC=1.2.3.4":   {"output", "allow-ssh"},
 	}
 	for msg, want := range cases {
-		got := ""
-		if m := reReason.FindStringSubmatch(msg); m != nil {
-			got = m[2] // m[1] is the verdict (drop|accept), m[2] the reason/label
+		gotHook, gotReason := "", ""
+		if m := reLogPrefix.FindStringSubmatch(msg); m != nil {
+			gotHook, gotReason = m[2], m[3]
 		}
-		if got != want {
-			t.Errorf("%q: got %q, want %q", msg, got, want)
+		if gotHook != want.hook || gotReason != want.reason {
+			t.Errorf("%q: got hook=%q reason=%q, want hook=%q reason=%q", msg, gotHook, gotReason, want.hook, want.reason)
 		}
 	}
 }
@@ -390,8 +390,8 @@ func TestBackfillFromStats(t *testing.T) {
 	// Appended in ingest (time-ascending) order, as the real store is.
 	statsData = []statsEntry{
 		{Ts: now.Unix() - 25*3600, Src: "9.9.9.9", CC: "FR", Port: "80"}, // out of 24h window
-		{Ts: now.Unix() - 3600, Src: "1.1.1.1", Dst: "10.0.0.1", CC: "US", Port: "22", Proto: "TCP", Dir: "ingress", Reason: "abuse"},
-		{Ts: now.Unix() - 60, Src: "2.2.2.2", Dst: "10.0.0.2", CC: "DE", Port: "22", Proto: "TCP", Dir: "ingress", Reason: "geo"}, // newest
+		{Ts: now.Unix() - 3600, Src: "1.1.1.1", Dst: "10.0.0.1", CC: "US", Port: "22", Proto: "TCP", Hook: "input", Dir: "ingress", Reason: "abuse"},
+		{Ts: now.Unix() - 60, Src: "2.2.2.2", Dst: "10.0.0.2", CC: "DE", Port: "22", Proto: "TCP", Hook: "input", Dir: "ingress", Reason: "geo"}, // newest
 	}
 	statsMu.Unlock()
 	defer func() { statsMu.Lock(); statsData = saved; statsMu.Unlock() }()
@@ -412,8 +412,8 @@ func TestBackfillFromStats(t *testing.T) {
 	if len(empty.Recent) != 3 || empty.Recent[0].Src != "2.2.2.2" {
 		t.Errorf("Recent = %+v, want 3 rows newest-first (2.2.2.2 first)", empty.Recent)
 	}
-	if got := empty.Recent[0]; got.Dst != "10.0.0.2" || got.Proto != "TCP" || got.Dir != "ingress" {
-		t.Errorf("Recent details = %+v, want persisted destination/proto/direction", got)
+	if got := empty.Recent[0]; got.Dst != "10.0.0.2" || got.Proto != "TCP" || got.Hook != "input" || got.Dir != "incoming" {
+		t.Errorf("Recent details = %+v, want persisted destination/proto/hook/flow", got)
 	}
 
 	// Live feed present -> breakdowns/recent must NOT be overwritten.

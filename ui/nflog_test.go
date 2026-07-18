@@ -39,7 +39,7 @@ func TestParseNflogIPv4TCP(t *testing.T) {
 	binary.BigEndian.PutUint16(p[22:24], 22) // dport 22
 
 	in := uint32(2)
-	d := parseNflog("nftgeo-drop:abuse ", p, &in, nil, nil)
+	d := parseNflog("nftgeo-drop@input:abuse ", p, &in, nil, nil)
 	if d.Verdict != "drop" || d.Reason != "abuse" {
 		t.Errorf("prefix parse: verdict=%q reason=%q", d.Verdict, d.Reason)
 	}
@@ -49,8 +49,8 @@ func TestParseNflogIPv4TCP(t *testing.T) {
 	if d.Proto != "TCP" || d.Dport != "22" {
 		t.Errorf("l4: proto=%q dport=%q", d.Proto, d.Dport)
 	}
-	if d.Dir != "ingress" {
-		t.Errorf("dir=%q want ingress (indev set, outdev nil)", d.Dir)
+	if d.Hook != "input" || d.Dir != "incoming" {
+		t.Errorf("hook/flow=%q/%q want input/incoming (indev set, outdev nil)", d.Hook, d.Dir)
 	}
 }
 
@@ -64,7 +64,7 @@ func TestParseNflogIPv6UDPEgress(t *testing.T) {
 	binary.BigEndian.PutUint16(p[42:44], 53) // dport 53
 
 	out := uint32(3)
-	d := parseNflog("nftgeo-accept:allow ", p, nil, &out, nil)
+	d := parseNflog("nftgeo-accept@output:allow ", p, nil, &out, nil)
 	if d.Verdict != "accept" || d.Reason != "allow" {
 		t.Errorf("prefix: verdict=%q reason=%q", d.Verdict, d.Reason)
 	}
@@ -74,8 +74,8 @@ func TestParseNflogIPv6UDPEgress(t *testing.T) {
 	if d.Proto != "UDP" || d.Dport != "53" {
 		t.Errorf("l4: proto=%q dport=%q", d.Proto, d.Dport)
 	}
-	if d.Dir != "egress" {
-		t.Errorf("dir=%q want egress (outdev set)", d.Dir)
+	if d.Hook != "output" || d.Dir != "outgoing" {
+		t.Errorf("hook/flow=%q/%q want output/outgoing (outdev set)", d.Hook, d.Dir)
 	}
 }
 

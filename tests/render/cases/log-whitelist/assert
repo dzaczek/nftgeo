@@ -1,4 +1,4 @@
 # LOG_WHITELIST logs whitelist hits as nftgeo-accept:whitelist before the accept.
-+ ip saddr @whitelist4 limit rate 10/second log prefix "nftgeo-accept:whitelist "
++ ip saddr @whitelist4 limit rate 10/second log prefix "nftgeo-accept@input:whitelist "
 + ip saddr @whitelist4 counter accept
-+ ip6 saddr @whitelist6 limit rate 10/second log prefix "nftgeo-accept:whitelist "
++ ip6 saddr @whitelist6 limit rate 10/second log prefix "nftgeo-accept@input:whitelist "
