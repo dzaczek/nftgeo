@@ -6,6 +6,7 @@ package main
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	bubblesTable "github.com/charmbracelet/bubbles/table"
@@ -28,19 +29,51 @@ var logsKeys = logsKeyMap{
 const logsHints = "↑↓ move · enter details · / search · v verdict · f dir"
 
 var logColSpecs = []colSpec{
-	{title: "Time", min: 20},
-	{title: "Dir", min: 7},
-	{title: "Src → Dst", min: 23, weight: 4},
+	{title: "Time", min: 14},
+	{title: "Dir", min: 6},
+	{title: "Src → Dst", min: 31, weight: 6},
 	{title: "Port", min: 5},
 	{title: "Proto", min: 5},
 	{title: "CC", min: 3},
-	{title: "Reason", min: 12, weight: 2},
+	{title: "Reason", min: 10, weight: 1},
 	{title: "Verdict", min: 7},
 }
 
 func logColumns(width int) []bubblesTable.Column {
 	// each bubbles table cell pads 1 left+right; reserve that per column
 	return toTableColumns(logColSpecs, layoutCols(width-2*len(logColSpecs), logColSpecs))
+}
+
+func logTime(s string) string {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC().Format("01-02 15:04:05")
+	}
+	return s
+}
+
+// logEndpoints keeps source and destination visible in one fixed-width cell.
+// Splitting the available width between them is more useful than letting the
+// table truncate the whole string after the source address (notably for IPv6).
+func logEndpoints(src, dst string, width int) string {
+	if dst == "" {
+		return clip(src, width)
+	}
+	const separator = " → "
+	if width <= len(separator)+2 {
+		return clip(src, width)
+	}
+	available := width - len(separator)
+	srcWidth := (available + 1) / 2
+	dstWidth := available - srcWidth
+	if len(src) < srcWidth {
+		dstWidth += srcWidth - len(src)
+		srcWidth = len(src)
+	}
+	if len(dst) < dstWidth {
+		srcWidth += dstWidth - len(dst)
+		dstWidth = len(dst)
+	}
+	return clip(src, srcWidth) + separator + clip(dst, dstWidth)
 }
 
 // logMatches applies the active verdict/direction/text filters to one record.
@@ -78,14 +111,15 @@ func (m *cliModel) updateLogsData() {
 			v = m.styles.AcceptVerdict.Render(v)
 		}
 
-		srcDst := d.Src
-		if d.Dst != "" {
-			srcDst += " → " + d.Dst
+		endpointWidth := 31
+		if cols := m.logTable.Columns(); len(cols) > 2 && cols[2].Width > 0 {
+			endpointWidth = cols[2].Width
 		}
+		srcDst := logEndpoints(d.Src, d.Dst, endpointWidth)
 
 		m.logFiltered = append(m.logFiltered, d)
 		rows = append(rows, bubblesTable.Row{
-			d.Time, d.Dir, srcDst, d.Dport, d.Proto, d.CC, d.Reason, v,
+			logTime(d.Time), d.Dir, srcDst, d.Dport, d.Proto, d.CC, d.Reason, v,
 		})
 	}
 	m.logTable.SetRows(rows)

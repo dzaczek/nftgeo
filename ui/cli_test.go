@@ -65,6 +65,16 @@ func TestUpdateDataFilter(t *testing.T) {
 	}
 }
 
+func TestLogEndpointsKeepBothSidesOnOneLine(t *testing.T) {
+	got := logEndpoints("2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff", "fd00:1111:2222:3333:4444:5555:6666:7777", 31)
+	if strings.Contains(got, "\n") || !strings.Contains(got, " → ") {
+		t.Errorf("endpoint cell = %q, want one line with an arrow", got)
+	}
+	if lipgloss.Width(got) > 31 || !strings.HasPrefix(got, "2001") || !strings.Contains(got, "fd00") {
+		t.Errorf("endpoint cell = %q, want balanced source and destination", got)
+	}
+}
+
 func TestLogsLoadNextPageAtCursor(t *testing.T) {
 	m := initialModel()
 	m.drops = DropsResp{HasMore: true, Recent: make([]Drop, 20)}
