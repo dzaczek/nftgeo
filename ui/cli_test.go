@@ -87,20 +87,32 @@ func TestLogsLoadNextPageAtCursor(t *testing.T) {
 
 func TestThemeCycling(t *testing.T) {
 	m := initialModel()
-	if !m.darkTheme {
-		t.Errorf("Initial theme should be dark")
+	if m.themeID != 0 {
+		t.Errorf("Initial theme should be dark (0)")
 	}
 
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 	m = res.(cliModel)
-	if m.darkTheme {
-		t.Errorf("Theme should be light after first toggle")
+	if m.themeID != 1 {
+		t.Errorf("Theme should be light (1) after first toggle")
 	}
 
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 	m = res.(cliModel)
-	if !m.darkTheme {
-		t.Errorf("Theme should be dark after second toggle")
+	if m.themeID != 2 {
+		t.Errorf("Theme should be ocean (2) after second toggle")
+	}
+
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	m = res.(cliModel)
+	if m.themeID != 3 {
+		t.Errorf("Theme should be dracula (3) after third toggle")
+	}
+
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	m = res.(cliModel)
+	if m.themeID != 0 {
+		t.Errorf("Theme should be dark (0) after fourth toggle")
 	}
 }
 
