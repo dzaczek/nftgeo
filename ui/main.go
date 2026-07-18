@@ -4481,3 +4481,131 @@ func main() {
 	log.Printf("nftgeo-ui: serving on http://%s (%s)", *addr, mode)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
+
+var (
+	policyFileCacheMu sync.Mutex
+	policyFileCache   = make(map[string]struct{
+		modTime time.Time
+		data    []byte
+	})
+)
+
+func policyOptimized() []PolicyRule {
+	var out []PolicyRule
+	n := 0
+
+	policyFileCacheMu.Lock()
+	defer policyFileCacheMu.Unlock()
+
+	for _, f := range ruleFiles() {
+		var data []byte
+		fi, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+
+		if cached, ok := policyFileCache[f]; ok && cached.modTime.Equal(fi.ModTime()) {
+			data = cached.data
+		} else {
+			data, err = os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			policyFileCache[f] = struct{modTime time.Time; data []byte}{modTime: fi.ModTime(), data: data}
+		}
+
+		base := filepath.Base(f)
+		for _, line := range strings.Split(string(data), "\n") {
+			comment := ""
+			if i := strings.Index(line, "#"); i >= 0 {
+				comment = strings.TrimSpace(line[i+1:])
+				line = line[:i]
+			}
+			fields := strings.Fields(line)
+			var pr PolicyRule
+			switch ruleKind(fields) {
+			case "filter":
+				if len(fields) < 5 {
+					continue
+				}
+				pr = PolicyRule{Action: fields[0], Dir: fields[1], Proto: fields[2], Port: fields[3], Target: fields[4]}
+				for i := 5; i < len(fields)-1; i++ {
+					if fields[i] == "on" {
+						pr.Iface = fields[i+1]
+					}
+				}
+			case "zone":
+				if len(fields) < 6 {
+					continue
+				}
+				pr = PolicyRule{Action: fields[0], Src: fields[1], Dst: fields[2], Proto: fields[3], Port: fields[4], Target: fields[5]}
+			case "nat":
+				if len(fields) < 5 {
+					continue
+				}
+				pr = PolicyRule{Action: fields[0], Dir: fields[1], Proto: fields[2], Port: fields[3], Target: fields[4]}
+				for i := 5; i < len(fields)-1; i++ {
+					if fields[i] == "on" {
+						pr.Iface = fields[i+1]
+					}
+				}
+			case "dnat":
+				if len(fields) < 6 {
+					continue
+				}
+				pr = PolicyRule{Action: fields[0], Dir: fields[1], Proto: fields[2], Port: fields[3], Target: fields[4]}
+				for i := 5; i < len(fields)-1; i++ {
+					if fields[i] == "to" {
+						pr.Iface = fields[i+1]
+					}
+				}
+			case "masquerade":
+				if len(fields) < 2 {
+					continue
+				}
+				pr = PolicyRule{Action: fields[0], Dir: fields[1], Proto: "any", Port: "any", Target: "any"}
+				if len(fields) >= 4 && fields[2] == "on" {
+					pr.Iface = fields[3]
+				}
+			case "snat":
+				if len(fields) < 4 {
+					continue
+				}
+				pr = PolicyRule{Action: fields[0], Dir: fields[1], Proto: "any", Port: "any", Target: fields[3]}
+				for i := 4; i < len(fields)-1; i++ {
+					if fields[i] == "on" {
+						pr.Iface = fields[i+1]
+					}
+				}
+			case "synproxy":
+				if len(fields) < 4 {
+					continue
+				}
+				pr = PolicyRule{Action: fields[0], Dir: fields[1], Proto: fields[2], Port: fields[3], Target: "any"}
+				for i := 4; i < len(fields)-1; i++ {
+					if fields[i] == "on" {
+						pr.Iface = fields[i+1]
+					}
+				}
+			case "throttle":
+				if len(fields) < 6 {
+					continue
+				}
+				pr = PolicyRule{Action: fields[0], Dir: fields[1], Proto: fields[2], Port: fields[3], Target: fields[4]}
+				for i := 5; i < len(fields)-1; i++ {
+					if fields[i] == "on" {
+						pr.Iface = fields[i+1]
+					}
+				}
+			default:
+				continue
+			}
+			pr.Num = n
+			pr.File = base
+			pr.Comment = comment
+			out = append(out, pr)
+			n++
+		}
+	}
+	return out
+}
