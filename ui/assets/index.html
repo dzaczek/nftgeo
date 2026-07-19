@@ -313,6 +313,7 @@
     <section class="view" id="v-policy">
       <!-- Whitelist summary card -->
       <div id="wl-card" class="card" style="padding:10px 14px;margin-bottom:10px;display:none"></div>
+      <div id="manual-blocks-card" class="card" style="padding:10px 14px;margin-bottom:10px"></div>
       <div class="filters" style="justify-content:space-between">
         <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
         <span style="display:flex;gap:10px;align-items:center">
@@ -1048,6 +1049,7 @@ function baselineAcceptsFor(dir){
   return (c.whitelist||0)+(c.established||0);
 }
 let WL_DATA=null; // cached whitelist summary for the policy-top card
+let MANUAL_BLOCKS=[]; // persistent entries created by `nftgeo block`
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};ZONES=o.zones||[];
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
@@ -1064,6 +1066,8 @@ async function loadPolicy(){
   // Load whitelist summary for the card at the top of the policy view.
   try{WL_DATA=await j('/api/whitelist/draft');}catch(e){WL_DATA=null;}
   renderWhitelistCard();
+  try{const blocks=await j('/api/manual-blocks');MANUAL_BLOCKS=blocks.blocks||[];}catch(e){MANUAL_BLOCKS=[];}
+  renderManualBlocks();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
 }
 // Implicit accepts that run before your policy (no editable row of their own):
@@ -1113,6 +1117,38 @@ function renderWhitelistCard(){
   </div>`;
   const editBtn=$('#wl-edit');
   if(editBtn)editBtn.addEventListener('click',whitelistDrawer);
+}
+function blockRemaining(seconds){
+  seconds=Math.max(0,Number(seconds)||0);
+  const days=Math.floor(seconds/86400), hours=Math.floor((seconds%86400)/3600), minutes=Math.floor((seconds%3600)/60);
+  if(days)return `${days}d ${hours}h`;
+  if(hours)return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+function renderManualBlocks(){
+  const el=$('#manual-blocks-card');if(!el)return;
+  const blocks=MANUAL_BLOCKS||[];
+  const count=blocks.length;
+  const rows=blocks.map(b=>{
+    const expiry=b.permanent
+      ? '<span class="chip" style="background:var(--drop);color:#fff">Permanent</span>'
+      : `<span>${esc(new Date(b.expiresAt).toLocaleString())}<br><span class="muted" style="font-size:11px">${esc(blockRemaining(b.remainingSeconds))} remaining</span></span>`;
+    const action=MODE==='ro'?'':`<button class="btn-ghost" style="color:var(--fg);padding:3px 8px;font-size:11px" onclick="unblockManualBlock('${esc(b.target)}')">Unblock</button>`;
+    return `<tr><td><code>${esc(b.target)}</code></td><td class="muted">IPv${b.family}</td><td>${expiry}</td><td style="text-align:right">${action}</td></tr>`;
+  }).join('');
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span class="chip" style="background:var(--drop);color:#fff;font-weight:600">⊘ Manual blocks</span>
+    <span class="muted" style="font-size:12px">${count?`${count} active block${count!==1?'s':''}`:'No active manual blocks'}</span>
+    <span class="muted" style="font-size:11px">Created by <code>nftgeo block</code> or the log action</span>
+  </div>${count?`<div class="tablewrap" style="margin-top:8px"><table class="poltable"><thead><tr><th>IP / CIDR</th><th>Family</th><th>Blocked until</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
+}
+async function unblockManualBlock(target){
+  if(MODE==='ro'||!confirm(`Unblock ${target}?`))return;
+  try{
+    const res=await post('/api/manual-blocks',{target});
+    if(res&&res.error){toast(res.error);return;}
+    await loadPolicy();toast(res.message||`${target} unblocked.`);
+  }catch(e){if(e.message!=='unauth')toast('Cannot unblock address.');}
 }
 // Whitelist editor drawer: GET drafts, POST saves draft, deploy via Commit.
 async function whitelistDrawer(){

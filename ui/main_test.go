@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -160,6 +161,32 @@ func TestBlockTargetContainsAddress(t *testing.T) {
 		if got := blockTargetContainsAddress(tt.target, tt.address); got != tt.want {
 			t.Errorf("blockTargetContainsAddress(%q, %s) = %t, want %t", tt.target, tt.address, got, tt.want)
 		}
+	}
+}
+
+func TestManualBlocksReadsActivePersistentState(t *testing.T) {
+	previous := dynStateFile
+	dynStateFile = filepath.Join(t.TempDir(), "dynblock.tsv")
+	defer func() { dynStateFile = previous }()
+
+	expires := time.Now().Add(time.Hour).Unix()
+	state := "203.0.113.7\t4\t" + strconv.FormatInt(expires, 10) + "\n" +
+		"2001:db8:bad::/48\t6\t0\n" +
+		"198.51.100.9\t4\t1\n" + // expired
+		"not-a-valid-entry\t4\tbad\n"
+	if err := os.WriteFile(dynStateFile, []byte(state), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	blocks := manualBlocks()
+	if len(blocks) != 2 {
+		t.Fatalf("manualBlocks() returned %d entries, want 2: %#v", len(blocks), blocks)
+	}
+	if blocks[0].Target != "203.0.113.7" || blocks[0].Permanent || blocks[0].RemainingSeconds <= 0 {
+		t.Errorf("unexpected timed block: %#v", blocks[0])
+	}
+	if blocks[1].Target != "2001:db8:bad::/48" || !blocks[1].Permanent || blocks[1].ExpiresAt != "" {
+		t.Errorf("unexpected permanent block: %#v", blocks[1])
 	}
 }
 

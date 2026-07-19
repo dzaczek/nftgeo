@@ -2509,6 +2509,91 @@ var (
 	wlHostsBackupFile = filepath.Join(backupDir, "whitelist-hosts")
 )
 
+var dynStateFile = env("DYN_STATE", filepath.Join(stateDir, "dynblock.tsv"))
+
+// ManualBlock mirrors the persistent state owned by `nftgeo block`. Expired
+// entries are intentionally omitted: they may remain in the state file only
+// until the next restore/reconcile pass, but are no longer active in nftables.
+type ManualBlock struct {
+	Target           string `json:"target"`
+	Family           int    `json:"family"`
+	Permanent        bool   `json:"permanent"`
+	ExpiresAt        string `json:"expiresAt,omitempty"`
+	RemainingSeconds int64  `json:"remainingSeconds,omitempty"`
+}
+
+func manualBlocks() []ManualBlock {
+	b, err := os.ReadFile(dynStateFile)
+	if err != nil {
+		return []ManualBlock{}
+	}
+	var out []ManualBlock
+	for _, line := range strings.Split(string(b), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 || strings.TrimSpace(fields[0]) == "" {
+			continue
+		}
+		family, err := strconv.Atoi(fields[1])
+		if err != nil || (family != 4 && family != 6) {
+			continue
+		}
+		expiry, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || expiry < 0 {
+			continue
+		}
+		block := ManualBlock{Target: fields[0], Family: family, Permanent: expiry == 0}
+		if expiry != 0 {
+			expires := time.Unix(expiry, 0)
+			remaining := time.Until(expires)
+			if remaining <= 0 {
+				continue
+			}
+			block.ExpiresAt = expires.UTC().Format(time.RFC3339)
+			block.RemainingSeconds = int64(remaining.Seconds())
+		}
+		out = append(out, block)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Permanent != out[j].Permanent {
+			return !out[i].Permanent
+		}
+		return out[i].Target < out[j].Target
+	})
+	return out
+}
+
+func handleManualBlocks(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, map[string]interface{}{"blocks": manualBlocks()})
+	case http.MethodPost:
+		var req struct {
+			Target string `json:"target"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+			return
+		}
+		target := strings.TrimSpace(req.Target)
+		if net.ParseIP(target) == nil {
+			if _, _, err := net.ParseCIDR(target); err != nil {
+				http.Error(w, `{"error":"invalid IP or CIDR"}`, http.StatusBadRequest)
+				return
+			}
+		}
+		out, err := runEnv(nil, operatorCLI, "unblock", target)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]string{"error": strings.TrimSpace(out)})
+			return
+		}
+		writeJSON(w, map[string]string{"message": strings.TrimSpace(out)})
+	default:
+		http.Error(w, `{"error":"GET or POST only"}`, http.StatusMethodNotAllowed)
+	}
+}
+
 // A stage is one file the UI drafts and commits: the operator edits `draft`,
 // Commit backs up `live`, promotes `draft` -> `live`, and the pipeline can
 // restore `live` from `backup` on rollback / deadman / interrupted deploy.
@@ -5174,6 +5259,7 @@ func main() {
 		writeJSON(w, doLookup(ip))
 	})
 	api("/api/blocks", handleBlock)
+	api("/api/manual-blocks", handleManualBlocks)
 
 	// Draft + commit pipeline (mutations are POST/PUT -> read-write sessions only).
 	api("/api/draft", handleDraft)

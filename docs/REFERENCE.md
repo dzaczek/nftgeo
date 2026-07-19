@@ -805,6 +805,9 @@ so use `--force` only when you explicitly intend to override that protection.
 Both the dashboard and CLI refuse any address or CIDR that contains an address
 assigned to this host (WAN, LAN, or loopback), even with `--force`.
 
+The **Policy** view lists every active manual block, whether it is permanent or
+its exact expiry and remaining time, and lets a read-write session unblock it.
+
 ### Fail-safe geo resolution
 
 If a country used in an `allow` rule resolves to no addresses (zone download

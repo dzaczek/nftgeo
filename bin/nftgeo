@@ -288,17 +288,21 @@ restore_dyn_state() {
 	[ -s "$DYN_STATE" ] || return 0
 	now="$(date +%s)"
 	: > "${DYN_STATE}.n"
-	while IFS="$TAB" read -r ip fam exp; do
-		[ -n "$ip" ] || continue
-		case "$exp" in
-			0)
-				nft add element "$FAM" "$DYN_TABLE" "permblock${fam}" "{ $ip }" 2>/dev/null || true
-				printf '%s\t%s\t%s\n' "$ip" "$fam" "$exp" >> "${DYN_STATE}.n" ;;
-			''|*[!0-9]*) continue ;;
-			*)
-				rem=$((exp - now)); [ "$rem" -gt 0 ] || continue
-				nft add element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip timeout ${rem}s }" 2>/dev/null || true
-				printf '%s\t%s\t%s\n' "$ip" "$fam" "$exp" >> "${DYN_STATE}.n" ;;
+	# Do not use the generic ip/fam names here: this helper is also called from
+	# cmd_block, where those variables hold the new target to add. POSIX shell
+	# has function-global variables, so a read at EOF could otherwise erase the
+	# pending target and produce `nft add element … { timeout 60s }`.
+	while IFS="$TAB" read -r saved_ip saved_fam saved_exp; do
+		[ -n "$saved_ip" ] || continue
+		case "$saved_exp" in
+		0)
+			nft add element "$FAM" "$DYN_TABLE" "permblock${saved_fam}" "{ $saved_ip }" 2>/dev/null || true
+			printf '%s\t%s\t%s\n' "$saved_ip" "$saved_fam" "$saved_exp" >> "${DYN_STATE}.n" ;;
+		''|*[!0-9]*) continue ;;
+		*)
+			rem=$((saved_exp - now)); [ "$rem" -gt 0 ] || continue
+			nft add element "$FAM" "$DYN_TABLE" "dynblock${saved_fam}" "{ $saved_ip timeout ${rem}s }" 2>/dev/null || true
+			printf '%s\t%s\t%s\n' "$saved_ip" "$saved_fam" "$saved_exp" >> "${DYN_STATE}.n" ;;
 		esac
 	done < "$DYN_STATE"
 	mv "${DYN_STATE}.n" "$DYN_STATE"
