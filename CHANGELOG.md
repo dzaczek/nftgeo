@@ -8,6 +8,12 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.4] - 2026-07-19
+
+### Fixed
+- CLI now uses the same local-address check as the dashboard, rejecting any
+  IPv4/IPv6 CIDR that contains this host's WAN, LAN, or loopback address.
+
 ## [1.74.0-beta.3] - 2026-07-19
 
 ### Fixed
