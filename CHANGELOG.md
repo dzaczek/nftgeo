@@ -8,6 +8,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.3] - 2026-07-19
+
+### Fixed
+- Manual blocks now refuse this host's own WAN, LAN, and loopback addresses.
+  The dashboard also rejects a CIDR that would contain any local address.
+- The block dialog explicitly distinguishes a single IP from the
+  provider-reported network returned by RDAP.
+
 ## [1.74.0-beta.2] - 2026-07-19
 
 ### Added
