@@ -2712,6 +2712,33 @@ func blockTargetIncludesLocalAddress(target string) (bool, error) {
 	return false, nil
 }
 
+// checkLocalCmd is a small, non-mutating helper for the shell CLI. It lets the
+// CLI apply the exact same IPv4/IPv6/CIDR local-address safety rule as the web
+// API without reimplementing IPv6 CIDR math in POSIX shell.
+// Exit 0: target contains a local address; exit 1: safe; exit 2: bad input.
+func checkLocalCmd(args []string) {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: nftgeo-ui check-local <ip|cidr>")
+		os.Exit(2)
+	}
+	target := strings.TrimSpace(args[0])
+	if net.ParseIP(target) == nil {
+		if _, _, err := net.ParseCIDR(target); err != nil {
+			fmt.Fprintln(os.Stderr, "invalid IP or CIDR")
+			os.Exit(2)
+		}
+	}
+	local, err := blockTargetIncludesLocalAddress(target)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot inspect local interface addresses:", err)
+		os.Exit(2)
+	}
+	if local {
+		os.Exit(0)
+	}
+	os.Exit(1)
+}
+
 func handleBlock(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
@@ -4830,6 +4857,9 @@ func main() {
 			return
 		case "reconcile-boot":
 			reconcileBoot()
+			return
+		case "check-local":
+			checkLocalCmd(os.Args[2:])
 			return
 		}
 	}
