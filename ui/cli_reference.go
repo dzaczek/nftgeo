@@ -129,8 +129,29 @@ func (m cliModel) getGeoFreshness() (cadence, successTime, age, state string) {
 
 	isStale := ageSecs > int64(cacheHours*3600)
 	reusedCache := (runTs - fetchedAt) > 60
+	hasFail := false
+	if st != nil {
+		if warnsVal, ok := st["warnings"]; ok {
+			if list, ok := warnsVal.([]interface{}); ok {
+				for _, w := range list {
+					s, _ := w.(string)
+					if strings.Contains(s, "Zone refresh failed") || strings.Contains(s, "Zone unavailable") {
+						hasFail = true
+						break
+					}
+				}
+			} else if list, ok := warnsVal.([]string); ok {
+				for _, s := range list {
+					if strings.Contains(s, "Zone refresh failed") || strings.Contains(s, "Zone unavailable") {
+						hasFail = true
+						break
+					}
+				}
+			}
+		}
+	}
 
-	if isStale {
+	if isStale || hasFail {
 		state = "Stale (using cache after failure)"
 	} else if reusedCache {
 		state = "OK (using cached data)"
@@ -169,13 +190,21 @@ func (m cliModel) getAbuseFreshness() (cadence, successTime, age, state string) 
 
 	customFeedsCount := 0
 	if h != nil {
-		if feedsList, ok := h["feeds"].([]interface{}); ok {
-			for _, f := range feedsList {
-				if fmap, ok := f.(map[string]interface{}); ok {
-					if asStr(fmap, "name") != "AbuseIPDB" {
-						customFeedsCount++
+		var feedsList []map[string]interface{}
+		if raw, ok := h["feeds"]; ok {
+			if list, ok := raw.([]map[string]interface{}); ok {
+				feedsList = list
+			} else if list, ok := raw.([]interface{}); ok {
+				for _, item := range list {
+					if m, ok := item.(map[string]interface{}); ok {
+						feedsList = append(feedsList, m)
 					}
 				}
+			}
+		}
+		for _, f := range feedsList {
+			if asStr(f, "name") != "AbuseIPDB" {
+				customFeedsCount++
 			}
 		}
 	}
@@ -230,8 +259,27 @@ func (m cliModel) getAbuseFreshness() (cadence, successTime, age, state string) 
 
 	isStale := ageSecs > (26 * 3600) // 26h because run twice daily
 	reusedCache := (runTs - fetchedAt) > 60
+	hasFail := false
+	if warnsVal, ok := st["warnings"]; ok {
+		if list, ok := warnsVal.([]interface{}); ok {
+			for _, w := range list {
+				s, _ := w.(string)
+				if strings.Contains(s, "AbuseIPDB download failed") || strings.Contains(s, "download failed") || strings.Contains(s, "using cached copy") {
+					hasFail = true
+					break
+				}
+			}
+		} else if list, ok := warnsVal.([]string); ok {
+			for _, s := range list {
+				if strings.Contains(s, "AbuseIPDB download failed") || strings.Contains(s, "download failed") || strings.Contains(s, "using cached copy") {
+					hasFail = true
+					break
+				}
+			}
+		}
+	}
 
-	if isStale {
+	if isStale || hasFail {
 		state = "Stale (using cache after failure)"
 	} else if reusedCache {
 		state = "OK (using cached data)"

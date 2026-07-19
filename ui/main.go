@@ -304,7 +304,54 @@ func setConfigValue(key, val string) error {
 	return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
 }
 
-func isGeoActive() bool {
+var (
+	geoActiveCache     bool
+	geoActiveCheckTime time.Time
+	geoActiveMu        sync.Mutex
+)
+
+func isGeoActiveCached() bool {
+	geoActiveMu.Lock()
+	defer geoActiveMu.Unlock()
+
+	var latest time.Time
+	checkFile := func(path string) {
+		if fi, err := os.Stat(path); err == nil {
+			if fi.ModTime().After(latest) {
+				latest = fi.ModTime()
+			}
+		}
+	}
+
+	checkFile(configFile)
+	checkFile(rulesFile)
+	checkFile(objLiveFile)
+	checkFile(objDraftFile)
+
+	if ents, err := os.ReadDir(rulesDir); err == nil {
+		for _, e := range ents {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".conf") {
+				checkFile(filepath.Join(rulesDir, e.Name()))
+			}
+		}
+	}
+
+	if ents, err := os.ReadDir(draftDir); err == nil {
+		for _, e := range ents {
+			checkFile(filepath.Join(draftDir, e.Name()))
+		}
+	}
+
+	if !latest.IsZero() && latest.Equal(geoActiveCheckTime) {
+		return geoActiveCache
+	}
+
+	geoActiveCache = calculateGeoActive()
+	geoActiveCheckTime = latest
+	return geoActiveCache
+}
+
+func calculateGeoActive() bool {
 	builtInRegions := map[string]bool{
 		"EUROPE": true, "ASIA": true, "AFRICA": true, "NORTH_AMERICA": true,
 		"SOUTH_AMERICA": true, "MIDDLE_EAST": true, "OCEANIA": true, "CARIBBEAN": true,
@@ -318,11 +365,11 @@ func isGeoActive() bool {
 		return builtInRegions[u]
 	}
 
-	text := readFileStr(objLiveFile)
+	objText := readFileStr(objLiveFile)
 	if _, err := os.Stat(objDraftFile); err == nil {
-		text = readFileStr(objDraftFile)
+		objText = readFileStr(objDraftFile)
 	}
-	groups, regions, _, _, _, _, _ := parseObjects(text)
+	groups, regions, _, _, _, _, _ := parseObjects(objText)
 
 	customGeoRegions := map[string]bool{}
 	for _, r := range regions {
@@ -345,32 +392,65 @@ func isGeoActive() bool {
 	}
 
 	isTargetGeo := func(target string) bool {
-		u := strings.ToUpper(target)
-		if isGeoToken(u) {
-			return true
-		}
-		if customGeoRegions[u] || customGeoGroups[u] {
-			return true
+		for _, part := range strings.Split(target, ",") {
+			u := strings.ToUpper(strings.TrimSpace(part))
+			if isGeoToken(u) {
+				return true
+			}
+			if customGeoRegions[u] || customGeoGroups[u] {
+				return true
+			}
 		}
 		return false
 	}
 
-	rules := policy()
-	for _, r := range rules {
-		if r.Kind == "zone" || r.Geo != "" {
-			return true
+	filesToScan := []string{}
+	for _, rf := range ruleFiles() {
+		rel := rf
+		if strings.HasPrefix(rf, rulesDir+"/") {
+			rel = "rules.d/" + strings.TrimPrefix(rf, rulesDir+"/")
 		}
-		if isTargetGeo(r.Target) {
-			return true
+		draftPath := filepath.Join(draftDir, rel)
+		if _, err := os.Stat(draftPath); err == nil {
+			filesToScan = append(filesToScan, draftPath)
+		} else {
+			filesToScan = append(filesToScan, rf)
 		}
 	}
 
-	for _, r := range cliDraftRules() {
-		if r.Kind == "zone" || r.Geo != "" {
-			return true
+	for _, path := range filesToScan {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
 		}
-		if isTargetGeo(r.Target) {
-			return true
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if idx := strings.Index(line, "#"); idx >= 0 {
+				line = strings.TrimSpace(line[:idx])
+			}
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+
+			if strings.Contains(line, "->") || strings.Contains(line, "from") {
+				return true
+			}
+
+			kind := ruleKind(fields)
+			if kind == "filter" && len(fields) >= 5 {
+				if isTargetGeo(fields[4]) {
+					return true
+				}
+			}
+			if kind == "ingress" && len(fields) >= 2 {
+				if isTargetGeo(fields[1]) {
+					return true
+				}
+			}
 		}
 	}
 
@@ -427,7 +507,7 @@ func health(ch []Chain) map[string]interface{} {
 		abuseRetentionDays = "30"
 	}
 	h["abuseRetentionDays"] = abuseRetentionDays
-	h["geoActive"] = isGeoActive()
+	h["geoActive"] = isGeoActiveCached()
 
 	return h
 }

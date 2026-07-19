@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -257,5 +259,155 @@ func TestGetAbuseFreshnessStates(t *testing.T) {
 	_, _, _, state = m.getAbuseFreshness()
 	if state != "Stale (using cache after failure)" {
 		t.Errorf("expected Stale (using cache after failure), got %q", state)
+	}
+}
+
+func TestGetAbuseFreshnessCustomFeedsOnly(t *testing.T) {
+	m := cliModel{}
+
+	// Verify that if we have custom feeds but no api key (api_key_present = false),
+	// it is still considered configured (not showing "Not configured").
+	m.status = map[string]interface{}{
+		"health": map[string]interface{}{
+			"feeds": []map[string]interface{}{
+				{"name": "SomeCustomFeed", "count": 100},
+			},
+			"status": map[string]interface{}{
+				"abuse": map[string]interface{}{
+					"rule_active":     true,
+					"api_key_present": false,
+					"fetched_at":      float64(time.Now().Unix() - 100),
+				},
+			},
+		},
+	}
+
+	_, _, _, state := m.getAbuseFreshness()
+	if strings.Contains(state, "Not configured") {
+		t.Errorf("expected custom feeds to satisfy configured state, but got state %q", state)
+	}
+
+	// Test feeds list as []interface{}
+	m.status = map[string]interface{}{
+		"health": map[string]interface{}{
+			"feeds": []interface{}{
+				map[string]interface{}{"name": "SomeCustomFeed", "count": 100},
+			},
+			"status": map[string]interface{}{
+				"abuse": map[string]interface{}{
+					"rule_active":     true,
+					"api_key_present": false,
+					"fetched_at":      float64(time.Now().Unix() - 100),
+				},
+			},
+		},
+	}
+
+	_, _, _, state = m.getAbuseFreshness()
+	if strings.Contains(state, "Not configured") {
+		t.Errorf("expected []interface{} custom feeds list to satisfy configured state, but got state %q", state)
+	}
+}
+
+func TestExplicitStaleCacheAfterFailure(t *testing.T) {
+	m := cliModel{}
+	now := time.Now().Unix()
+
+	// Verify that if warnings contain a failure, it explicitly signals stale cache fallback, even if within time window
+	m.status = map[string]interface{}{
+		"health": map[string]interface{}{
+			"geoActive":      true,
+			"zoneCacheHours": "20",
+			"status": map[string]interface{}{
+				"timestamp": float64(now),
+				"warnings": []interface{}{
+					"Zone refresh failed for 'de', using cached copy.",
+				},
+				"geo": map[string]interface{}{
+					"fetched_at": float64(now - 100),
+				},
+			},
+		},
+	}
+
+	_, _, _, state := m.getGeoFreshness()
+	if state != "Stale (using cache after failure)" {
+		t.Errorf("expected explicit stale/cache fallback state from warnings, got %q", state)
+	}
+
+	// Abuse fail warning
+	m.status = map[string]interface{}{
+		"health": map[string]interface{}{
+			"status": map[string]interface{}{
+				"timestamp": float64(now),
+				"warnings": []interface{}{
+					"AbuseIPDB download failed; using retained state from /var/lib/nftgeo/abuseipdb.tsv.",
+				},
+				"abuse": map[string]interface{}{
+					"rule_active":     true,
+					"api_key_present": true,
+					"fetched_at":      float64(now - 100),
+				},
+			},
+		},
+	}
+
+	_, _, _, state = m.getAbuseFreshness()
+	if state != "Stale (using cache after failure)" {
+		t.Errorf("expected explicit stale state from abuse warning, got %q", state)
+	}
+}
+
+func TestIsGeoActiveCommaSeparatedAndCaching(t *testing.T) {
+	dir := t.TempDir()
+	cf := filepath.Join(dir, "config")
+	rf := filepath.Join(dir, "rules.conf")
+	ol := filepath.Join(dir, "objects.conf")
+	wl := filepath.Join(dir, "whitelist.conf")
+	wlh := filepath.Join(dir, "whitelist-hosts.conf")
+	sentinelFile := filepath.Join(dir, ".pending-confirm")
+	drDir := filepath.Join(dir, "drafts")
+
+	// Mock system paths
+	oldConfig, oldRules, oldObjLive, oldDraftDir, oldSentinelFile, oldWhitelistFile, oldWhitelistHostsFile := configFile, rulesFile, objLiveFile, draftDir, sentinel, whitelistFile, whitelistHostsFile
+	configFile, rulesFile, objLiveFile, draftDir, sentinel, whitelistFile, whitelistHostsFile = cf, rf, ol, drDir, sentinelFile, wl, wlh
+	defer func() {
+		configFile, rulesFile, objLiveFile, draftDir, sentinel, whitelistFile, whitelistHostsFile = oldConfig, oldRules, oldObjLive, oldDraftDir, oldSentinelFile, oldWhitelistFile, oldWhitelistHostsFile
+	}()
+
+	os.MkdirAll(drDir, 0755)
+
+	// Write rules with comma-separated targets like "pl,de"
+	if err := os.WriteFile(rf, []byte("allow in tcp 80 pl,de\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify it calculates to true
+	geoActive := calculateGeoActive()
+	if !geoActive {
+		t.Error("expected geoActive to be true for comma-separated pl,de rules")
+	}
+
+	// Verify caching behavior based on modTime
+	// Set check time to empty, then run cached version
+	geoActiveCheckTime = time.Time{}
+	geoActiveCache = false
+
+	cached1 := isGeoActiveCached()
+	if !cached1 {
+		t.Error("expected cached value to calculate to true")
+	}
+
+	// Modify file and verify it invalidates and recalculates (e.g. make it false by removing pl,de)
+	if err := os.WriteFile(rf, []byte("allow in tcp 80 any\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Artificially advance mod time so os.Stat returns a newer time
+	fut := time.Now().Add(10 * time.Second)
+	os.Chtimes(rf, fut, fut)
+
+	cached2 := isGeoActiveCached()
+	if cached2 {
+		t.Error("expected cache to invalidate and calculate to false after modifying rules file")
 	}
 }
