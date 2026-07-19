@@ -8,6 +8,12 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.6] - 2026-07-19
+
+### Changed
+- Manual blocks in the dashboard Policy view are collapsed after the first 10
+  entries. The full active count remains visible and **Show all** expands them.
+
 ## [1.74.0-beta.5] - 2026-07-19
 
 ### Added
