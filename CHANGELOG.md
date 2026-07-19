@@ -8,6 +8,17 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.5] - 2026-07-19
+
+### Added
+- The dashboard Policy view now lists active manual blocks with their target,
+  expiry or permanent status, remaining time, and an Unblock action.
+
+### Fixed
+- Creating a manual block no longer loses its target while restoring existing
+  persistent blocks, which previously made dashboard and CLI block requests
+  fail with an nftables `unexpected timeout` error.
+
 ## [1.74.0-beta.4] - 2026-07-19
 
 ### Fixed
