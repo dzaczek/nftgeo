@@ -175,9 +175,9 @@ func TestGetAbuseFreshnessStates(t *testing.T) {
 			"feeds": []interface{}{},
 			"status": map[string]interface{}{
 				"abuse": map[string]interface{}{
-					"rule_active":       true,
-					"api_key_present":   false,
-					"fetched_at":        nil,
+					"rule_active":     true,
+					"api_key_present": false,
+					"fetched_at":      nil,
 				},
 			},
 		},
