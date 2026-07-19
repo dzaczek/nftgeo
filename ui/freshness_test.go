@@ -98,7 +98,7 @@ func TestGetGeoFreshnessStates(t *testing.T) {
 		t.Errorf("expected Never fetched state with 0 timestamp, got %q", state)
 	}
 
-	// Case 4: freshly downloaded (OK - within 60s of run time)
+	// Case 4: freshly downloaded (Freshly downloaded - within 60s of run time)
 	now := time.Now().Unix()
 	m.status = map[string]interface{}{
 		"health": map[string]interface{}{
@@ -112,8 +112,8 @@ func TestGetGeoFreshnessStates(t *testing.T) {
 		},
 	}
 	_, _, _, state = m.getGeoFreshness()
-	if state != "OK (freshly downloaded)" {
-		t.Errorf("expected OK (freshly downloaded), got %q", state)
+	if state != "Freshly downloaded" {
+		t.Errorf("expected Freshly downloaded, got %q", state)
 	}
 
 	// Case 5: using cached data normally (within ZONE_CACHE_HOURS, but older than 60s run time)
@@ -130,11 +130,11 @@ func TestGetGeoFreshnessStates(t *testing.T) {
 		},
 	}
 	_, _, _, state = m.getGeoFreshness()
-	if state != "OK (using cached data)" {
-		t.Errorf("expected OK (using cached data), got %q", state)
+	if state != "OK" {
+		t.Errorf("expected OK, got %q", state)
 	}
 
-	// Case 6: stale (reused expired cache after failure)
+	// Case 6: stale (reused expired cache with NO failure warning -> neutral "Stale" state, NOT failure)
 	m.status = map[string]interface{}{
 		"health": map[string]interface{}{
 			"geoActive":      true,
@@ -148,8 +148,8 @@ func TestGetGeoFreshnessStates(t *testing.T) {
 		},
 	}
 	_, _, _, state = m.getGeoFreshness()
-	if state != "Stale (using cache after failure)" {
-		t.Errorf("expected Stale (using cache after failure), got %q", state)
+	if state != "Stale" {
+		t.Errorf("expected Stale, got %q", state)
 	}
 }
 
@@ -206,7 +206,7 @@ func TestGetAbuseFreshnessStates(t *testing.T) {
 		t.Errorf("expected Never fetched state, got %q", state)
 	}
 
-	// Case 4: OK (freshly downloaded)
+	// Case 4: freshly downloaded (Freshly downloaded - within 60s of run time)
 	now := time.Now().Unix()
 	m.status = map[string]interface{}{
 		"health": map[string]interface{}{
@@ -221,8 +221,8 @@ func TestGetAbuseFreshnessStates(t *testing.T) {
 		},
 	}
 	_, _, _, state = m.getAbuseFreshness()
-	if state != "OK (freshly downloaded)" {
-		t.Errorf("expected OK (freshly downloaded), got %q", state)
+	if state != "Freshly downloaded" {
+		t.Errorf("expected Freshly downloaded, got %q", state)
 	}
 
 	// Case 5: OK (using cached data)
@@ -239,8 +239,8 @@ func TestGetAbuseFreshnessStates(t *testing.T) {
 		},
 	}
 	_, _, _, state = m.getAbuseFreshness()
-	if state != "OK (using cached data)" {
-		t.Errorf("expected OK (using cached data), got %q", state)
+	if state != "OK" {
+		t.Errorf("expected OK, got %q", state)
 	}
 
 	// Case 6: Stale
@@ -257,8 +257,8 @@ func TestGetAbuseFreshnessStates(t *testing.T) {
 		},
 	}
 	_, _, _, state = m.getAbuseFreshness()
-	if state != "Stale (using cache after failure)" {
-		t.Errorf("expected Stale (using cache after failure), got %q", state)
+	if state != "Stale" {
+		t.Errorf("expected Stale, got %q", state)
 	}
 }
 
@@ -369,10 +369,30 @@ func TestIsGeoActiveCommaSeparatedAndCaching(t *testing.T) {
 	drDir := filepath.Join(dir, "drafts")
 
 	// Mock system paths
-	oldConfig, oldRules, oldObjLive, oldDraftDir, oldSentinelFile, oldWhitelistFile, oldWhitelistHostsFile := configFile, rulesFile, objLiveFile, draftDir, sentinel, whitelistFile, whitelistHostsFile
-	configFile, rulesFile, objLiveFile, draftDir, sentinel, whitelistFile, whitelistHostsFile = cf, rf, ol, drDir, sentinelFile, wl, wlh
+	oldConfig := configFile
+	oldRules := rulesFile
+	oldObjLive := objLiveFile
+	oldDraftDir := draftDir
+	oldSentinelFile := sentinel
+	oldWhitelistFile := whitelistFile
+	oldWhitelistHostsFile := whitelistHostsFile
+
+	configFile = cf
+	rulesFile = rf
+	objLiveFile = ol
+	draftDir = drDir
+	sentinel = sentinelFile
+	whitelistFile = wl
+	whitelistHostsFile = wlh
+
 	defer func() {
-		configFile, rulesFile, objLiveFile, draftDir, sentinel, whitelistFile, whitelistHostsFile = oldConfig, oldRules, oldObjLive, oldDraftDir, oldSentinelFile, oldWhitelistFile, oldWhitelistHostsFile
+		configFile = oldConfig
+		rulesFile = oldRules
+		objLiveFile = oldObjLive
+		draftDir = oldDraftDir
+		sentinel = oldSentinelFile
+		whitelistFile = oldWhitelistFile
+		whitelistHostsFile = oldWhitelistHostsFile
 	}()
 
 	os.MkdirAll(drDir, 0755)
@@ -409,5 +429,30 @@ func TestIsGeoActiveCommaSeparatedAndCaching(t *testing.T) {
 	cached2 := isGeoActiveCached()
 	if cached2 {
 		t.Error("expected cache to invalidate and calculate to false after modifying rules file")
+	}
+}
+
+func TestNeutralStaleRegression(t *testing.T) {
+	m := cliModel{}
+	now := time.Now().Unix()
+
+	// Verify that an old timestamp with NO warnings results in a neutral "Stale" state, NOT "after failure"!
+	m.status = map[string]interface{}{
+		"health": map[string]interface{}{
+			"geoActive":      true,
+			"zoneCacheHours": "20",
+			"status": map[string]interface{}{
+				"timestamp": float64(now),
+				"warnings":  []interface{}{}, // no warnings
+				"geo": map[string]interface{}{
+					"fetched_at": float64(now - 25*3600), // 25 hours old (cache is 20h)
+				},
+			},
+		},
+	}
+
+	_, _, _, state := m.getGeoFreshness()
+	if state != "Stale" {
+		t.Errorf("expected neutral 'Stale' state with no warnings for old timestamp, got %q", state)
 	}
 }

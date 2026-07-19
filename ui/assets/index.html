@@ -610,6 +610,10 @@ function renderHealth(h){h=h||{};
   const cacheHours=parseInt(h.zoneCacheHours||'20');
   const retentionDays=parseInt(h.abuseRetentionDays||'30');
 
+  const warns = st.warnings || [];
+  const hasGeoFail = warns.some(w => w.includes("Zone refresh failed") || w.includes("Zone unavailable"));
+  const hasAbuseFail = warns.some(w => w.includes("AbuseIPDB download failed") || w.includes("download failed") || w.includes("using cached copy"));
+
   // --- Geolocation Data ---
   let geoState='Disabled';
   let geoLastSuccess='—';
@@ -623,14 +627,16 @@ function renderHealth(h){h=h||{};
       geoAge=formatRelativeAgeJS(ageSecs);
 
       const isStale=ageSecs>(cacheHours*3600);
-      const reusedCache=(runTs-geo.fetched_at>60);
+      const isFresh=(runTs-geo.fetched_at<=60);
 
-      if(isStale){
+      if(hasGeoFail){
         geoState='<span style="color:var(--drop);font-weight:bold">Stale (using cache after failure)</span>';
-      }else if(reusedCache){
-        geoState='<span style="color:var(--warnc)">OK (using cached data)</span>';
+      }else if(isFresh){
+        geoState='<span style="color:var(--ok)">Freshly downloaded</span>';
+      }else if(isStale){
+        geoState='<span style="color:var(--warnc)">Stale</span>';
       }else{
-        geoState='<span style="color:var(--ok)">OK (freshly downloaded)</span>';
+        geoState='<span style="color:var(--ok)">OK</span>';
       }
     }
   }else{
@@ -655,14 +661,16 @@ function renderHealth(h){h=h||{};
       abuseAge=formatRelativeAgeJS(ageSecs);
 
       const isStale=ageSecs>(26*3600); // 26h because run twice daily
-      const reusedCache=(runTs-abuse.fetched_at>60);
+      const isFresh=(runTs-abuse.fetched_at<=60);
 
-      if(isStale){
+      if(hasAbuseFail){
         abuseState='<span style="color:var(--drop);font-weight:bold">Stale (using cache after failure)</span>';
-      }else if(reusedCache){
-        abuseState='<span style="color:var(--warnc)">OK (using cached data)</span>';
+      }else if(isFresh){
+        abuseState='<span style="color:var(--ok)">Freshly downloaded</span>';
+      }else if(isStale){
+        abuseState='<span style="color:var(--warnc)">Stale</span>';
       }else{
-        abuseState='<span style="color:var(--ok)">OK (freshly downloaded)</span>';
+        abuseState='<span style="color:var(--ok)">OK</span>';
       }
     }
   }else{

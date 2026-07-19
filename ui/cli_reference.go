@@ -128,7 +128,7 @@ func (m cliModel) getGeoFreshness() (cadence, successTime, age, state string) {
 	}
 
 	isStale := ageSecs > int64(cacheHours*3600)
-	reusedCache := (runTs - fetchedAt) > 60
+	isFresh := (runTs - fetchedAt) <= 60
 	hasFail := false
 	if st != nil {
 		if warnsVal, ok := st["warnings"]; ok {
@@ -151,12 +151,14 @@ func (m cliModel) getGeoFreshness() (cadence, successTime, age, state string) {
 		}
 	}
 
-	if isStale || hasFail {
+	if hasFail {
 		state = "Stale (using cache after failure)"
-	} else if reusedCache {
-		state = "OK (using cached data)"
+	} else if isFresh {
+		state = "Freshly downloaded"
+	} else if isStale {
+		state = "Stale"
 	} else {
-		state = "OK (freshly downloaded)"
+		state = "OK"
 	}
 
 	return cadence, successTime, age, state
@@ -258,7 +260,7 @@ func (m cliModel) getAbuseFreshness() (cadence, successTime, age, state string) 
 	}
 
 	isStale := ageSecs > (26 * 3600) // 26h because run twice daily
-	reusedCache := (runTs - fetchedAt) > 60
+	isFresh := (runTs - fetchedAt) <= 60
 	hasFail := false
 	if warnsVal, ok := st["warnings"]; ok {
 		if list, ok := warnsVal.([]interface{}); ok {
@@ -279,12 +281,14 @@ func (m cliModel) getAbuseFreshness() (cadence, successTime, age, state string) 
 		}
 	}
 
-	if isStale || hasFail {
+	if hasFail {
 		state = "Stale (using cache after failure)"
-	} else if reusedCache {
-		state = "OK (using cached data)"
+	} else if isFresh {
+		state = "Freshly downloaded"
+	} else if isStale {
+		state = "Stale"
 	} else {
-		state = "OK (freshly downloaded)"
+		state = "OK"
 	}
 
 	return cadence, successTime, age, state
