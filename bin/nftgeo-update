@@ -586,10 +586,23 @@ emit_set_match() {
 		_hook="${10:-unknown}"
 		printf '\t\t%s %s log prefix "%s@%s:%s "%s\n' "$mpfx" "$LOG_LIMIT" "$_pfx" "$_hook" "$_lr" "$NFLOG_SUFFIX"
 	fi
+	# The source comment (if present) now carries both the UI counter comment and potentially the mark clause.
+	# Example comment: "nftgeo:allow in tcp 80 any mark 100" -> we need to split if it has " mark ".
+	# However, we only need to emit meta mark if the rule is accepted (dropped packets don't need marking, but they could).
+	# To keep things clean, the mark is only emitted on 'accept' since QoS shapes allowed traffic.
+	# Wait, we already packed the mark explicitly in the 'meta' field! But emit_set_match doesn't receive the mark.
+	# Let's adjust emit_set_match to take the mark as $11.
+	_em_mark="${11:--}"
+
+	_mark_str=""
+	if [ "$_em_mark" != "-" ] && [ "$5" = "accept" ]; then
+		_mark_str=" meta mark set ${_em_mark}"
+	fi
+
 	if [ -n "${7:-}" ]; then
-		printf '\t\t%s counter %s comment "%s"\n' "$mpfx" "$5" "$7"
+		printf '\t\t%s counter%s %s comment "%s"\n' "$mpfx" "$_mark_str" "$5" "$7"
 	else
-		printf '\t\t%s counter %s\n' "$mpfx" "$5"
+		printf '\t\t%s counter%s %s\n' "$mpfx" "$_mark_str" "$5"
 	fi
 }
 
@@ -909,10 +922,11 @@ parse_rules_file() {
 		fi
 
 		# Optional qualifiers after the target, in any order (inline # comment
-		# allowed after them): "on <iface>" and "log". "on" maps to iifname on the
-		# source side (in/fwd-in) and oifname on the destination side (out/fwd-out);
+		# allowed after them): "on <iface>", "log", and "mark <value>".
+		# "on" maps to iifname on the source side (in/fwd-in) and oifname on the destination side (out/fwd-out);
 		# "log" emits a per-rule log prefix (nftgeo-accept:/nftgeo-drop:<name>).
-		iface="-"; _rlog=0
+		# "mark" applies a QoS meta mark.
+		iface="-"; _rlog=0; _rmark="-"
 		set -- ${_rest%%#*}
 		while [ -n "${1:-}" ]; do
 			case "$1" in
@@ -930,19 +944,27 @@ parse_rules_file() {
 					fi
 					shift 2 ;;
 				log) _rlog=1; shift ;;
-				*) echo "${rf}:${lineno}: unexpected '${1}' after target (only 'on <iface>' and 'log' allowed)" >&2; exit 1 ;;
+				mark)
+					_rmark="${2:-}"
+					case "$_rmark" in
+						''|*[!0-9]*) echo "${rf}:${lineno}: 'mark' needs a valid numeric value" >&2; exit 1 ;;
+					esac
+					shift 2 ;;
+				*) echo "${rf}:${lineno}: unexpected '${1}' after target (only 'on <iface>', 'log', and 'mark <value>' allowed)" >&2; exit 1 ;;
 			esac
 		done
 
 		# Metadata carried per rule: the rule's name (trailing # comment, used in
 		# drop logs) and the source stamp (counter comment for the UI). Packed as
 		# "<name>|<src>" into one trailing field; emit_chain splits on the first '|'.
+		# Since we now have 'mark', we pack it into meta as well.
 		_src="$(rule_comment "$action" "$dir" "$proto" "$port" "$geo" "$iface")"
+		[ "$_rmark" != "-" ] && _src="${_src} mark ${_rmark}"
 		_name=""
 		case "$_rest" in
 			*"#"*) _name="$(printf '%s' "${_rest#*#}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/|//g')" ;;
 		esac
-		_meta="${_name}|${_src}"
+		_meta="${_name}|${_src}|${_rmark}"
 		if [ -n "$_portless" ]; then
 			# proto any/icmp/icmpv6/esp/ah/gre with no port
 			emit_norm "$action" "$hook" "$side" "$proto" "$port" "$geosan" "$iface" "$_rlog" "$_meta"
@@ -996,7 +1018,7 @@ parse_ingress_file() {
 			add_geo_members "$igeo" "$itgt" || { echo "${rf}:${lineno}: bad target '${itgt}'" >&2; exit 1; }
 		fi
 		_isrc="$(rule_comment "$iact" ingress "$iproto" "$iport" "$itgt" -)"
-		_imeta="${_iname}|${_isrc}"
+		_imeta="${_iname}|${_isrc}|-"
 		# Resolve proto/port into buckets (or a portless line), reusing the filter path.
 		case "$iproto" in
 			tcp|udp|sctp|all)
@@ -1665,7 +1687,10 @@ emit_chain() {
 	# deny-by-default: a port is closed only by an explicit "deny ... any" or by
 	# DEFAULT_INPUT="drop".
 	awk -v h="$hook" '($1=="allow" || $1=="deny") && $2==h' "$RULES_NORM" | while read -r _act _h side proto port geosan iface _rlog meta; do
-		lname="${meta%%|*}"; src="${meta#*|}"
+		lname="${meta%%|*}"
+		_rest_meta="${meta#*|}"
+		src="${_rest_meta%%|*}"
+		_rmark="${_rest_meta#*|}"
 		ifc="$(if_match "$side" "$iface")"
 		m4="$(l4_match "$proto" "$port" 4)"
 		m6="$(l4_match "$proto" "$port" 6)"
@@ -1679,17 +1704,21 @@ emit_chain() {
 			# No address set: match on the proto/port alone (both families).
 			pre=""; [ -n "$ifc" ] && pre="${ifc} "
 			printed=""
+			_mark_str=""
+			if [ "$_rmark" != "-" ] && [ "$_vd" = "accept" ]; then
+				_mark_str=" meta mark set ${_rmark}"
+			fi
 			for m in "$m4" "$m6"; do
 				[ -n "$m" ] || continue
 				case "$printed" in *"|${m}|"*) continue ;; esac
 				printed="${printed}|${m}|"
 				mm=""; [ "$m" != any ] && mm="$m "
 				[ "$_dolog" = 1 ] && printf '\t\t%s%s%s log prefix "%s@%s:%s "%s\n' "$pre" "$mm" "$LOG_LIMIT" "$_pfx" "$hook" "$_lr" "$NFLOG_SUFFIX"
-				printf '\t\t%s%scounter %s comment "%s"\n' "$pre" "$mm" "$_vd" "$src"
+				printf '\t\t%s%scounter%s %s comment "%s"\n' "$pre" "$mm" "$_mark_str" "$_vd" "$src"
 			done
 		else
-			emit_set_match "$m4" ip  "$side" "$(set_name "$geosan" 4)" "$_vd" "$ifc" "$src" "$lname" "$_rlog" "$hook"
-			emit_set_match "$m6" ip6 "$side" "$(set_name "$geosan" 6)" "$_vd" "$ifc" "$src" "$lname" "$_rlog" "$hook"
+			emit_set_match "$m4" ip  "$side" "$(set_name "$geosan" 4)" "$_vd" "$ifc" "$src" "$lname" "$_rlog" "$hook" "$_rmark"
+			emit_set_match "$m6" ip6 "$side" "$(set_name "$geosan" 6)" "$_vd" "$ifc" "$src" "$lname" "$_rlog" "$hook" "$_rmark"
 		fi
 	done
 
@@ -1776,8 +1805,8 @@ emit_ingress() {
 				printf '\t\t%scounter %s comment "%s"\n' "$mm" "$_act" "$src"
 			done
 		else
-			emit_set_match "$m4" ip  saddr "$(set_name "$geosan" 4)" "$_act" "" "$src" "$lname" "$_ilog" ingress
-			emit_set_match "$m6" ip6 saddr "$(set_name "$geosan" 6)" "$_act" "" "$src" "$lname" "$_ilog" ingress
+			emit_set_match "$m4" ip  saddr "$(set_name "$geosan" 4)" "$_act" "" "$src" "$lname" "$_ilog" ingress "-"
+			emit_set_match "$m6" ip6 saddr "$(set_name "$geosan" 6)" "$_act" "" "$src" "$lname" "$_ilog" ingress "-"
 		fi
 	done < "$INGRESS_NORM"
 	printf '\t}\n'
