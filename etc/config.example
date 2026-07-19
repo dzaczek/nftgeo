@@ -142,6 +142,15 @@ ICMP_BURST="5"
 # ndisc/ neighbor cache and is not affected.
 ANTISPOOF=""
 
+# Optional TCP/state-exhaustion guard for input and forward traffic. It drops
+# impossible TCP flag combinations, rate-limits new SYNs per source, and caps
+# concurrent connections per source. Keep it off for a busy gateway until the
+# thresholds are sized for its expected clients.
+# DOS_GUARD="1"
+# DOS_SYN_RATE="30/second"
+# DOS_SYN_BURST="60"
+# DOS_CONN_LIMIT="100"
+
 # Input chain default policy. "accept" (default) = selective blocklist: only what
 # your rules explicitly deny (geo/abuse/throttle) is dropped, everything else
 # passes. Note: rules are evaluated in file order (first match wins) and a

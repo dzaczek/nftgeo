@@ -8,6 +8,16 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.7] - 2026-07-19
+
+### Added
+- Optional `DOS_GUARD` baseline: malformed TCP-flag drops, per-source SYN
+  metering, and a per-source concurrent-connection cap for input/forward.
+
+### Changed
+- Anti-spoofing and SYNPROXY can be enabled independently as before; the new
+  DoS guard is opt-in and validates all configured thresholds before rendering.
+
 ## [1.74.0-beta.6] - 2026-07-19
 
 ### Changed

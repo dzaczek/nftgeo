@@ -500,6 +500,7 @@ order.
 | `HARDEN` | `""` (off) | Baseline: accept loopback, drop invalid, permit essential ICMPv6, rate-limit ping |
 | `ICMP_RATE` / `ICMP_BURST` | `1/second` / `5` | With `HARDEN`, rate-limit inbound ping (echo-request); `0` disables |
 | `ANTISPOOF` | `""` | Interfaces to protect with strict uRPF (reverse-path filter) |
+| `DOS_GUARD` | `""` (off) | Drop malformed TCP flags, meter new SYNs per source, and cap concurrent new connections per source |
 | `THROTTLE_BAN` | `1h` | Default ban duration for `throttle` rules; a rule may override it with `ban <duration>`. |
 | `INGRESS_DEV` | auto-detect | Space- or comma-separated devices carrying ingress-hook rules. |
 | `ZONE_CACHE_HOURS` | `20` | How long downloaded country zones are reused |
