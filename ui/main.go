@@ -47,6 +47,7 @@ var (
 	table              = env("TABLE_NAME", "nftgeo")
 	zoneDir            = env("ZONE_DIR", "/var/lib/nftgeo/zones")
 	engine             = env("NFTGEO_UPDATE", "/usr/sbin/nftgeo-update")
+	operatorCLI        = env("NFTGEO_CLI", "/usr/sbin/nftgeo")
 	configFile         = env("CONFIG_FILE", "/etc/nftgeo/config")
 	rulesFile          = env("RULES_FILE", "/etc/nftgeo/rules.conf")
 	rulesDir           = env("RULES_DIR", "/etc/nftgeo/rules.d")
@@ -2647,6 +2648,74 @@ func runEnv(extra []string, name string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// blockRequest is deliberately small: the UI delegates the actual change to
+// nftgeo's operator CLI, which keeps the CLI and web safety checks identical.
+type blockRequest struct {
+	Target string `json:"target"`
+	TTL    string `json:"ttl"`
+	Force  bool   `json:"force"`
+}
+
+func normalizeBlockRequest(req blockRequest) (target, ttl string, isCIDR bool, err error) {
+	target = strings.TrimSpace(req.Target)
+	if ip := net.ParseIP(target); ip != nil {
+		target = ip.String()
+	} else if _, network, parseErr := net.ParseCIDR(target); parseErr == nil {
+		target, isCIDR = network.String(), true
+	} else {
+		return "", "", false, fmt.Errorf("invalid IP or CIDR")
+	}
+	if isCIDR && !req.Force {
+		return "", "", false, fmt.Errorf("blocking a CIDR requires confirmation")
+	}
+	ttl = strings.ToLower(strings.TrimSpace(req.TTL))
+	if ttl == "" {
+		ttl = "7d"
+	}
+	if ttl == "infinity" || ttl == "permanent" {
+		ttl = "forever"
+	}
+	if ttl != "forever" && !regexp.MustCompile(`^[1-9][0-9]*(?:[smhd])?$`).MatchString(ttl) {
+		return "", "", false, fmt.Errorf("invalid duration; use 1h, 7d, seconds, or forever")
+	}
+	return target, ttl, isCIDR, nil
+}
+
+func handleBlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req blockRequest
+	dec := json.NewDecoder(io.LimitReader(r.Body, 16<<10))
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	target, ttl, isCIDR, err := normalizeBlockRequest(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	args := []string{"block"}
+	if req.Force || isCIDR {
+		args = append(args, "--force")
+	}
+	args = append(args, target, ttl)
+	out, err := runEnv(nil, operatorCLI, args...)
+	if err != nil {
+		message := strings.TrimSpace(out)
+		if message == "" {
+			message = "block command failed"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]string{"error": message})
+		return
+	}
+	writeJSON(w, map[string]string{"message": strings.TrimSpace(out), "target": target, "ttl": ttl})
+}
+
 func copyFile(src, dst string) error {
 	b, err := os.ReadFile(src)
 	if err != nil {
@@ -5036,6 +5105,7 @@ func main() {
 		}
 		writeJSON(w, doLookup(ip))
 	})
+	api("/api/blocks", handleBlock)
 
 	// Draft + commit pipeline (mutations are POST/PUT -> read-write sessions only).
 	api("/api/draft", handleDraft)

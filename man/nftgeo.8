@@ -61,19 +61,23 @@ to preview without writing. This migration preserves the pre-1.57 implicit
 per-port deny behavior under current top-to-bottom rule evaluation. Requires
 root when writing.
 .TP
-.BI "block " "[--force] ip " [ ttl ]
-Drop an address immediately for
+.BI "block " "[--force] ip|cidr " [ ttl|forever ]
+Drop an address or CIDR immediately for
 .I ttl
-(default 1h; e.g.\& 30m, 2d) without editing rules or reloading. Refuses a
+(default 7d; e.g.\& 30m, 2d), or permanently with
+.BR forever ,
+without editing rules or reloading. A CIDR requires
+.B --force
+as an explicit guard against accidentally blocking a wider network. Refuses a
 whitelisted address or your own SSH source unless
 .B --force
 is given. The block survives engine updates. Requires root.
 .TP
-.BI "unblock " ip
-Remove a dynamic block. Requires root.
+.BI "unblock " ip|cidr
+Remove a manual block. Requires root.
 .TP
 .B blocklist
-List the current dynamic blocks and their remaining TTL.
+List current manual blocks and their remaining TTL.
 .TP
 .B apply
 Rebuild and load the ruleset now (runs the update engine). Requires root.

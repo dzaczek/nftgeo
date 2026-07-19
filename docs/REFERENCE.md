@@ -779,13 +779,29 @@ If you lose access, do nothing — the previous ruleset is restored
 automatically after the timeout. `nftgeo rollback` restores the previous
 generation at any time. Generations are kept under `/var/lib/nftgeo/generations/`.
 
-### Dynamic blocks (survive reloads)
+### Manual blocks from the CLI or dashboard
 
-`nftgeo block <ip> [ttl]` cuts off an attacker immediately without editing
-`rules.conf` or reloading. The block lives in a separate `nftgeo_dyn` table
-that the update engine never rebuilds, so it survives refreshes and reboots
-(restored by the service on boot). It refuses a whitelisted address or your
-own SSH source unless you pass `--force`.
+Click an address in **Logs & Drops** and choose **Block IP / range** to block it
+immediately. The dialog defaults to **7 days** and supports `1h`, `24h`, `30d`,
+a custom duration, or a permanent block. CIDR ranges require an explicit
+confirmation because they can cover many hosts.
+
+The equivalent CLI is `nftgeo block <ip|cidr> [ttl|forever]`. A block takes
+effect without editing `rules.conf` or reloading. It lives in the separate
+`nftgeo_dyn` table, which the update engine never rebuilds, so it survives
+refreshes and reboots (restored by the service on boot):
+
+```sh
+nftgeo block 203.0.113.7                 # default: 7 days
+nftgeo block 203.0.113.7 90m
+nftgeo block --force 198.51.100.0/24 7d  # CIDR needs an explicit force flag
+nftgeo block 2001:db8:bad::/48 forever
+nftgeo unblock 198.51.100.0/24
+```
+
+It refuses a whitelisted address or your own SSH source unless you pass
+`--force`. Manual blocks run before the main nftgeo policy (and its whitelist),
+so use `--force` only when you explicitly intend to override that protection.
 
 ### Fail-safe geo resolution
 
@@ -839,9 +855,11 @@ nftgeo check 203.0.113.7      # what does the firewall do to this address?
 nftgeo status                 # version, last run, set sizes, drop counters, next run
 nftgeo validate               # check config renders/loads, without applying
 nftgeo plan                   # show how the rendered ruleset differs from loaded
-nftgeo block 203.0.113.7 1h   # drop an address now (no reload, survives updates)
-nftgeo unblock 203.0.113.7    # remove a dynamic block
-nftgeo blocklist              # list current dynamic blocks and their TTL
+nftgeo block 203.0.113.7      # drop an address now for 7d (no reload, survives updates)
+nftgeo block --force 198.51.100.0/24 7d  # block a CIDR after explicit confirmation
+nftgeo block 203.0.113.7 forever         # permanent manual block
+nftgeo unblock 203.0.113.7   # remove a manual block
+nftgeo blocklist             # list manual blocks and their remaining TTL
 nftgeo apply                  # rebuild and load now (same as the update engine)
 nftgeo apply --confirm        # apply with deadman auto-rollback
 nftgeo apply --commit         # keep a --confirm apply

@@ -108,6 +108,38 @@ func TestSessionAuthFlow(t *testing.T) {
 	}
 }
 
+func TestNormalizeBlockRequest(t *testing.T) {
+	cases := []struct {
+		name      string
+		req       blockRequest
+		wantIP    string
+		wantTTL   string
+		wantCIDR  bool
+		wantError bool
+	}{
+		{name: "default seven days", req: blockRequest{Target: "203.0.113.7"}, wantIP: "203.0.113.7", wantTTL: "7d"},
+		{name: "normalizes range", req: blockRequest{Target: "203.0.113.7/24", TTL: "24h", Force: true}, wantIP: "203.0.113.0/24", wantTTL: "24h", wantCIDR: true},
+		{name: "permanent alias", req: blockRequest{Target: "2001:db8::1", TTL: "infinity"}, wantIP: "2001:db8::1", wantTTL: "forever"},
+		{name: "range needs confirmation", req: blockRequest{Target: "203.0.113.0/24", TTL: "7d"}, wantError: true},
+		{name: "rejects invalid duration", req: blockRequest{Target: "203.0.113.7", TTL: "never"}, wantError: true},
+		{name: "rejects invalid address", req: blockRequest{Target: "not-an-ip", TTL: "7d"}, wantError: true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			gotIP, gotTTL, gotCIDR, err := normalizeBlockRequest(tt.req)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("error = %v, want error=%t", err, tt.wantError)
+			}
+			if tt.wantError {
+				return
+			}
+			if gotIP != tt.wantIP || gotTTL != tt.wantTTL || gotCIDR != tt.wantCIDR {
+				t.Errorf("got (%q, %q, %t), want (%q, %q, %t)", gotIP, gotTTL, gotCIDR, tt.wantIP, tt.wantTTL, tt.wantCIDR)
+			}
+		})
+	}
+}
+
 // backupLive must create the backup's parent dir (the per-file ui-backups/<...>
 // path); a regression here broke every panel deploy from 1.26.0.
 func TestBackupLiveCreatesDir(t *testing.T) {
