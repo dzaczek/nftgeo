@@ -802,6 +802,9 @@ nftgeo unblock 198.51.100.0/24
 It refuses a whitelisted address or your own SSH source unless you pass
 `--force`. Manual blocks run before the main nftgeo policy (and its whitelist),
 so use `--force` only when you explicitly intend to override that protection.
+The dashboard additionally refuses any address or CIDR that contains an address
+assigned to this host (WAN, LAN, or loopback); the CLI refuses a directly
+specified local address as well.
 
 ### Fail-safe geo resolution
 

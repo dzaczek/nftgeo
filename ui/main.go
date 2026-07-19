@@ -2681,6 +2681,37 @@ func normalizeBlockRequest(req blockRequest) (target, ttl string, isCIDR bool, e
 	return target, ttl, isCIDR, nil
 }
 
+// blockTargetContainsAddress is kept separate from interface discovery so the
+// critical "never block this host" rule is independently testable for IPv4,
+// IPv6, and CIDR ranges.
+func blockTargetContainsAddress(target string, address net.IP) bool {
+	if ip := net.ParseIP(target); ip != nil {
+		return ip.Equal(address)
+	}
+	_, network, err := net.ParseCIDR(target)
+	return err == nil && network.Contains(address)
+}
+
+func blockTargetIncludesLocalAddress(target string) (bool, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return false, err
+	}
+	for _, iface := range interfaces {
+		addresses, err := iface.Addrs()
+		if err != nil {
+			return false, err
+		}
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err == nil && blockTargetContainsAddress(target, ip) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func handleBlock(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
@@ -2695,6 +2726,13 @@ func handleBlock(w http.ResponseWriter, r *http.Request) {
 	target, ttl, isCIDR, err := normalizeBlockRequest(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	if local, err := blockTargetIncludesLocalAddress(target); err != nil {
+		http.Error(w, `{"error":"cannot verify local interface addresses"}`, http.StatusServiceUnavailable)
+		return
+	} else if local {
+		http.Error(w, `{"error":"refusing to block an address or range that contains this host's WAN, LAN, or loopback address"}`, http.StatusBadRequest)
 		return
 	}
 	args := []string{"block"}

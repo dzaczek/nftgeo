@@ -2023,23 +2023,26 @@ applyTheme(localStorage.getItem('nftgeo-theme')||'dark');
 function closeModal(){$('#modal').style.display='none';}
 async function lookup(ip){const m=$('#modal'),b=$('#modalbody');m.style.display='flex';b.innerHTML='Looking up '+esc(ip)+' …';
   try{const r=await j('/api/lookup?ip='+encodeURIComponent(ip));let h=`<h3>${esc(ip)}</h3>`;
-	if(MODE==='rw')h+=`<div style="margin:0 0 14px"><button onclick="showBlockForm('${esc(ip)}')" style="background:#ff5568;color:#2a0810;border:0;border-radius:7px;padding:7px 12px;font-weight:600;cursor:pointer">Block IP / range…</button></div>`;
+	const w=r.rdap||{};
+	if(MODE==='rw')h+=`<div style="margin:0 0 14px"><button onclick="showBlockForm('${esc(ip)}','${esc(w.cidr||'')}')" style="background:#ff5568;color:#2a0810;border:0;border-radius:7px;padding:7px 12px;font-weight:600;cursor:pointer">Block IP / range…</button></div>`;
     h+=`<div class="lk"><b>Reverse DNS (PTR)</b><div class="mono">${(r.ptr||['—']).map(esc).join('<br>')}</div></div>`;
-    const w=r.rdap||{};h+='<div class="lk"><b>Whois (RDAP)</b><table>';
+    h+='<div class="lk"><b>Whois (RDAP)</b><table>';
     [['name','Network'],['org','Org'],['country','Country'],['cidr','Range'],['handle','Handle'],['type','Type']].forEach(([k,l])=>{if(w[k])h+=`<tr><td>${l}</td><td>${esc(w[k])}</td></tr>`;});
     if(!Object.keys(w).length)h+='<tr><td colspan="2" class="muted">no RDAP data</td></tr>';h+='</table></div>';b.innerHTML=h;
   }catch(e){b.innerHTML='lookup failed';}}
-function showBlockForm(ip){
+function showBlockForm(ip,network){
   const b=$('#modalbody');
   b.innerHTML=`<h3>Block address or range</h3>
+    <label class="fld"><span>What to block</span><select id="block-scope" data-ip="${esc(ip)}" data-network="${esc(network||'')}" onchange="setBlockScope()"><option value="ip">Only this IP — ${esc(ip)}</option>${network?`<option value="network">Provider-reported network — ${esc(network)}</option>`:''}<option value="custom">A custom CIDR range…</option></select></label>
     <label class="fld"><span>IP address or CIDR</span><input id="block-target" value="${esc(ip)}" spellcheck="false" autocomplete="off"></label>
     <label class="fld"><span>Duration</span><select id="block-ttl" onchange="toggleBlockCustom()"><option value="1h">1 hour</option><option value="24h">24 hours</option><option value="7d" selected>7 days</option><option value="30d">30 days</option><option value="custom">Custom…</option><option value="forever">Permanent</option></select></label>
     <label class="fld" id="block-custom-wrap" style="display:none"><span>Custom duration</span><input id="block-custom" placeholder="e.g. 90m, 12h, 14d" spellcheck="false"></label>
     <label class="fld" id="block-force-wrap" style="display:none"><span><input id="block-force" type="checkbox"> I understand that blocking a CIDR can affect many hosts, including my access.</span></label>
-    <p class="muted" style="font-size:12px;margin:0">The block takes effect immediately, persists across reloads and restarts, and can be removed with <code>nftgeo unblock</code>.</p>
+    <p class="muted" style="font-size:12px;margin:0">The selector above states whether you block one IP or the network returned by RDAP. The block takes effect immediately, persists across reloads and restarts, and can be removed with <code>nftgeo unblock</code>.</p>
     <div style="display:flex;gap:8px;margin-top:6px"><button onclick="submitBlock()" style="background:#ff5568;color:#2a0810;border:0;border-radius:7px;padding:7px 12px;font-weight:600;cursor:pointer">Block</button><button onclick="closeModal()" class="btn-ghost" style="border-radius:7px;padding:7px 12px;cursor:pointer">Cancel</button></div>`;
   const target=$('#block-target');target.addEventListener('input',toggleBlockCIDR);toggleBlockCIDR();
 }
+function setBlockScope(){const s=$('#block-scope'),t=$('#block-target');if(s.value==='ip')t.value=s.dataset.ip;else if(s.value==='network')t.value=s.dataset.network;else{t.value='';t.focus();}toggleBlockCIDR();}
 function toggleBlockCustom(){$('#block-custom-wrap').style.display=$('#block-ttl').value==='custom'?'flex':'none';}
 function toggleBlockCIDR(){const range=$('#block-target').value.includes('/');$('#block-force-wrap').style.display=range?'flex':'none';}
 async function submitBlock(){

@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -137,6 +138,28 @@ func TestNormalizeBlockRequest(t *testing.T) {
 				t.Errorf("got (%q, %q, %t), want (%q, %q, %t)", gotIP, gotTTL, gotCIDR, tt.wantIP, tt.wantTTL, tt.wantCIDR)
 			}
 		})
+	}
+}
+
+func TestBlockTargetContainsAddress(t *testing.T) {
+	v4 := net.ParseIP("192.0.2.10")
+	v6 := net.ParseIP("2001:db8:1::10")
+	cases := []struct {
+		target  string
+		address net.IP
+		want    bool
+	}{
+		{"192.0.2.10", v4, true},
+		{"192.0.2.11", v4, false},
+		{"192.0.2.0/24", v4, true},
+		{"192.0.3.0/24", v4, false},
+		{"2001:db8:1::/64", v6, true},
+		{"2001:db8:2::/64", v6, false},
+	}
+	for _, tt := range cases {
+		if got := blockTargetContainsAddress(tt.target, tt.address); got != tt.want {
+			t.Errorf("blockTargetContainsAddress(%q, %s) = %t, want %t", tt.target, tt.address, got, tt.want)
+		}
 	}
 }
 

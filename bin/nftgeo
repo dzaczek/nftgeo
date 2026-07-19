@@ -12,6 +12,7 @@ ABUSE_FEEDS_CACHE_DIR="${ABUSE_FEEDS_CACHE_DIR:-${STATE_DIR}/feeds}"
 DYN_STATE="${DYN_STATE:-${STATE_DIR}/dynblock.tsv}"
 GEN_DIR="${GEN_DIR:-${STATE_DIR}/generations}"
 SENTINEL="${SENTINEL:-${STATE_DIR}/.pending-confirm}"
+IP_BIN="${IP_BIN:-ip}"
 TAB="$(printf '\t')"
 
 # IP validation patterns — shared with nftgeo-update
@@ -276,6 +277,13 @@ valid_block_target() {
 	return 0
 }
 
+is_local_address() {
+	# `ip route get` reports locally assigned WAN/LAN/loopback addresses as a
+	# local route, and handles IPv4 plus IPv6 textual normalization for us.
+	command -v "$IP_BIN" >/dev/null 2>&1 || return 2
+	"$IP_BIN" route get "$1" 2>/dev/null | grep -q '^local[[:space:]]'
+}
+
 restore_dyn_state() {
 	[ -s "$DYN_STATE" ] || return 0
 	now="$(date +%s)"
@@ -301,6 +309,17 @@ cmd_block() {
 	ip="${1:-}"; ttl="${2:-7d}"
 	[ -n "$ip" ] || { echo "usage: nftgeo block [--force] <ip|cidr> [ttl|forever]" >&2; exit 2; }
 	valid_block_target "$ip" || { echo "invalid IP/CIDR: ${ip}" >&2; exit 2; }
+	case "$ip" in
+		*/*) : ;;
+		*)
+			if is_local_address "$ip"; then
+				echo "refusing: ${ip} is an address assigned to this host (WAN/LAN/loopback)" >&2; exit 1
+			else
+				local_rc=$?
+				[ "$local_rc" != 2 ] || { echo "refusing: cannot verify local addresses (ip command unavailable)" >&2; exit 1; }
+			fi
+			;;
+	esac
 	case "$ip" in */*) [ "$force" = 1 ] || { echo "refusing to block CIDR ${ip} without --force" >&2; exit 1; } ;; esac
 	case "$ttl" in forever|infinity|permanent) permanent=1; sec=0 ;; *) permanent=0; sec="$(dur_to_sec "$ttl")" ;; esac
 	[ "$permanent" = 1 ] || { [ -n "$sec" ] && [ "$sec" -gt 0 ]; } || { echo "bad ttl '${ttl}' (use 30m, 1h, 2d, seconds, or forever)" >&2; exit 2; }
