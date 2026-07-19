@@ -1050,6 +1050,7 @@ function baselineAcceptsFor(dir){
 }
 let WL_DATA=null; // cached whitelist summary for the policy-top card
 let MANUAL_BLOCKS=[]; // persistent entries created by `nftgeo block`
+let MANUAL_BLOCKS_EXPANDED=false;
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};ZONES=o.zones||[];
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
@@ -1129,7 +1130,8 @@ function renderManualBlocks(){
   const el=$('#manual-blocks-card');if(!el)return;
   const blocks=MANUAL_BLOCKS||[];
   const count=blocks.length;
-  const rows=blocks.map(b=>{
+  const shown=MANUAL_BLOCKS_EXPANDED?blocks:blocks.slice(0,10);
+  const rows=shown.map(b=>{
     const expiry=b.permanent
       ? '<span class="chip" style="background:var(--drop);color:#fff">Permanent</span>'
       : `<span>${esc(new Date(b.expiresAt).toLocaleString())}<br><span class="muted" style="font-size:11px">${esc(blockRemaining(b.remainingSeconds))} remaining</span></span>`;
@@ -1140,8 +1142,10 @@ function renderManualBlocks(){
     <span class="chip" style="background:var(--drop);color:#fff;font-weight:600">⊘ Manual blocks</span>
     <span class="muted" style="font-size:12px">${count?`${count} active block${count!==1?'s':''}`:'No active manual blocks'}</span>
     <span class="muted" style="font-size:11px">Created by <code>nftgeo block</code> or the log action</span>
-  </div>${count?`<div class="tablewrap" style="margin-top:8px"><table class="poltable"><thead><tr><th>IP / CIDR</th><th>Family</th><th>Blocked until</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:''}`;
+    ${count>10?`<button class="btn-ghost" style="margin-left:auto;color:var(--fg);white-space:nowrap" onclick="toggleManualBlocks()">${MANUAL_BLOCKS_EXPANDED?'Collapse':'Show all '+count}</button>`:''}
+  </div>${count?`<div class="tablewrap" style="margin-top:8px"><table class="poltable"><thead><tr><th>IP / CIDR</th><th>Family</th><th>Blocked until</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${!MANUAL_BLOCKS_EXPANDED&&count>10?`<div class="muted" style="font-size:11px;margin-top:6px">Showing 10 of ${count} active blocks.</div>`:''}`:''}`;
 }
+function toggleManualBlocks(){MANUAL_BLOCKS_EXPANDED=!MANUAL_BLOCKS_EXPANDED;renderManualBlocks();}
 async function unblockManualBlock(target){
   if(MODE==='ro'||!confirm(`Unblock ${target}?`))return;
   try{
