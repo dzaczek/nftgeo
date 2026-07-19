@@ -468,6 +468,27 @@
 <script>
 const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const formatRelativeAgeJS=seconds=>{
+  if (seconds < 0) return 'just now';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h ago`;
+  if (hours > 0) return `${hours}h ${minutes}m ago`;
+  if (minutes > 0) return `${minutes}m ago`;
+  return '< 1m ago';
+};
+const formatAbsoluteLocalJS=epochSeconds=>{
+  const d = new Date(epochSeconds * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const min = pad(d.getMinutes());
+  const ss = pad(d.getSeconds());
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+};
 const j=async u=>{const r=await fetch(u);if(r.status===401||r.status===403){showLock('Session expired — generate a new token on the host.');throw new Error('unauth');}return r.json();};
 const LOG_PAGE_SIZE=200;
 let map=null, DROPS={recent:[]}, RULES=[], MODE='rw', REFRESHER=null, LOG_LOADING=false;
@@ -580,25 +601,120 @@ function initMap(){try{map=new jsVectorMap({selector:'#map',map:'world',backgrou
 function bars(el,obj,cls){const rows=Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);const max=rows[0]?rows[0][1]:1;
   el.innerHTML=rows.map(([k,v])=>`<div class="row"><span>${esc(k.toUpperCase())}</span><span>${v}</span></div><div class="bar ${cls||''}" style="width:${Math.max(3,100*v/max)}%"></div>`).join('')||'<span class="muted">none</span>';}
 function renderHealth(h){h=h||{};
-  const feeds=(h.feeds||[]).map(f=>`<span class="pill ${f.fresh?'allow':'deny'}" title="${(f.count||0).toLocaleString()} IPs · ${f.ageHours}h old">${esc(f.name)}</span>`).join(' ')||'<span class="muted">none</span>';
-  $('#health').innerHTML=`<div class="row"><span class="muted">Next scheduled run</span><span>${esc(h.nextRun||'—')}</span></div>
-    <div class="row"><span class="muted">Established (pkts)</span><span>${(h.established||0).toLocaleString()}</span></div>
-    <div class="row"><span class="muted">Abuse feeds</span><span>${feeds}</span></div>
-    <div class="row"><span class="muted">Geo data</span><span id="h-geo-status" class="muted">—</span></div>
-    <div class="muted mono" style="font-size:11px;margin-top:8px">${esc(h.lastRun||'no run logged')}</div>`;
-  // Update geo freshness from status.json
   const st=h.status||{};
   const geo=st.geo||{};
-  const gs=$('#h-geo-status');
-  if(gs){
-    if(geo.fetched_at){
-      const d=new Date(geo.fetched_at*1000);
-      const ageH=Math.floor((Date.now()-d.getTime())/3600000);
-      gs.innerHTML=`<span class="dot" style="background:${ageH<24?'var(--ok)':'var(--drop)'};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${d.toLocaleDateString()} <span class="muted">(${ageH}h ago)</span>`;
+  const abuse=st.abuse||{};
+  const nowSecs=Math.floor(Date.now()/1000);
+  const runTs=st.timestamp||nowSecs;
+
+  const cacheHours=parseInt(h.zoneCacheHours||'20');
+  const retentionDays=parseInt(h.abuseRetentionDays||'30');
+
+  const warns = st.warnings || [];
+  const hasGeoFail = warns.some(w => w.includes("Zone refresh failed") || w.includes("Zone unavailable"));
+  const hasAbuseFail = warns.some(w => w.includes("AbuseIPDB download failed") || w.includes("download failed") || w.includes("using cached copy"));
+
+  // --- Geolocation Data ---
+  let geoState='Disabled';
+  let geoLastSuccess='—';
+  let geoAge='—';
+  if(h.geoActive){
+    if(!geo.fetched_at){
+      geoState='Never fetched';
     }else{
-      gs.innerHTML='<span class="muted">not yet fetched</span>';
+      geoLastSuccess=formatAbsoluteLocalJS(geo.fetched_at);
+      const ageSecs=nowSecs-geo.fetched_at;
+      geoAge=formatRelativeAgeJS(ageSecs);
+
+      const isStale=ageSecs>(cacheHours*3600);
+      const isFresh=(runTs-geo.fetched_at<=60);
+
+      if(hasGeoFail){
+        geoState='<span style="color:var(--drop);font-weight:bold">Stale (using cache after failure)</span>';
+      }else if(isFresh){
+        geoState='<span style="color:var(--ok)">Freshly downloaded</span>';
+      }else if(isStale){
+        geoState='<span style="color:var(--warnc)">Stale</span>';
+      }else{
+        geoState='<span style="color:var(--ok)">OK</span>';
+      }
     }
+  }else{
+    geoState='Disabled (no geo rules configured)';
   }
+
+  // --- Bad-IP / Abuse Data ---
+  let abuseState='Disabled';
+  let abuseLastSuccess='—';
+  let abuseAge='—';
+  const customFeedsCount=(h.feeds||[]).filter(f=>f.name!=='AbuseIPDB').length;
+  const isAbuseConfigured=abuse.api_key_present||customFeedsCount>0;
+
+  if(abuse.rule_active){
+    if(!isAbuseConfigured){
+      abuseState='Not configured (no API key and no custom feeds)';
+    }else if(!abuse.fetched_at){
+      abuseState='Never fetched';
+    }else{
+      abuseLastSuccess=formatAbsoluteLocalJS(abuse.fetched_at);
+      const ageSecs=nowSecs-abuse.fetched_at;
+      abuseAge=formatRelativeAgeJS(ageSecs);
+
+      const isStale=ageSecs>(26*3600); // 26h because run twice daily
+      const isFresh=(runTs-abuse.fetched_at<=60);
+
+      if(hasAbuseFail){
+        abuseState='<span style="color:var(--drop);font-weight:bold">Stale (using cache after failure)</span>';
+      }else if(isFresh){
+        abuseState='<span style="color:var(--ok)">Freshly downloaded</span>';
+      }else if(isStale){
+        abuseState='<span style="color:var(--warnc)">Stale</span>';
+      }else{
+        abuseState='<span style="color:var(--ok)">OK</span>';
+      }
+    }
+  }else{
+    abuseState='Disabled (no active rule targets "abuse")';
+  }
+
+  // Render individual custom bad-IP feeds
+  const feeds=(h.feeds||[]).map(f=>{
+    let ageSecs=f.ageHours*3600;
+    if(f.modTime){
+      ageSecs=nowSecs-f.modTime;
+    }
+    const relativeText=formatRelativeAgeJS(ageSecs);
+    const absoluteText=f.modTime?formatAbsoluteLocalJS(f.modTime):'—';
+    return `<div style="margin-left:10px;font-size:11.5px;padding:2px 0;display:flex;justify-content:space-between">
+      <span><span class="dot" style="background:${f.fresh?'var(--ok)':'var(--drop)'}"></span>${esc(f.name)} (${(f.count||0).toLocaleString()} IPs)</span>
+      <span class="muted">${relativeText} (${absoluteText})</span>
+    </div>`;
+  }).join('')||'<div style="margin-left:10px;" class="muted">none</div>';
+
+  $('#health').innerHTML=`
+    <div class="row"><span class="muted">Next scheduled run</span><span>${esc(h.nextRun||'—')}</span></div>
+    <div class="row"><span class="muted">Established (pkts)</span><span>${(h.established||0).toLocaleString()}</span></div>
+
+    <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+      <b style="font-size:11px;text-transform:uppercase;color:var(--mut);display:block;margin-bottom:6px">Geolocation Data</b>
+      <div class="row"><span class="muted">Cadence / Cache</span><span>Twice daily / Cache: ${cacheHours}h</span></div>
+      <div class="row"><span class="muted">Last Success</span><span>${geoLastSuccess}</span></div>
+      <div class="row"><span class="muted">Relative Age</span><span>${geoAge}</span></div>
+      <div class="row"><span class="muted">State</span><span>${geoState}</span></div>
+    </div>
+
+    <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+      <b style="font-size:11px;text-transform:uppercase;color:var(--mut);display:block;margin-bottom:6px">Bad-IP / Abuse Data</b>
+      <div class="row"><span class="muted">Cadence / Cache</span><span>Twice daily / Retention: ${retentionDays}d</span></div>
+      <div class="row"><span class="muted">Last Success</span><span>${abuseLastSuccess}</span></div>
+      <div class="row"><span class="muted">Relative Age</span><span>${abuseAge}</span></div>
+      <div class="row"><span class="muted">State</span><span>${abuseState}</span></div>
+
+      <div style="margin-top:8px;font-size:11px;color:var(--mut)"><b>Per-feed Freshness:</b></div>
+      ${feeds}
+    </div>
+
+    <div class="muted mono" style="font-size:11px;margin-top:10px;border-top:1px solid var(--line);padding-top:6px">${esc(h.lastRun||'no run logged')}</div>`;
 }
 // ---- SOC area charts (pure SVG, no deps) ----
 function fmtBits(v){if(!isFinite(v)||v<1)return '0 b/s';const u=['b/s','Kb/s','Mb/s','Gb/s','Tb/s'];let i=0;while(v>=1000&&i<u.length-1){v/=1000;i++;}return (v>=100?Math.round(v):v.toFixed(1))+' '+u[i];}

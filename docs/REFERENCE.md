@@ -634,7 +634,7 @@ synproxy in tcp 80,443                 # offload handshake, drop spoofed SYNs
 
 ---
 
-## Dashboard (nftgeo-ui)
+## Dashboard and console (nftgeo-ui)
 
 nftgeo includes an optional local web dashboard — a single Go binary with an
 embedded frontend, serving `127.0.0.1:8787`:
@@ -681,6 +681,31 @@ sudo install -m 0644 systemd/nftgeo-ui.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now nftgeo-ui
 ```
+
+### Terminal console (demonstration preview)
+
+`nftgeo-ui` also has a full-screen terminal console:
+
+```sh
+sudo nftgeo-ui cli
+sudo nftgeo-ui cli -refresh 2s
+```
+
+It shows five tabs: Dashboard (drop and traffic summaries), Logs (filterable
+connection records and address details), Policy (draft rule editing), Objects
+(object and whitelist drafts), and System (interfaces and conntrack). The
+console's edits use the same server-side draft, validation, `plan`, and
+`apply --confirm` deadman workflow as the web editor; live policy is unchanged
+until a deployment is explicitly confirmed.
+
+This interface is currently a **demonstration preview**. Its terminal layout,
+keyboard shortcuts, and authoring flow are expected to evolve, so do not rely
+on them for automation or runbooks. Use the stable `nftgeo` command line for
+scripts and the web dashboard for day-to-day visual administration.
+
+The default live refresh interval is five seconds. Pass `-refresh 0` to stop
+automatic refreshes. In the console, `?` opens the key reference, `1` through
+`5` select tabs, `c` starts the draft commit flow, and `q` exits.
 
 ### Access & authentication
 

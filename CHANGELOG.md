@@ -8,6 +8,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.73.0] - 2026-07-19
+
+### Added
+- `nftgeo-ui cli`: an interactive terminal console with Dashboard, Logs,
+  Policy, Objects, and System views. It uses the existing draft and deadman
+  deployment path. This console is currently a demonstration preview; its UI
+  and keyboard workflow are not yet a stable interface.
+
 ## [1.72.10] - 2026-07-12
 
 ### Changed

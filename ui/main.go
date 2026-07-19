@@ -304,6 +304,159 @@ func setConfigValue(key, val string) error {
 	return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
 }
 
+var (
+	geoActiveCache     bool
+	geoActiveCheckTime time.Time
+	geoActiveMu        sync.Mutex
+)
+
+func isGeoActiveCached() bool {
+	geoActiveMu.Lock()
+	defer geoActiveMu.Unlock()
+
+	var latest time.Time
+	checkFile := func(path string) {
+		if fi, err := os.Stat(path); err == nil {
+			if fi.ModTime().After(latest) {
+				latest = fi.ModTime()
+			}
+		}
+	}
+
+	checkFile(configFile)
+	checkFile(rulesFile)
+	checkFile(objLiveFile)
+	checkFile(objDraftFile)
+
+	if ents, err := os.ReadDir(rulesDir); err == nil {
+		for _, e := range ents {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".conf") {
+				checkFile(filepath.Join(rulesDir, e.Name()))
+			}
+		}
+	}
+
+	if ents, err := os.ReadDir(draftDir); err == nil {
+		for _, e := range ents {
+			checkFile(filepath.Join(draftDir, e.Name()))
+		}
+	}
+
+	if !latest.IsZero() && latest.Equal(geoActiveCheckTime) {
+		return geoActiveCache
+	}
+
+	geoActiveCache = calculateGeoActive()
+	geoActiveCheckTime = latest
+	return geoActiveCache
+}
+
+func calculateGeoActive() bool {
+	builtInRegions := map[string]bool{
+		"EUROPE": true, "ASIA": true, "AFRICA": true, "NORTH_AMERICA": true,
+		"SOUTH_AMERICA": true, "MIDDLE_EAST": true, "OCEANIA": true, "CARIBBEAN": true,
+	}
+
+	isGeoToken := func(tok string) bool {
+		u := strings.ToUpper(tok)
+		if len(u) == 2 && u != "IN" && u != "ON" && u != "ST" && u != "LO" && u != "WL" && u != "SP" {
+			return true
+		}
+		return builtInRegions[u]
+	}
+
+	objText := readFileStr(objLiveFile)
+	if _, err := os.Stat(objDraftFile); err == nil {
+		objText = readFileStr(objDraftFile)
+	}
+	groups, regions, _, _, _, _, _ := parseObjects(objText)
+
+	customGeoRegions := map[string]bool{}
+	for _, r := range regions {
+		for _, m := range r.Members {
+			if isGeoToken(m) {
+				customGeoRegions[strings.ToUpper(r.Name)] = true
+				break
+			}
+		}
+	}
+
+	customGeoGroups := map[string]bool{}
+	for _, g := range groups {
+		for _, m := range g.Members {
+			if isGeoToken(m) || customGeoRegions[strings.ToUpper(m)] {
+				customGeoGroups[strings.ToUpper(g.Name)] = true
+				break
+			}
+		}
+	}
+
+	isTargetGeo := func(target string) bool {
+		for _, part := range strings.Split(target, ",") {
+			u := strings.ToUpper(strings.TrimSpace(part))
+			if isGeoToken(u) {
+				return true
+			}
+			if customGeoRegions[u] || customGeoGroups[u] {
+				return true
+			}
+		}
+		return false
+	}
+
+	filesToScan := []string{}
+	for _, rf := range ruleFiles() {
+		rel := rf
+		if strings.HasPrefix(rf, rulesDir+"/") {
+			rel = "rules.d/" + strings.TrimPrefix(rf, rulesDir+"/")
+		}
+		draftPath := filepath.Join(draftDir, rel)
+		if _, err := os.Stat(draftPath); err == nil {
+			filesToScan = append(filesToScan, draftPath)
+		} else {
+			filesToScan = append(filesToScan, rf)
+		}
+	}
+
+	for _, path := range filesToScan {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if idx := strings.Index(line, "#"); idx >= 0 {
+				line = strings.TrimSpace(line[:idx])
+			}
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+
+			if strings.Contains(line, "->") || strings.Contains(line, "from") {
+				return true
+			}
+
+			kind := ruleKind(fields)
+			if kind == "filter" && len(fields) >= 5 {
+				if isTargetGeo(fields[4]) {
+					return true
+				}
+			}
+			if kind == "ingress" && len(fields) >= 2 {
+				if isTargetGeo(fields[1]) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 // health gathers the status widgets: next scheduled run, last load, feed
 // freshness, and the established-connection counter.
 func health(ch []Chain) map[string]interface{} {
@@ -339,6 +492,23 @@ func health(ch []Chain) map[string]interface{} {
 	h["feeds"] = abuseSources()
 	h["abuseLoaded"] = abuseLoadedCount()
 	h["status"] = runStatus()
+
+	zoneCacheHours := configValue("ZONE_CACHE_HOURS")
+	if zoneCacheHours == "" {
+		zoneCacheHours = "20"
+	}
+	h["zoneCacheHours"] = zoneCacheHours
+
+	abuseRetentionDays := configValue("ABUSEIPDB_RETENTION_DAYS")
+	if abuseRetentionDays == "" {
+		abuseRetentionDays = configValue("ABUSEIPDB_DAYS")
+	}
+	if abuseRetentionDays == "" {
+		abuseRetentionDays = "30"
+	}
+	h["abuseRetentionDays"] = abuseRetentionDays
+	h["geoActive"] = isGeoActiveCached()
+
 	return h
 }
 
@@ -1854,7 +2024,8 @@ func abuseSources() []map[string]interface{} {
 	add := func(name, path string, fi os.FileInfo) {
 		age := time.Since(fi.ModTime())
 		out = append(out, map[string]interface{}{"name": name, "count": countLines(path),
-			"ageHours": int(age.Hours()), "fresh": age < 26*time.Hour})
+			"ageHours": int(age.Hours()), "fresh": age < 26*time.Hour,
+			"modTime": fi.ModTime().Unix()})
 	}
 	stateFile := env("ABUSEIPDB_STATE_FILE", filepath.Join(stateDir, "abuseipdb.tsv"))
 	if fi, err := os.Stat(stateFile); err == nil {
