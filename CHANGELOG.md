@@ -8,6 +8,13 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.1] - 2026-07-19
+
+### Added
+- Dashboard and console freshness status for geo and bad-IP data: configured
+  cadence, last successful refresh, relative age, explicit stale/fallback
+  states, and per-feed source freshness.
+
 ## [1.73.0] - 2026-07-19
 
 ### Added
