@@ -8,6 +8,14 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.2] - 2026-07-19
+
+### Added
+- Dashboard action to block a logged IP or CIDR for 1 hour, 24 hours, 7 days
+  (default), 30 days, a custom duration, or permanently.
+- CLI manual blocks now support CIDR ranges and permanent entries (`forever`),
+  with persisted restoration after reloads and reboots.
+
 ## [1.74.0-beta.1] - 2026-07-19
 
 ### Added
