@@ -7,11 +7,240 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+func formatAbsoluteLocal(epochSeconds int64) string {
+	t := time.Unix(epochSeconds, 0).Local()
+	return t.Format("2006-01-02 15:04:05")
+}
+
+func formatRelativeAge(seconds int64) string {
+	if seconds < 0 {
+		return "just now"
+	}
+	days := seconds / 86400
+	hours := (seconds % 86400) / 3600
+	minutes := (seconds % 3600) / 60
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh ago", days, hours)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm ago", hours, minutes)
+	}
+	if minutes > 0 {
+		return fmt.Sprintf("%dm ago", minutes)
+	}
+	return "< 1m ago"
+}
+
+func (m cliModel) getHealthMap() map[string]interface{} {
+	if m.status == nil {
+		return nil
+	}
+	h, _ := m.status["health"].(map[string]interface{})
+	return h
+}
+
+func (m cliModel) getStatusMap() map[string]interface{} {
+	h := m.getHealthMap()
+	if h == nil {
+		return nil
+	}
+	st, _ := h["status"].(map[string]interface{})
+	return st
+}
+
+func (m cliModel) getGeoFreshness() (cadence, successTime, age, state string) {
+	h := m.getHealthMap()
+	st := m.getStatusMap()
+
+	cacheHours := 20
+	if h != nil {
+		if val, ok := h["zoneCacheHours"].(string); ok && val != "" {
+			if parsed, err := strconv.Atoi(val); err == nil {
+				cacheHours = parsed
+			}
+		}
+	}
+	cadence = fmt.Sprintf("Twice daily / Cache: %dh", cacheHours)
+
+	geoActive := false
+	if h != nil {
+		geoActive, _ = h["geoActive"].(bool)
+	}
+
+	if !geoActive {
+		return cadence, "—", "—", "Disabled (no geo rules configured)"
+	}
+
+	if st == nil {
+		return cadence, "—", "—", "Never fetched"
+	}
+
+	geo, _ := st["geo"].(map[string]interface{})
+	if geo == nil {
+		return cadence, "—", "—", "Never fetched"
+	}
+
+	fetchedAtVal := geo["fetched_at"]
+	if fetchedAtVal == nil {
+		return cadence, "—", "—", "Never fetched"
+	}
+
+	var fetchedAt int64
+	switch v := fetchedAtVal.(type) {
+	case float64:
+		fetchedAt = int64(v)
+	case int64:
+		fetchedAt = v
+	case int:
+		fetchedAt = int64(v)
+	}
+
+	if fetchedAt == 0 {
+		return cadence, "—", "—", "Never fetched"
+	}
+
+	nowSecs := time.Now().Unix()
+	successTime = formatAbsoluteLocal(fetchedAt)
+	ageSecs := nowSecs - fetchedAt
+	age = formatRelativeAge(ageSecs)
+
+	var runTs int64
+	if runTsVal, ok := st["timestamp"]; ok {
+		switch r := runTsVal.(type) {
+		case float64:
+			runTs = int64(r)
+		case int64:
+			runTs = r
+		case int:
+			runTs = int64(r)
+		}
+	}
+	if runTs == 0 {
+		runTs = nowSecs
+	}
+
+	isStale := ageSecs > int64(cacheHours*3600)
+	reusedCache := (runTs - fetchedAt) > 60
+
+	if isStale {
+		state = "Stale (using cache after failure)"
+	} else if reusedCache {
+		state = "OK (using cached data)"
+	} else {
+		state = "OK (freshly downloaded)"
+	}
+
+	return cadence, successTime, age, state
+}
+
+func (m cliModel) getAbuseFreshness() (cadence, successTime, age, state string) {
+	h := m.getHealthMap()
+	st := m.getStatusMap()
+
+	retentionDays := 30
+	if h != nil {
+		if val, ok := h["abuseRetentionDays"].(string); ok && val != "" {
+			if parsed, err := strconv.Atoi(val); err == nil {
+				retentionDays = parsed
+			}
+		}
+	}
+	cadence = fmt.Sprintf("Twice daily / Retention: %dd", retentionDays)
+
+	if st == nil {
+		return cadence, "—", "—", "Never fetched"
+	}
+
+	abuse, _ := st["abuse"].(map[string]interface{})
+	if abuse == nil {
+		return cadence, "—", "—", "Never fetched"
+	}
+
+	ruleActive, _ := abuse["rule_active"].(bool)
+	apiKeyPresent, _ := abuse["api_key_present"].(bool)
+
+	customFeedsCount := 0
+	if h != nil {
+		if feedsList, ok := h["feeds"].([]interface{}); ok {
+			for _, f := range feedsList {
+				if fmap, ok := f.(map[string]interface{}); ok {
+					if asStr(fmap, "name") != "AbuseIPDB" {
+						customFeedsCount++
+					}
+				}
+			}
+		}
+	}
+	isAbuseConfigured := apiKeyPresent || customFeedsCount > 0
+
+	if !ruleActive {
+		return cadence, "—", "—", "Disabled (no active rule targets \"abuse\")"
+	}
+
+	if !isAbuseConfigured {
+		return cadence, "—", "—", "Not configured (no API key and no custom feeds)"
+	}
+
+	fetchedAtVal := abuse["fetched_at"]
+	if fetchedAtVal == nil {
+		return cadence, "—", "—", "Never fetched"
+	}
+
+	var fetchedAt int64
+	switch v := fetchedAtVal.(type) {
+	case float64:
+		fetchedAt = int64(v)
+	case int64:
+		fetchedAt = v
+	case int:
+		fetchedAt = int64(v)
+	}
+
+	if fetchedAt == 0 {
+		return cadence, "—", "—", "Never fetched"
+	}
+
+	nowSecs := time.Now().Unix()
+	successTime = formatAbsoluteLocal(fetchedAt)
+	ageSecs := nowSecs - fetchedAt
+	age = formatRelativeAge(ageSecs)
+
+	var runTs int64
+	if runTsVal, ok := st["timestamp"]; ok {
+		switch r := runTsVal.(type) {
+		case float64:
+			runTs = int64(r)
+		case int64:
+			runTs = r
+		case int:
+			runTs = int64(r)
+		}
+	}
+	if runTs == 0 {
+		runTs = nowSecs
+	}
+
+	isStale := ageSecs > (26 * 3600) // 26h because run twice daily
+	reusedCache := (runTs - fetchedAt) > 60
+
+	if isStale {
+		state = "Stale (using cache after failure)"
+	} else if reusedCache {
+		state = "OK (using cached data)"
+	} else {
+		state = "OK (freshly downloaded)"
+	}
+
+	return cadence, successTime, age, state
+}
 
 func (m cliModel) updateReferenceKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
@@ -81,13 +310,14 @@ func (m cliModel) renderReference() string {
 	b.WriteString(m.styles.PanelTitle.Render("Reference — whitelist / feeds / sets") + "\n")
 	b.WriteString(m.styles.Muted.Render("edits stage a draft; press c to commit through the deadman") + "\n\n")
 
-	// Whitelist editor
-	b.WriteString(m.styles.PanelTitle.Render(fmt.Sprintf("Whitelist (%d)", len(m.wlEntries))) + "\n")
+	// Left column: Whitelist editor
+	var leftCol strings.Builder
+	leftCol.WriteString(m.styles.PanelTitle.Render(fmt.Sprintf("Whitelist (%d)", len(m.wlEntries))) + "\n")
 	if m.refAddMode {
-		b.WriteString("  " + m.styles.Accent.Render("+ ") + m.objInput.View() + "\n")
+		leftCol.WriteString("  " + m.styles.Accent.Render("+ ") + m.objInput.View() + "\n")
 	}
 	if len(m.wlEntries) == 0 && !m.refAddMode {
-		b.WriteString(m.styles.Muted.Render("  (empty — press a to add an IP or CIDR)") + "\n")
+		leftCol.WriteString(m.styles.Muted.Render("  (empty — press a to add an IP or CIDR)") + "\n")
 	}
 	for i, e := range m.wlEntries {
 		cursor := "  "
@@ -96,41 +326,83 @@ func (m cliModel) renderReference() string {
 			cursor = m.styles.Accent.Render("▶ ")
 			line = m.styles.Accent.Copy().Bold(true).Render(e)
 		}
-		b.WriteString(cursor + line + "\n")
+		leftCol.WriteString(cursor + line + "\n")
 	}
 	if len(m.wlHosts) > 0 {
-		b.WriteString(m.styles.Muted.Render(fmt.Sprintf("  hosts: %s", strings.Join(m.wlHosts, ", "))) + "\n")
+		leftCol.WriteString("\n" + m.styles.Muted.Render(fmt.Sprintf("  hosts: %s", strings.Join(m.wlHosts, ", "))) + "\n")
 	}
 
-	// Two read-only columns: feeds and sets
-	var feedCol strings.Builder
-	feedCol.WriteString(m.styles.PanelTitle.Render("Abuse feeds") + "\n")
+	// Right column: Data Freshness Summary, Abuse Feeds, nft sets
+	var rightCol strings.Builder
+
+	// Geolocation Data status
+	gCadence, gTime, gAge, gState := m.getGeoFreshness()
+	rightCol.WriteString(m.styles.PanelTitle.Render("Geolocation Data") + "\n")
+	rightCol.WriteString(fmt.Sprintf("  Cadence: %s\n", gCadence))
+	rightCol.WriteString(fmt.Sprintf("  Success: %s\n", gTime))
+	rightCol.WriteString(fmt.Sprintf("  Age:     %s\n", gAge))
+	rightCol.WriteString(fmt.Sprintf("  State:   %s\n\n", gState))
+
+	// Bad-IP / Abuse Data status
+	aCadence, aTime, aAge, aState := m.getAbuseFreshness()
+	rightCol.WriteString(m.styles.PanelTitle.Render("Bad-IP / Abuse Data") + "\n")
+	rightCol.WriteString(fmt.Sprintf("  Cadence: %s\n", aCadence))
+	rightCol.WriteString(fmt.Sprintf("  Success: %s\n", aTime))
+	rightCol.WriteString(fmt.Sprintf("  Age:     %s\n", aAge))
+	rightCol.WriteString(fmt.Sprintf("  State:   %s\n\n", aState))
+
+	// Abuse feeds
+	rightCol.WriteString(m.styles.PanelTitle.Render("Abuse feeds") + "\n")
 	if len(m.feeds) == 0 {
-		feedCol.WriteString(m.styles.Muted.Render("  none"))
+		rightCol.WriteString(m.styles.Muted.Render("  none") + "\n")
 	}
 	for _, f := range m.feeds {
 		mark := m.styles.AcceptVerdict.Render("●")
 		if !asBool(f, "fresh") {
 			mark = m.styles.Warning.Render("●")
 		}
-		feedCol.WriteString(fmt.Sprintf("  %s %-14s %8s  %dh\n",
-			mark, clip(asStr(f, "name"), 14), formatCount(asInt(f, "count")), asInt(f, "ageHours")))
-	}
 
-	var setCol strings.Builder
-	setCol.WriteString(m.styles.PanelTitle.Render("nft sets") + "\n")
+		// Let's use modTime to render detailed age and absolute time
+		var feedAge, feedAbs string
+		if modVal, ok := f["modTime"]; ok {
+			var modTime int64
+			switch mv := modVal.(type) {
+			case float64:
+				modTime = int64(mv)
+			case int64:
+				modTime = mv
+			case int:
+				modTime = int64(mv)
+			}
+			if modTime > 0 {
+				feedAge = formatRelativeAge(time.Now().Unix() - modTime)
+				feedAbs = formatAbsoluteLocal(modTime)
+			}
+		}
+		if feedAge == "" {
+			feedAge = fmt.Sprintf("%dh ago", asInt(f, "ageHours"))
+			feedAbs = "—"
+		}
+
+		rightCol.WriteString(fmt.Sprintf("  %s %-12s %6s  %s (%s)\n",
+			mark, clip(asStr(f, "name"), 12), formatCount(asInt(f, "count")), feedAge, feedAbs))
+	}
+	rightCol.WriteString("\n")
+
+	// nft sets
+	rightCol.WriteString(m.styles.PanelTitle.Render("nft sets") + "\n")
 	if len(m.setsList) == 0 {
-		setCol.WriteString(m.styles.Muted.Render("  none"))
+		rightCol.WriteString(m.styles.Muted.Render("  none") + "\n")
 	}
 	for _, s := range m.setsList {
-		setCol.WriteString(fmt.Sprintf("  %-18s %8s\n", clip(s.Name, 18), formatCount(s.Count)))
+		rightCol.WriteString(fmt.Sprintf("  %-18s %8s\n", clip(s.Name, 18), formatCount(s.Count)))
 	}
 
 	colW := (m.viewWidth() - 2) / 2
-	if colW < 24 {
-		colW = 24
+	if colW < 40 {
+		colW = 40
 	}
-	cols := joinColumns(colW, feedCol.String(), setCol.String())
+	cols := joinColumns(colW, leftCol.String(), rightCol.String())
 
 	b.WriteString("\n" + cols)
 	return b.String()
