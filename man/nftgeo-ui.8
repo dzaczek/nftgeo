@@ -1,11 +1,14 @@
 .\" nftgeo-ui(8) manual page
-.TH NFTGEO-UI 8 "2026-07-12" "nftgeo 1.72.10" "System Administration"
+.TH NFTGEO-UI 8 "2026-07-19" "nftgeo 1.73.0~beta.11" "System Administration"
 .SH NAME
 nftgeo-ui \- local nftgeo dashboard and policy editor
 .SH SYNOPSIS
 .B nftgeo-ui
 .RB [ -addr " address" ]
 .RB [ -noauth ]
+.br
+.B nftgeo-ui cli
+.RB [ -refresh " duration" ]
 .br
 .B nftgeo-ui token
 .RB [ -ro ]
@@ -26,6 +29,35 @@ The packaged
 runs as root and listens only on 127.0.0.1:8787. Keep that default and use an
 SSH tunnel or an authenticated TLS reverse proxy for remote access. The service
 needs root access to nftables, logs, state, and policy files.
+.SH CONSOLE COMMAND
+.B nftgeo-ui cli
+starts an interactive full-screen terminal console. It presents Dashboard,
+Logs, Policy, Objects, and System tabs. Policy, object, and whitelist edits
+are staged as drafts and use the same validation, plan, and confirmation
+deadman workflow as the web editor; they do not modify live policy until a
+deployment is explicitly confirmed.
+.PP
+The console is a demonstration preview. Its layout, keyboard controls, and
+editing workflow may change; do not depend on it for automation or stable
+operator runbooks. Use the
+.B nftgeo
+operator CLI for scripts and the web dashboard for the stable visual editor.
+.TP
+.BI -refresh " duration"
+Live-refresh interval, expressed as a Go duration such as 2s, 5s, or 10s.
+Default: 5s. Specify 0 to disable automatic refreshes.
+.PP
+Within the console, press
+.B ?
+for the active key reference, use
+.B 1
+through
+.B 5
+to choose tabs,
+.B c
+to start the draft commit flow, and
+.B q
+to quit.
 .SH SERVER OPTIONS
 .TP
 .BI -addr " address"
