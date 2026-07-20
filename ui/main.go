@@ -5318,6 +5318,9 @@ func main() {
 	api("/api/ifstats", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, ifStats())
 	})
+	api("/api/capacity", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, capacityStatus())
+	})
 	// SOC overview: top source IPs with time-bucketed drop counts.
 	api("/api/ip-histogram", func(w http.ResponseWriter, r *http.Request) {
 		from, _ := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
