@@ -8,6 +8,12 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.11] - 2026-07-20
+
+### Added
+- Dashboard SoftNet pressure counters: cumulative dropped/squeezed packets and
+  their per-second rates.
+
 ## [1.74.0-beta.10] - 2026-07-20
 
 ### Added
