@@ -101,7 +101,7 @@ func sockstat() map[string]map[string]uint64 {
 }
 
 func systemdUnit(unit string) map[string]string {
-	out, _ := run("systemctl", "show", unit, "-p", "ActiveState", "-p", "SubState", "-p", "MemoryCurrent", "-p", "CPUUsageNSec", "-p", "TasksCurrent")
+	out, _ := run("systemctl", "show", unit, "-p", "ActiveState", "-p", "SubState", "-p", "Result", "-p", "Type", "-p", "MemoryCurrent", "-p", "CPUUsageNSec", "-p", "TasksCurrent")
 	values := map[string]string{"unit": unit}
 	for _, line := range strings.Split(out, "\n") {
 		if key, value, ok := strings.Cut(line, "="); ok {
