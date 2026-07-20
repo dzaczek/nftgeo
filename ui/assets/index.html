@@ -496,6 +496,12 @@ const j=async u=>{const r=await fetch(u);if(r.status===401||r.status===403){show
 const LOG_PAGE_SIZE=200;
 let map=null, DROPS={recent:[]}, RULES=[], MODE='rw', REFRESHER=null, LOG_LOADING=false;
 let PENDTIMER=null;
+let LAST_SESSION_TOUCH=0;
+function touchSession(){
+  const now=Date.now();if(now-LAST_SESSION_TOUCH<30000)return;LAST_SESSION_TOUCH=now;
+  fetch('/api/session_touch',{method:'POST'}).then(r=>{if(r.status===401||r.status===403)showLock('Session expired — generate a new token on the host.');}).catch(()=>{});
+}
+['pointerdown','keydown','touchstart'].forEach(ev=>document.addEventListener(ev,touchSession,{passive:true}));
 function clearPend(){if(PENDTIMER){clearInterval(PENDTIMER);PENDTIMER=null;}}
 function showLock(m){$('#lock').style.display='flex';clearPend();$('#lockentry').style.display='';$('#lockspin').style.display='none';const el=$('#lockmsg');el.textContent=m||'';el.style.color='var(--drop)';if(REFRESHER){clearInterval(REFRESHER);REFRESHER=null;}}
 function hideLock(){$('#lock').style.display='none';clearPend();}

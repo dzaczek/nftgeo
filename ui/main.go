@@ -2561,12 +2561,30 @@ func requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, `{"error":"read-only session"}`, http.StatusForbidden)
 			return
 		}
-		s.last = time.Now()
 		mode := s.mode
 		sessMu.Unlock()
 		w.Header().Set("X-Nftgeo-Mode", mode)
 		next(w, r)
 	}
+}
+
+// handleSessionTouch is the only way a browser renews its idle session. Keeping
+// this separate from requireAuth prevents the dashboard's background polling
+// from silently extending a session on an unattended laptop forever.
+func handleSessionTouch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if authOn {
+		c, _ := r.Cookie("nftgeo_sess")
+		sessMu.Lock()
+		if s := sessions[c.Value]; s != nil {
+			s.last = time.Now()
+		}
+		sessMu.Unlock()
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func sweepSessions() {
@@ -5174,6 +5192,7 @@ func main() {
 	// token exchange is the only API reachable without a session
 	http.HandleFunc("/api/session", handleSession)
 	http.HandleFunc("/api/session_poll", handleSessionPoll)
+	http.HandleFunc("/api/session_touch", requireAuth(handleSessionTouch))
 
 	api := func(pattern string, h http.HandlerFunc) { http.HandleFunc(pattern, requireAuth(h)) }
 
