@@ -8,6 +8,12 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.9] - 2026-07-20
+
+### Changed
+- Moved dashboard Protection controls into a dedicated section at the top of
+  the Policy view.
+
 ## [1.74.0-beta.8] - 2026-07-20
 
 ### Added
