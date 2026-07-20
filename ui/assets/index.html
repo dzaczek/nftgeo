@@ -1015,12 +1015,12 @@ async function loadCapacity(){
 }
 function renderCapacity(d){
   const el=$('#capacity');if(!el)return;
-  const mem=d.memory||{}, ct=d.conntrack||{}, files=d.files||{}, disk=d.disk||{}, sockets=d.sockets||{}, tcp=sockets.tcp||{}, tcp6=sockets.tcp6||{}, udp=sockets.udp||{}, udp6=sockets.udp6||{};
+  const mem=d.memory||{}, ct=d.conntrack||{}, files=d.files||{}, disk=d.disk||{}, sockets=d.sockets||{}, soft=d.softnet||{}, tcp=sockets.tcp||{}, tcp6=sockets.tcp6||{}, udp=sockets.udp||{}, udp6=sockets.udp6||{};
   const swapTotal=Number(mem.swapTotal||0), swapUsed=Math.max(0,Number(mem.swapTotal||0)-Number(mem.swapFree||0));
   const services=(d.services||[]).map(s=>{const active=s.ActiveState==='active';const name=(s.unit||'').replace('.service','').replace('.timer','');const memNow=Number(s.MemoryCurrent||0);const tasks=s.TasksCurrent&&s.TasksCurrent!=='infinity'?` · ${esc(s.TasksCurrent)} tasks`:'';return `<span class="pill" style="background:${active?'#173a2a':'#3a1720'};color:${active?'#2ecc71':'#ff8a9c'}" title="${esc(s.ActiveState||'unknown')} / ${esc(s.SubState||'')} · ${memNow?fmtBytes(memNow):'no memory metric'}${tasks}">${esc(name)}: ${active?'active':esc(s.ActiveState||'unknown')}</span>`;}).join(' ');
   const load=(d.load||[]).slice(0,3).join(' / ')||'—';
   el.innerHTML=`${capacityRow('Memory',Number(mem.used||0),Number(mem.total||0))}${swapTotal?capacityRow('Swap',swapUsed,swapTotal):'<div class="muted" style="font-size:12px;margin:5px 0">Swap: disabled</div>'}${capacityRow('Disk',Number(disk.used||0),Number(disk.total||0))}${capacityRow('Conntrack',Number(ct.count||0),Number(ct.max||0),fmtNum(ct.count||0))}${capacityRow('File handles',Number(files.allocated||0),Number(files.max||0),fmtNum(files.allocated||0))}
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:12px"><span>TCP: <b>${fmtNum((tcp.inuse||0)+(tcp6.inuse||0))}</b> in use · ${fmtNum((tcp.tw||0)+(tcp6.tw||0))} TIME_WAIT · ${fmtNum((tcp.orphan||0)+(tcp6.orphan||0))} orphan</span><span>UDP: <b>${fmtNum((udp.inuse||0)+(udp6.inuse||0))}</b> in use</span><span>Load: <b>${esc(load)}</b></span></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:12px"><span>TCP: <b>${fmtNum((tcp.inuse||0)+(tcp6.inuse||0))}</b> in use · ${fmtNum((tcp.tw||0)+(tcp6.tw||0))} TIME_WAIT · ${fmtNum((tcp.orphan||0)+(tcp6.orphan||0))} orphan</span><span>UDP: <b>${fmtNum((udp.inuse||0)+(udp6.inuse||0))}</b> in use</span><span>SoftNet: <b style="color:${soft.squeezedPerSecond>0?'var(--warnc)':'var(--fg)'}">${fmtNum(soft.squeezed||0)} squeezed</b> (${Number(soft.squeezedPerSecond||0).toFixed(2)}/s) · ${fmtNum(soft.dropped||0)} dropped (${Number(soft.droppedPerSecond||0).toFixed(2)}/s)</span><span>Load: <b>${esc(load)}</b></span></div>
     <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:9px">${services||'<span class="muted">systemd status unavailable</span>'}</div>`;
 }
 async function refresh(){

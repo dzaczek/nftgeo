@@ -6,8 +6,48 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
+
+var softnetPrev struct {
+	sync.Mutex
+	dropped, squeezed uint64
+	at                time.Time
+}
+
+func softnetStatus() map[string]interface{} {
+	f, err := os.Open("/proc/net/softnet_stat")
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	defer f.Close()
+	var dropped, squeezed uint64
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 3 {
+			continue
+		}
+		d, _ := strconv.ParseUint(fields[1], 16, 64)
+		s, _ := strconv.ParseUint(fields[2], 16, 64)
+		dropped += d
+		squeezed += s
+	}
+	now := time.Now()
+	softnetPrev.Lock()
+	defer softnetPrev.Unlock()
+	dr, sr := 0.0, 0.0
+	if !softnetPrev.at.IsZero() {
+		if dt := now.Sub(softnetPrev.at).Seconds(); dt > 0 {
+			dr = float64(dropped-softnetPrev.dropped) / dt
+			sr = float64(squeezed-softnetPrev.squeezed) / dt
+		}
+	}
+	softnetPrev.dropped, softnetPrev.squeezed, softnetPrev.at = dropped, squeezed, now
+	return map[string]interface{}{"dropped": dropped, "squeezed": squeezed, "droppedPerSecond": dr, "squeezedPerSecond": sr}
+}
 
 func procKeyValues(path string) map[string]uint64 {
 	out := map[string]uint64{}
@@ -93,7 +133,7 @@ func capacityStatus() map[string]interface{} {
 	return map[string]interface{}{
 		"memory":    map[string]uint64{"total": mem["MemTotal"], "available": mem["MemAvailable"], "used": mem["MemTotal"] - mem["MemAvailable"], "swapTotal": mem["SwapTotal"], "swapFree": mem["SwapFree"]},
 		"conntrack": map[string]uint64{"count": procUint("/proc/sys/net/netfilter/nf_conntrack_count"), "max": procUint("/proc/sys/net/netfilter/nf_conntrack_max")},
-		"files":     files, "disk": disk, "sockets": sockstat(), "load": load,
+		"files":     files, "disk": disk, "sockets": sockstat(), "softnet": softnetStatus(), "load": load,
 		"services": []map[string]string{systemdUnit("nftgeo.service"), systemdUnit("nftgeo-ui.service"), systemdUnit("nftgeo.timer")},
 	}
 }
