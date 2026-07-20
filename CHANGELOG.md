@@ -8,6 +8,13 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.8] - 2026-07-20
+
+### Added
+- Dashboard **Protection** card: configured/live state, kernel SYN-cookie and
+  conntrack state, live protection counters, editable anti-spoof/DoS settings,
+  and deadman-protected Save & Apply.
+
 ## [1.74.0-beta.7] - 2026-07-19
 
 ### Added
