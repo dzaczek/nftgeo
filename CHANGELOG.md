@@ -8,6 +8,13 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.10] - 2026-07-20
+
+### Added
+- Dashboard Capacity & services monitoring for memory, swap, disk, conntrack,
+  kernel file handles, TCP/UDP socket pressure, load averages, and nftgeo
+  systemd-unit state.
+
 ## [1.74.0-beta.9] - 2026-07-20
 
 ### Changed
