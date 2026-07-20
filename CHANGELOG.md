@@ -8,6 +8,12 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.12] - 2026-07-20
+
+### Fixed
+- Dashboard background refreshes no longer keep an unattended session alive.
+  Only real browser activity renews the configured idle session TTL.
+
 ## [1.74.0-beta.11] - 2026-07-20
 
 ### Added
