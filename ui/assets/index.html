@@ -284,6 +284,7 @@
         </div>
         <div>
           <div class="card"><h3>System</h3><div id="health"></div></div>
+          <div class="card" style="margin-top:14px"><h3>Protection <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— kernel and firewall guards</span></h3><div id="protection"></div></div>
           <div class="card" style="margin-top:14px"><h3>Drops over time (24h)</h3><div id="spark"></div></div>
           <div class="card" style="margin-top:14px"><h3>Top destination countries (egress)</h3><div id="cc-out"></div></div>
           <div class="card" style="margin-top:14px;display:none" id="iferrcard"><h3>Interface errors <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— since boot (Δ 1h)</span></h3><div id="iferr"></div></div>
@@ -965,6 +966,41 @@ async function clearAbuseIPDBKey(){
     else{alert(d.error||'Failed to clear');}
   }catch(e){alert('Error: '+e.message);}
 }
+function protectionState(on,label){return `<span class="pill" style="background:${on?'#173a2a':'#3a1720'};color:${on?'#2ecc71':'#ff8a9c'}">${on?'ON':'OFF'}</span> <span>${label}</span>`;}
+function protectionCount(n,label){return `<span class="muted">${esc(label)}: <b style="color:${n?'var(--warnc)':'var(--fg)'}">${Number(n||0).toLocaleString()}</b></span>`;}
+async function loadProtection(){
+  const el=$('#protection');if(!el)return;
+  // Do not overwrite a form while an operator is changing a threshold. The
+  // normal five-second dashboard refresh resumes when focus leaves the card.
+  if(document.activeElement&&el.contains(document.activeElement))return;
+  try{renderProtection(await j('/api/protection'));}catch(e){el.innerHTML='<span class="muted">Protection status unavailable.</span>';}
+}
+function renderProtection(p){
+  const el=$('#protection');if(!el)return;
+  const c=p.configured||{}, k=p.kernel||{}, hit=p.counters||{};
+  const connMax=Number(k.conntrackMax||0), connCount=Number(k.conntrackCount||0), connPct=connMax?Math.round(connCount*100/connMax):0;
+  const live=p.live?'<span class="pill" style="background:#173a2a;color:#2ecc71">LIVE</span>':'<span class="pill" style="background:#3a1720;color:#ff8a9c">NOT APPLIED</span>';
+  const configuration=MODE==='ro'?'':`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px">
+    <label class="fld"><span><input id="prot-harden" type="checkbox" ${c.harden?'checked':''}> Baseline hardening</span></label>
+    <label class="fld"><span><input id="prot-dos" type="checkbox" ${c.dosGuard?'checked':''}> DoS guard</span></label>
+    <label class="fld"><span>Anti-spoof interfaces</span><input id="prot-antispoof" value="${esc(c.antispoof||'')}" placeholder="eth0"></label>
+    <label class="fld"><span>SYN rate / source</span><input id="prot-syn-rate" value="${esc(c.dosSynRate||'30/second')}" placeholder="30/second"></label>
+    <label class="fld"><span>SYN burst</span><input id="prot-syn-burst" value="${esc(c.dosSynBurst||'60')}" inputmode="numeric"></label>
+    <label class="fld"><span>Concurrent connections / source</span><input id="prot-conn-limit" value="${esc(c.dosConnLimit||'100')}" inputmode="numeric"></label>
+  </div><div style="display:flex;align-items:center;gap:8px;margin-top:8px"><button class="btn-ghost" style="color:var(--fg)" onclick="saveProtection(false)">Save</button><button class="btn-go" onclick="saveProtection(true)">Save &amp; Apply</button><span class="muted" style="font-size:11px">Apply uses a 90-second deadman; then confirm Keep changes in the deploy bar.</span></div>`;
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${live}
+    ${protectionState(!!c.harden,'baseline')}${protectionState(!!c.antispoof,'anti-spoof')}${protectionState(!!c.dosGuard,'DoS guard')}
+    ${protectionState(Number(k.synCookies)===1,'SYN cookies')}</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:12px">
+      ${protectionCount(hit.antispoof,'anti-spoof drops')}${protectionCount(hit.tcpFlags,'bad TCP flags')}${protectionCount(hit.synRate,'SYN-rate drops')}${protectionCount(hit.connLimit,'connection-cap drops')}${protectionCount(hit.synproxy,'SYNPROXY handshakes')}
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:7px">Conntrack: ${connCount.toLocaleString()} / ${connMax.toLocaleString()} (${connPct}%) · SYN-RECV timeout ${Number(k.synRecvTimeout||0)}s · established timeout ${Number(k.establishedTimeout||0)/86400}d</div>${configuration}`;
+}
+async function saveProtection(apply){
+  if(apply&&!confirm('Apply protection settings now? A 90-second deadman will roll them back unless you confirm Keep changes.'))return;
+  const body={harden:$('#prot-harden').checked,antispoof:$('#prot-antispoof').value.trim(),dosGuard:$('#prot-dos').checked,dosSynRate:$('#prot-syn-rate').value.trim(),dosSynBurst:$('#prot-syn-burst').value.trim(),dosConnLimit:$('#prot-conn-limit').value.trim(),apply:!!apply};
+  try{const r=await fetch('/api/protection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok){toast(d.error||'Cannot save protection settings.');return;}renderProtection(d);if(apply)refreshCommitBar();toast(d.message||'Protection settings saved.');}catch(e){toast('Cannot save protection settings.');}
+}
 async function refresh(){
   try{
     const s=await j('/api/status');
@@ -973,6 +1009,7 @@ async function refresh(){
     $('#loadtxt').textContent=s.loaded?'table loaded':'not loaded';
     $('#upd').textContent=new Date().toLocaleTimeString();
     renderHealth(s.health);
+    loadProtection();
     const logLimit=Math.max(LOG_PAGE_SIZE,(DROPS.recent||[]).length);
     const d=await j('/api/drops?since=-24h&limit='+logLimit); DROPS=d;
     updateLogWarn(d);

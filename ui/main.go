@@ -305,6 +305,162 @@ func setConfigValue(key, val string) error {
 	return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
 }
 
+type configSetting struct{ key, value string }
+
+// setConfigValues updates related protection settings in one write, avoiding a
+// half-configured guard if a dashboard save is interrupted.
+func setConfigValues(values []configSetting) error {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	found := make(map[string]bool, len(values))
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		for _, setting := range values {
+			if strings.HasPrefix(trimmed, setting.key+"=") {
+				lines[i] = setting.key + "=\"" + setting.value + "\""
+				found[setting.key] = true
+			}
+		}
+	}
+	for _, setting := range values {
+		if !found[setting.key] {
+			lines = append(lines, setting.key+"=\""+setting.value+"\"")
+		}
+	}
+	return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
+}
+
+func configEnabled(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(configValue(key)))
+	return v != "" && v != "0" && v != "false" && v != "no"
+}
+
+var (
+	protectionRateRe   = regexp.MustCompile(`^[1-9][0-9]*/(second|minute|hour)$`)
+	protectionNumberRe = regexp.MustCompile(`^[1-9][0-9]*$`)
+)
+
+// protectionStatus combines declared configuration with the current ruleset and
+// kernel state. Counters are live nftables counters, so an operator can tell
+// whether a guard merely exists or has actually rejected traffic.
+func protectionStatus() map[string]interface{} {
+	counters := map[string]uint64{"antispoof": 0, "tcpFlags": 0, "synRate": 0, "connLimit": 0, "synproxy": 0}
+	loaded := tableLoaded()
+	if loaded {
+		for _, hook := range []string{"input", "forward"} {
+			out, err := run("nft", "list", "chain", fam, table, hook)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(out, "\n") {
+				m := reCounter.FindStringSubmatch(line)
+				if m == nil {
+					continue
+				}
+				packets, _ := strconv.ParseUint(m[1], 10, 64)
+				switch {
+				case strings.Contains(line, ":antispoof "):
+					counters["antispoof"] += packets
+				case strings.Contains(line, "dos_guard_syn"):
+					counters["synRate"] += packets
+				case strings.Contains(line, "dos_guard_conn"):
+					counters["connLimit"] += packets
+				case strings.Contains(line, "synproxy"):
+					counters["synproxy"] += packets
+				case strings.Contains(line, "tcp flags"):
+					counters["tcpFlags"] += packets
+				}
+			}
+		}
+	}
+	return map[string]interface{}{
+		"configured": map[string]interface{}{
+			"harden": configEnabled("HARDEN"), "antispoof": configValue("ANTISPOOF"),
+			"dosGuard": configEnabled("DOS_GUARD"), "dosSynRate": configValue("DOS_SYN_RATE"),
+			"dosSynBurst": configValue("DOS_SYN_BURST"), "dosConnLimit": configValue("DOS_CONN_LIMIT"),
+		},
+		"live": loaded, "counters": counters,
+		"kernel": map[string]uint64{
+			"synCookies":         procUint("/proc/sys/net/ipv4/tcp_syncookies"),
+			"conntrackCount":     procUint("/proc/sys/net/netfilter/nf_conntrack_count"),
+			"conntrackMax":       procUint("/proc/sys/net/netfilter/nf_conntrack_max"),
+			"synRecvTimeout":     procUint("/proc/sys/net/netfilter/nf_conntrack_tcp_timeout_syn_recv"),
+			"establishedTimeout": procUint("/proc/sys/net/netfilter/nf_conntrack_tcp_timeout_established"),
+		},
+	}
+}
+
+func handleProtection(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, protectionStatus())
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"GET or POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Harden       bool   `json:"harden"`
+		AntiSpoof    string `json:"antispoof"`
+		DOSGuard     bool   `json:"dosGuard"`
+		DOSSynRate   string `json:"dosSynRate"`
+		DOSSynBurst  string `json:"dosSynBurst"`
+		DOSConnLimit string `json:"dosConnLimit"`
+		Apply        bool   `json:"apply"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	antiSpoof := strings.Join(strings.Fields(strings.ReplaceAll(req.AntiSpoof, ",", " ")), " ")
+	for _, iface := range strings.Fields(antiSpoof) {
+		if !regexp.MustCompile(`^[A-Za-z0-9._@:-]+$`).MatchString(iface) {
+			http.Error(w, `{"error":"invalid anti-spoof interface"}`, http.StatusBadRequest)
+			return
+		}
+	}
+	if req.DOSGuard && (!protectionRateRe.MatchString(req.DOSSynRate) || !protectionNumberRe.MatchString(req.DOSSynBurst) || !protectionNumberRe.MatchString(req.DOSConnLimit)) {
+		http.Error(w, `{"error":"DoS limits require rate N/second|minute|hour and positive numeric burst/connection values"}`, http.StatusBadRequest)
+		return
+	}
+	boolValue := func(v bool) string {
+		if v {
+			return "1"
+		}
+		return ""
+	}
+	settings := []configSetting{
+		{"HARDEN", boolValue(req.Harden)}, {"ANTISPOOF", antiSpoof}, {"DOS_GUARD", boolValue(req.DOSGuard)},
+		{"DOS_SYN_RATE", strings.TrimSpace(req.DOSSynRate)}, {"DOS_SYN_BURST", strings.TrimSpace(req.DOSSynBurst)}, {"DOS_CONN_LIMIT", strings.TrimSpace(req.DOSConnLimit)},
+	}
+	for _, setting := range settings {
+		if strings.ContainsAny(setting.value, "\"\n\r$`\\;") {
+			http.Error(w, `{"error":"invalid configuration value"}`, http.StatusBadRequest)
+			return
+		}
+	}
+	if err := setConfigValues(settings); err != nil {
+		http.Error(w, `{"error":"cannot write config"}`, http.StatusInternalServerError)
+		return
+	}
+	status := protectionStatus()
+	if req.Apply {
+		out, err := runEnv(nil, operatorCLI, "apply", "--confirm", "90")
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, strings.TrimSpace(out)), http.StatusBadRequest)
+			return
+		}
+		status = protectionStatus()
+		status["message"] = "Protection applied with a 90-second deadman. Confirm Keep changes in the deploy bar."
+	} else {
+		status["message"] = "Protection configuration saved. Use Save & Apply to activate it with the deadman."
+	}
+	writeJSON(w, status)
+}
+
 var (
 	geoActiveCache     bool
 	geoActiveCheckTime time.Time
@@ -5144,6 +5300,7 @@ func main() {
 		st["api_key_present"] = keyPresent
 		writeJSON(w, st)
 	})
+	api("/api/protection", handleProtection)
 	api("/api/top-ips", func(w http.ResponseWriter, r *http.Request) {
 		fromStr := r.URL.Query().Get("from")
 		toStr := r.URL.Query().Get("to")
