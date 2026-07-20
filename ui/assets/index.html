@@ -284,7 +284,6 @@
         </div>
         <div>
           <div class="card"><h3>System</h3><div id="health"></div></div>
-          <div class="card" style="margin-top:14px"><h3>Protection <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— kernel and firewall guards</span></h3><div id="protection"></div></div>
           <div class="card" style="margin-top:14px"><h3>Drops over time (24h)</h3><div id="spark"></div></div>
           <div class="card" style="margin-top:14px"><h3>Top destination countries (egress)</h3><div id="cc-out"></div></div>
           <div class="card" style="margin-top:14px;display:none" id="iferrcard"><h3>Interface errors <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— since boot (Δ 1h)</span></h3><div id="iferr"></div></div>
@@ -315,6 +314,7 @@
       <!-- Whitelist summary card -->
       <div id="wl-card" class="card" style="padding:10px 14px;margin-bottom:10px;display:none"></div>
       <div id="manual-blocks-card" class="card" style="padding:10px 14px;margin-bottom:10px"></div>
+      <div class="card" style="padding:10px 14px;margin-bottom:10px"><h3>Protection <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— kernel and firewall guards</span></h3><div id="protection"></div></div>
       <div class="filters" style="justify-content:space-between">
         <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
         <span style="display:flex;gap:10px;align-items:center">
@@ -1009,7 +1009,6 @@ async function refresh(){
     $('#loadtxt').textContent=s.loaded?'table loaded':'not loaded';
     $('#upd').textContent=new Date().toLocaleTimeString();
     renderHealth(s.health);
-    loadProtection();
     const logLimit=Math.max(LOG_PAGE_SIZE,(DROPS.recent||[]).length);
     const d=await j('/api/drops?since=-24h&limit='+logLimit); DROPS=d;
     updateLogWarn(d);
@@ -1106,6 +1105,7 @@ async function loadPolicy(){
   renderWhitelistCard();
   try{const blocks=await j('/api/manual-blocks');MANUAL_BLOCKS=blocks.blocks||[];}catch(e){MANUAL_BLOCKS=[];}
   renderManualBlocks();
+  loadProtection();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
 }
 // Implicit accepts that run before your policy (no editable row of their own):
