@@ -316,6 +316,7 @@
       <div id="wl-card" class="card" style="padding:10px 14px;margin-bottom:10px;display:none"></div>
       <div id="manual-blocks-card" class="card" style="padding:10px 14px;margin-bottom:10px"></div>
       <div class="card" style="padding:10px 14px;margin-bottom:10px"><h3>Protection <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— kernel and firewall guards</span></h3><div id="protection"></div></div>
+      <div class="card" style="padding:10px 14px;margin-bottom:10px"><h3>QoS <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— optional egress traffic shaping</span></h3><div id="qos"></div></div>
       <div class="filters" style="justify-content:space-between">
         <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
         <span style="display:flex;gap:10px;align-items:center">
@@ -1008,6 +1009,20 @@ async function saveProtection(apply){
   const body={harden:$('#prot-harden').checked,antispoof:$('#prot-antispoof').value.trim(),dosGuard:$('#prot-dos').checked,dosSynRate:$('#prot-syn-rate').value.trim(),dosSynBurst:$('#prot-syn-burst').value.trim(),dosConnLimit:$('#prot-conn-limit').value.trim(),apply:!!apply};
   try{const r=await fetch('/api/protection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok){toast(d.error||'Cannot save protection settings.');return;}renderProtection(d);if(apply)refreshCommitBar();toast(d.message||'Protection settings saved.');}catch(e){toast('Cannot save protection settings.');}
 }
+async function loadQoS(){
+  const el=$('#qos');if(!el)return;
+  if(document.activeElement&&el.contains(document.activeElement))return;
+  try{renderQoS(await j('/api/qos'));}catch(e){el.innerHTML='<span class="muted">QoS status unavailable.</span>';}
+}
+function renderQoS(d){
+  const el=$('#qos');if(!el)return; const s=d.service||{}, active=s.ActiveState==='active';
+  const controls=MODE==='ro'?'':`<textarea id="qos-text" spellcheck="false" style="width:100%;min-height:180px;margin-top:8px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:8px;font:12px ui-monospace,monospace">${esc(d.text||'enabled no\n')}</textarea><div style="display:flex;gap:8px;margin-top:8px"><button class="btn-ghost" style="color:var(--fg)" onclick="saveQoS(false)">Save</button><button class="btn-go" onclick="saveQoS(true)">Save &amp; Apply</button></div>`;
+  el.innerHTML=`<div><span class="pill" style="background:${active?'#173a2a':'#3a1720'};color:${active?'#2ecc71':'#ff8a9c'}">${active?'ACTIVE':'INACTIVE'}</span> <span class="muted">Egress only; marks on accepted <code>out</code>/<code>fwd-out</code> rules map to HTB/fq_codel classes. Ingress/download shaping is not in this beta.</span></div>${controls}`;
+}
+async function saveQoS(apply){
+  if(apply&&!confirm('Apply QoS now? This replaces the selected interface root qdisc.'))return;
+  const text=$('#qos-text').value; try{const r=await fetch('/api/qos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,apply:!!apply})});const d=await r.json();if(!r.ok){toast(d.error||'Cannot save QoS.');return;}renderQoS(d);toast(d.message||'QoS saved.');}catch(e){toast('Cannot save QoS.');}
+}
 let CAPACITY_UPDATED=0;
 function capacityRow(label,used,total,detail){
   const pct=total>0?Math.max(0,Math.min(100,100*used/total)):0;
@@ -1135,6 +1150,7 @@ async function loadPolicy(){
   try{const blocks=await j('/api/manual-blocks');MANUAL_BLOCKS=blocks.blocks||[];}catch(e){MANUAL_BLOCKS=[];}
   renderManualBlocks();
   loadProtection();
+  loadQoS();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
 }
 // Implicit accepts that run before your policy (no editable row of their own):

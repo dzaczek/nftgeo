@@ -602,12 +602,8 @@ emit_set_match() {
 		_hook="${10:-unknown}"
 		printf '\t\t%s %s log prefix "%s@%s:%s "%s\n' "$mpfx" "$LOG_LIMIT" "$_pfx" "$_hook" "$_lr" "$NFLOG_SUFFIX"
 	fi
-	# The source comment (if present) now carries both the UI counter comment and potentially the mark clause.
-	# Example comment: "nftgeo:allow in tcp 80 any mark 100" -> we need to split if it has " mark ".
-	# However, we only need to emit meta mark if the rule is accepted (dropped packets don't need marking, but they could).
-	# To keep things clean, the mark is only emitted on 'accept' since QoS shapes allowed traffic.
-	# Wait, we already packed the mark explicitly in the 'meta' field! But emit_set_match doesn't receive the mark.
-	# Let's adjust emit_set_match to take the mark as $11.
+	# QoS marks belong only on accepted packets. The mark is carried separately
+	# from the source comment, so dashboard counter lookups stay stable.
 	_em_mark="${11:--}"
 
 	_mark_str=""
@@ -973,9 +969,8 @@ parse_rules_file() {
 		# Metadata carried per rule: the rule's name (trailing # comment, used in
 		# drop logs) and the source stamp (counter comment for the UI). Packed as
 		# "<name>|<src>" into one trailing field; emit_chain splits on the first '|'.
-		# Since we now have 'mark', we pack it into meta as well.
+		# Carry QoS mark separately from the counter source stamp.
 		_src="$(rule_comment "$action" "$dir" "$proto" "$port" "$geo" "$iface")"
-		[ "$_rmark" != "-" ] && _src="${_src} mark ${_rmark}"
 		_name=""
 		case "$_rest" in
 			*"#"*) _name="$(printf '%s' "${_rest#*#}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/|//g')" ;;

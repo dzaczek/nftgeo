@@ -5,7 +5,10 @@ Quick reference for every command. Rules live in `/etc/nftgeo/rules.conf` (or
 use `sudo nftgeo validate && sudo nftgeo apply --confirm`. For package setup,
 see [Quick Start](QUICK_START.md) or [Quick Start PL](QUICK_START_PL.md).
 
-Rule line: `<action> <dir> <proto> <port> <target> [on <iface>] [log]`
+Rule line: `<action> <dir> <proto> <port> <target> [on <iface>] [log] [mark <number>]`
+
+QoS (optional egress shaping): `nftgeo qos validate|plan|apply|clear|status`.
+Configure `/etc/nftgeo/qos.conf`; packet marks map accepted egress rules to QoS classes.
 - **action** `allow` | `deny`
 - **dir** `in` | `out` | `fwd-in` | `fwd-out`
 - **proto** `tcp` `udp` `sctp` `all` | `any` `icmp` `icmpv6` `esp` `ah` `gre`

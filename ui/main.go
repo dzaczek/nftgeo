@@ -55,6 +55,8 @@ var (
 	ingressDir         = env("INGRESS_DIR", "/etc/nftgeo/ingress.d")
 	whitelistFile      = env("WHITELIST_FILE", "/etc/nftgeo/whitelist.conf")
 	whitelistHostsFile = env("WHITELIST_HOSTS_FILE", "/etc/nftgeo/whitelist-hosts.conf")
+	qosFile            = env("QOS_FILE", "/etc/nftgeo/qos.conf")
+	qosBin             = env("NFTGEO_QOS", "/usr/sbin/nftgeo-qos")
 	feedsDir           = env("ABUSE_FEEDS_CACHE_DIR", "/var/lib/nftgeo/feeds")
 	// Optional full offline geo dataset (GEO_FULL=1): fetch every ipdeny country
 	// zone into a UI-owned cache so the drop map covers all sources.
@@ -459,6 +461,72 @@ func handleProtection(w http.ResponseWriter, r *http.Request) {
 		status["message"] = "Protection configuration saved. Use Save & Apply to activate it with the deadman."
 	}
 	writeJSON(w, status)
+}
+
+func handleQoS(w http.ResponseWriter, r *http.Request) {
+	status := func(message string) map[string]interface{} {
+		b, _ := os.ReadFile(qosFile)
+		out := map[string]interface{}{"text": string(b), "service": systemdUnit("nftgeo-qos.service")}
+		if message != "" {
+			out["message"] = message
+		}
+		return out
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, status(""))
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"GET or POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Text  string `json:"text"`
+		Apply bool   `json:"apply"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		http.Error(w, `{"error":"QoS configuration cannot be empty"}`, http.StatusBadRequest)
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(qosFile), ".qos-validate-")
+	if err != nil {
+		http.Error(w, `{"error":"cannot stage QoS config"}`, http.StatusInternalServerError)
+		return
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err = tmp.WriteString(req.Text); err == nil {
+		err = tmp.Close()
+	}
+	if err != nil {
+		http.Error(w, `{"error":"cannot stage QoS config"}`, http.StatusInternalServerError)
+		return
+	}
+	out, err := run(qosBin, "--config", tmpName, "validate")
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, strings.TrimSpace(out)), http.StatusBadRequest)
+		return
+	}
+	old, _ := os.ReadFile(qosFile)
+	if err := os.WriteFile(qosFile, []byte(req.Text), 0600); err != nil {
+		http.Error(w, `{"error":"cannot write QoS config"}`, http.StatusInternalServerError)
+		return
+	}
+	if req.Apply {
+		out, err = run("systemctl", "start", "nftgeo-qos.service")
+		if err != nil {
+			_ = os.WriteFile(qosFile, old, 0600)
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, strings.TrimSpace(out)), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, status("QoS applied."))
+		return
+	}
+	writeJSON(w, status("QoS configuration saved."))
 }
 
 var (
@@ -5320,6 +5388,7 @@ func main() {
 		writeJSON(w, st)
 	})
 	api("/api/protection", handleProtection)
+	api("/api/qos", handleQoS)
 	api("/api/top-ips", func(w http.ResponseWriter, r *http.Request) {
 		fromStr := r.URL.Query().Get("from")
 		toStr := r.URL.Query().Get("to")

@@ -6,7 +6,8 @@ command -v mandoc >/dev/null 2>&1 || {
 	exit 1
 }
 
-expected='nftgeo-ui.8:8
+expected='nftgeo-qos.8:8
+nftgeo-ui.8:8
 nftgeo-update.8:8
 nftgeo.8:8
 nftgeo.conf.5:5'

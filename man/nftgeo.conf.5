@@ -18,6 +18,8 @@ nftgeo.conf \- configuration and rule file formats for nftgeo
 .I /etc/nftgeo/whitelist.conf
 .br
 .I /etc/nftgeo/whitelist-hosts.conf
+.br
+.I /etc/nftgeo/qos.conf
 .SH DESCRIPTION
 .B nftgeo-update
 sources the main configuration and sorted
@@ -39,6 +41,16 @@ Path, table, and state variables used for isolated testing are documented under
 .B ENVIRONMENT
 in
 .BR nftgeo-update (8).
+.SS QoS profile
+.TP
+.I /etc/nftgeo/qos.conf
+An optional, non-shell configuration file for
+.BR nftgeo-qos (8).
+It describes one egress HTB profile: an interface, its available bandwidth, a
+default class, and marked traffic classes. It is disabled by default and does
+not affect nftables unless QoS is explicitly enabled. See
+.BR nftgeo-qos (8)
+for the grammar and safety scope.
 .SS Whitelist and name resolution
 .TP
 .B WHITELIST
@@ -206,7 +218,7 @@ have this form:
 .PP
 .RS
 .nf
-<allow|deny> <dir> <proto> <port> <target> [on <iface>] [log]
+<allow|deny> <dir> <proto> <port> <target> [on <iface>] [log] [mark <number>]
 .fi
 .RE
 .TP
@@ -255,6 +267,11 @@ names, or
 The reserved target
 .B abuse
 is valid only for deny rules.
+.TP
+.B mark
+Optional numeric packet mark, from 1 through 65535. It is emitted only for an
+accepted rule and may be mapped to an egress class by
+.BR nftgeo-qos (8).
 .TP
 .BI "on " iface
 Restrict the rule to an interface.

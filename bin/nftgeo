@@ -13,6 +13,7 @@ DYN_STATE="${DYN_STATE:-${STATE_DIR}/dynblock.tsv}"
 GEN_DIR="${GEN_DIR:-${STATE_DIR}/generations}"
 SENTINEL="${SENTINEL:-${STATE_DIR}/.pending-confirm}"
 UI_BIN="${NFTGEO_UI:-/usr/sbin/nftgeo-ui}"
+QOS_BIN="${NFTGEO_QOS:-/usr/sbin/nftgeo-qos}"
 TAB="$(printf '\t')"
 
 # IP validation patterns — shared with nftgeo-update
@@ -50,6 +51,8 @@ Usage: nftgeo <command> [args]
                  SSH source unless --force. Survives updates. (root)
   unblock <ip|cidr>  Remove a manual block. (root)
   blocklist      List manual blocks and their remaining TTL.
+  qos <command>  Validate, plan, apply, clear, or show egress QoS. See
+                 'nftgeo-qos --help'. Requires iproute2/tc; apply/clear root.
   apply          Rebuild and load the ruleset now (runs the update engine).
   apply --confirm [T]  Apply, then auto-roll-back after T seconds (default 120)
                  unless you run 'nftgeo apply --commit' - a deadman against a
@@ -555,6 +558,7 @@ case "$cmd" in
 	block)             cmd_block "$@" ;;
 	unblock)           cmd_unblock "$@" ;;
 	blocklist)         cmd_blocklist ;;
+	qos)               [ -x "$QOS_BIN" ] || { echo "nftgeo-qos not installed" >&2; exit 1; }; exec "$QOS_BIN" "$@" ;;
 	restore-dyn)       cmd_restore_dyn ;;
 	apply)             cmd_apply "$@" ;;
 	confirm)           cmd_confirm ;;
