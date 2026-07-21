@@ -19,6 +19,7 @@ depends:
 recommends:
   - curl
   - ca-certificates
+  - iproute2
 contents:
   - src: bin/nftgeo-update
     dst: /usr/sbin/nftgeo-update
@@ -32,11 +33,18 @@ contents:
     dst: /usr/sbin/nftgeo-ui
     file_info:
       mode: 0755
+  - src: dist/nftgeo-qos
+    dst: /usr/sbin/nftgeo-qos
+    file_info:
+      mode: 0755
   - src: etc/config.example
     dst: /etc/nftgeo/config.example
     type: config
   - src: etc/rules.conf.example
     dst: /etc/nftgeo/rules.conf.example
+    type: config
+  - src: etc/qos.conf.example
+    dst: /etc/nftgeo/qos.conf.example
     type: config
   - src: dist/units/nftgeo.service
     dst: /usr/lib/systemd/system/nftgeo.service
@@ -44,6 +52,8 @@ contents:
     dst: /usr/lib/systemd/system/nftgeo.timer
   - src: dist/units/nftgeo-ui.service
     dst: /usr/lib/systemd/system/nftgeo-ui.service
+  - src: dist/units/nftgeo-qos.service
+    dst: /usr/lib/systemd/system/nftgeo-qos.service
   - src: README.md
     dst: /usr/share/doc/nftgeo/README.md
   - src: CHEATSHEET.md
@@ -68,6 +78,8 @@ contents:
     dst: /usr/share/man/man8/nftgeo-ui.8.gz
   - src: dist/man/nftgeo.conf.5.gz
     dst: /usr/share/man/man5/nftgeo.conf.5.gz
+  - src: dist/man/nftgeo-qos.8.gz
+    dst: /usr/share/man/man8/nftgeo-qos.8.gz
   - dst: /etc/nftgeo/rules.d
     type: dir
   - dst: /etc/nftgeo/groups.d

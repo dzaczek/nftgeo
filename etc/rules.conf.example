@@ -60,6 +60,7 @@
 # allow in      tcp 5061      us        # SIPS reachable only from the US
 # allow in      tcp 443       any       # HTTPS open to the world (still abuse-filtered)
 # allow in      tcp web       any       # named ports via SERVICE_WEB="80 443"
+# allow out     udp 5060-5070 any mark 10 # mark accepted VoIP egress for nftgeo-qos
 #
 # Reactive throttle - rate-limit a port per source and auto-ban offenders:
 #   throttle <in|fwd-in> <tcp|udp> <port> <N/second|minute|hour> [ban <dur>] [on <iface>]

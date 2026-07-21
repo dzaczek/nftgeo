@@ -62,7 +62,7 @@ for loopback, invalid state drops, established/related traffic, whitelist, and
 optional protections.
 
 ```text
-<action> <dir> <proto> <port> <target> [on <iface>] [log]
+<action> <dir> <proto> <port> <target> [on <iface>] [log] [mark <number>]
 ```
 
 Common examples:

@@ -79,6 +79,17 @@ Remove a manual block. Requires root.
 .B blocklist
 List current manual blocks and their remaining TTL.
 .TP
+.BI "qos " command
+Manage optional egress traffic shaping. The commands
+.BR validate ,
+.BR plan ,
+.BR apply ,
+.BR clear ,
+and
+.BR status
+are delegated to
+.BR nftgeo-qos (8).
+.TP
 .B apply
 Rebuild and load the ruleset now (runs the update engine). Requires root.
 .TP
