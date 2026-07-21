@@ -231,6 +231,7 @@
     <nav class="nav" id="nav">
       <a data-v="dashboard" class="active"><span class="ic">▚</span>Dashboard</a>
       <a data-v="policy"><span class="ic">▤</span>Policy</a>
+      <a data-v="qos"><span class="ic">⇅</span>QoS</a>
       <a data-v="logs"><span class="ic">≣</span>Logs &amp; Drops</a>
       <a data-v="objects"><span class="ic">◈</span>Objects</a>
     </nav>
@@ -316,7 +317,6 @@
       <div id="wl-card" class="card" style="padding:10px 14px;margin-bottom:10px;display:none"></div>
       <div id="manual-blocks-card" class="card" style="padding:10px 14px;margin-bottom:10px"></div>
       <div class="card" style="padding:10px 14px;margin-bottom:10px"><h3>Protection <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— kernel and firewall guards</span></h3><div id="protection"></div></div>
-      <div class="card" style="padding:10px 14px;margin-bottom:10px"><h3>QoS <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— optional egress traffic shaping</span></h3><div id="qos"></div></div>
       <div class="filters" style="justify-content:space-between">
         <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
         <span style="display:flex;gap:10px;align-items:center">
@@ -342,6 +342,11 @@
       <div class="card" style="display:none"><div class="tablewrap"><table class="poltable">
         <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th><th id="th-file" style="width:130px">File</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
+    </section>
+
+    <!-- QOS -->
+    <section class="view" id="v-qos">
+      <div class="card"><h3>Traffic shaping <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— optional egress QoS</span></h3><div id="qos"></div></div>
     </section>
 
     <!-- LOGS -->
@@ -513,6 +518,7 @@ function nav(v){
   $('#v-'+v).classList.add('active');
   $('#title').textContent=$(`#nav a[data-v="${v}"]`).textContent.trim();
   if(v==='policy') loadPolicy();
+  if(v==='qos') loadQoS();
   if(v==='objects') loadObjects();
 }
 $('#nav').addEventListener('click',e=>{const a=e.target.closest('a[data-v]'); if(a) nav(a.dataset.v);});
@@ -1150,7 +1156,6 @@ async function loadPolicy(){
   try{const blocks=await j('/api/manual-blocks');MANUAL_BLOCKS=blocks.blocks||[];}catch(e){MANUAL_BLOCKS=[];}
   renderManualBlocks();
   loadProtection();
-  loadQoS();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
 }
 // Implicit accepts that run before your policy (no editable row of their own):
@@ -1794,8 +1799,8 @@ async function saveTpl(){const name=$('#tpl-name').value.trim();if(!name){toast(
 function ruleDrawer(file,id){
   if(MODE==='ro')return;
   const r=id!=null?findRule(file,id):null;
-  const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name,log:!!r.log}
-           :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:'',log:false};
+  const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name,log:!!r.log,mark:r.mark||''}
+           :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:'',log:false,mark:''};
   const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
   $('#drawertitle').textContent=id!=null?'Edit rule':'New rule';
   $('#drawerbody').innerHTML=`
@@ -1811,6 +1816,7 @@ function ruleDrawer(file,id){
     </div>
     <label class="fld"><span>Target</span><input id="r-target" list="tgtlist" value="${esc(v.target)}" placeholder="any / abuse / country / region / group / IP" autocomplete="off"></label>
     ${ifaceFieldHTML('r-iface',v.iface,'Interface (optional)')}
+    <label class="fld"><span>QoS packet mark (optional)</span><input id="r-mark" value="${esc(v.mark)}" inputmode="numeric" placeholder="1–65535; only for allow"></label>
     <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="r-log" style="width:auto"${v.log?' checked':''}><span style="margin:0">Log connections matching this rule (nftgeo-accept/nftgeo-drop:&lt;name&gt;)</span></label>
     <p class="muted" style="font-size:12px"><b>Direction</b> sets what the target means: <b>in</b> = source, <b>out</b> = destination, <b>fwd-*</b> = forwarded. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
@@ -1826,7 +1832,7 @@ function rProtoChange(){const p=$('#r-proto').value,pt=$('#r-port');
 async function saveRule(file,id){
   const b={file:($('#r-file')?$('#r-file').value:file),action:$('#r-action').value,dir:$('#r-dir').value,proto:$('#r-proto').value,port:$('#r-port').value,
     target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value,
-    log:$('#r-log')?$('#r-log').checked:false};
+    log:$('#r-log')?$('#r-log').checked:false,mark:$('#r-mark').value.trim()};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}
