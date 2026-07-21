@@ -12,6 +12,7 @@ ABUSE_FEEDS_CACHE_DIR="${ABUSE_FEEDS_CACHE_DIR:-${STATE_DIR}/feeds}"
 DYN_STATE="${DYN_STATE:-${STATE_DIR}/dynblock.tsv}"
 GEN_DIR="${GEN_DIR:-${STATE_DIR}/generations}"
 SENTINEL="${SENTINEL:-${STATE_DIR}/.pending-confirm}"
+UI_BIN="${NFTGEO_UI:-/usr/sbin/nftgeo-ui}"
 TAB="$(printf '\t')"
 
 # IP validation patterns — shared with nftgeo-update
@@ -42,11 +43,13 @@ Usage: nftgeo <command> [args]
                  a config written for the old model keeps closing geo-fenced ports
                  under sequential (file-order) evaluation. Writes a rules.d
                  drop-in; deploy with 'apply --confirm'. (root)
-  block <ip> [ttl]   Drop an address now for ttl (default 1h; e.g. 30m, 2d),
-                 without editing rules or a reload. Refuses a whitelisted or your
-                 own SSH source unless --force. Survives updates. (root)
-  unblock <ip>   Remove a dynamic block. (root)
-  blocklist      List the current dynamic blocks and their remaining TTL.
+  block <ip|cidr> [ttl|forever]
+                 Drop an address or CIDR now (default 7d; e.g. 1h, 30m, 2d,
+                 forever). A CIDR requires --force as a guard against blocking a
+                 wider network accidentally. Refuses a whitelisted or your own
+                 SSH source unless --force. Survives updates. (root)
+  unblock <ip|cidr>  Remove a manual block. (root)
+  blocklist      List manual blocks and their remaining TTL.
   apply          Rebuild and load the ruleset now (runs the update engine).
   apply --confirm [T]  Apply, then auto-roll-back after T seconds (default 120)
                  unless you run 'nftgeo apply --commit' - a deadman against a
@@ -225,35 +228,100 @@ ensure_dyn() {
 	# Dynamic manual-block table, separate from the geo table so nftgeo-update
 	# never rebuilds it - blocks survive a ruleset reload. Runs before the geo
 	# table (priority -150); the block/unblock commands guard against self-lockout.
-	nft list table "$FAM" "$DYN_TABLE" >/dev/null 2>&1 && return 0
+	# Upgrade installations created before permanent manual blocks and CIDR support
+	# existed. Keep both sets separate: timeout sets cannot represent an infinite
+	# entry. The persisted state is rehydrated below after the old table is rebuilt.
+	if nft list table "$FAM" "$DYN_TABLE" >/dev/null 2>&1; then
+		if nft list set "$FAM" "$DYN_TABLE" permblock4 >/dev/null 2>&1 \
+			&& nft list set "$FAM" "$DYN_TABLE" dynblock4 2>/dev/null | grep -q 'flags interval'; then
+			return 0
+		fi
+		nft delete table "$FAM" "$DYN_TABLE" 2>/dev/null || true
+	fi
 	nft -f - <<EOF
 table $FAM $DYN_TABLE {
-	set dynblock4 { type ipv4_addr; flags timeout; }
-	set dynblock6 { type ipv6_addr; flags timeout; }
+	set dynblock4 { type ipv4_addr; flags interval,timeout; }
+	set dynblock6 { type ipv6_addr; flags interval,timeout; }
+	set permblock4 { type ipv4_addr; flags interval; }
+	set permblock6 { type ipv6_addr; flags interval; }
 	chain input {
 		type filter hook input priority -150; policy accept;
 		ip saddr @dynblock4 counter drop
 		ip6 saddr @dynblock6 counter drop
+		ip saddr @permblock4 counter drop
+		ip6 saddr @permblock6 counter drop
 	}
 	chain output {
 		type filter hook output priority -150; policy accept;
 		ip daddr @dynblock4 counter drop
 		ip6 daddr @dynblock6 counter drop
+		ip daddr @permblock4 counter drop
+		ip6 daddr @permblock6 counter drop
 	}
 }
 EOF
 }
 
+valid_block_target() {
+	case "$1" in
+		*:* ) fam=6; re="$IPV6_RE"; max=128 ;;
+		*   ) fam=4; re="$IPV4_RE"; max=32 ;;
+	esac
+	printf '%s' "$1" | grep -Eiq "$re" || return 1
+	case "$1" in
+		*/*)
+			prefix=${1#*/}
+			case "$prefix" in ''|*[!0-9]*) return 1 ;; esac
+			[ "$prefix" -le "$max" ] || return 1 ;;
+	esac
+	return 0
+}
+
+is_local_address() {
+	# Reuse nftgeo-ui's Go net.Interfaces check so IPv4, IPv6, and arbitrary
+	# CIDRs all share one fail-closed definition of "this host's address".
+	[ -x "$UI_BIN" ] || return 2
+	"$UI_BIN" check-local "$1" >/dev/null 2>&1
+}
+
+restore_dyn_state() {
+	[ -s "$DYN_STATE" ] || return 0
+	now="$(date +%s)"
+	: > "${DYN_STATE}.n"
+	# Do not use the generic ip/fam names here: this helper is also called from
+	# cmd_block, where those variables hold the new target to add. POSIX shell
+	# has function-global variables, so a read at EOF could otherwise erase the
+	# pending target and produce `nft add element … { timeout 60s }`.
+	while IFS="$TAB" read -r saved_ip saved_fam saved_exp; do
+		[ -n "$saved_ip" ] || continue
+		case "$saved_exp" in
+		0)
+			nft add element "$FAM" "$DYN_TABLE" "permblock${saved_fam}" "{ $saved_ip }" 2>/dev/null || true
+			printf '%s\t%s\t%s\n' "$saved_ip" "$saved_fam" "$saved_exp" >> "${DYN_STATE}.n" ;;
+		''|*[!0-9]*) continue ;;
+		*)
+			rem=$((saved_exp - now)); [ "$rem" -gt 0 ] || continue
+			nft add element "$FAM" "$DYN_TABLE" "dynblock${saved_fam}" "{ $saved_ip timeout ${rem}s }" 2>/dev/null || true
+			printf '%s\t%s\t%s\n' "$saved_ip" "$saved_fam" "$saved_exp" >> "${DYN_STATE}.n" ;;
+		esac
+	done < "$DYN_STATE"
+	mv "${DYN_STATE}.n" "$DYN_STATE"
+}
+
 cmd_block() {
 	force=0; [ "${1:-}" = "--force" ] && { force=1; shift; }
-	ip="${1:-}"; ttl="${2:-1h}"
-	[ -n "$ip" ] || { echo "usage: nftgeo block [--force] <ip> [ttl]   (ttl e.g. 30m, 1h, 2d)" >&2; exit 2; }
-	case "$ip" in
-		*:*) fam=6; printf '%s' "$ip" | grep -Eiq "$IPV6_RE" || { echo "invalid IPv6: ${ip}" >&2; exit 2; } ;;
-		*)   fam=4; printf '%s' "$ip" | grep -Eq "$IPV4_RE" || { echo "invalid IPv4: ${ip}" >&2; exit 2; } ;;
-	esac
-	sec="$(dur_to_sec "$ttl")"
-	{ [ -n "$sec" ] && [ "$sec" -gt 0 ]; } || { echo "bad ttl '${ttl}' (use 30m, 1h, 2d, or seconds)" >&2; exit 2; }
+	ip="${1:-}"; ttl="${2:-7d}"
+	[ -n "$ip" ] || { echo "usage: nftgeo block [--force] <ip|cidr> [ttl|forever]" >&2; exit 2; }
+	valid_block_target "$ip" || { echo "invalid IP/CIDR: ${ip}" >&2; exit 2; }
+	if is_local_address "$ip"; then
+		echo "refusing: ${ip} is or contains an address assigned to this host (WAN/LAN/loopback)" >&2; exit 1
+	else
+		local_rc=$?
+		[ "$local_rc" != 2 ] || { echo "refusing: cannot verify local addresses (nftgeo-ui unavailable)" >&2; exit 1; }
+	fi
+	case "$ip" in */*) [ "$force" = 1 ] || { echo "refusing to block CIDR ${ip} without --force" >&2; exit 1; } ;; esac
+	case "$ttl" in forever|infinity|permanent) permanent=1; sec=0 ;; *) permanent=0; sec="$(dur_to_sec "$ttl")" ;; esac
+	[ "$permanent" = 1 ] || { [ -n "$sec" ] && [ "$sec" -gt 0 ]; } || { echo "bad ttl '${ttl}' (use 30m, 1h, 2d, seconds, or forever)" >&2; exit 2; }
 	if [ "$force" != 1 ]; then
 		if nft get element "$FAM" "$TABLE" "whitelist${fam}" "{ $ip }" >/dev/null 2>&1; then
 			echo "refusing: ${ip} is whitelisted; use --force to block anyway" >&2; exit 1
@@ -262,22 +330,30 @@ cmd_block() {
 		[ -n "$src" ] && [ "$ip" = "$src" ] && { echo "refusing: ${ip} is your current SSH source; use --force" >&2; exit 1; }
 	fi
 	ensure_dyn
-	nft add element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip timeout ${sec}s }"
-	now="$(date +%s)"; exp="$((now + sec))"
+	restore_dyn_state
+	if [ "$permanent" = 1 ]; then
+		nft add element "$FAM" "$DYN_TABLE" "permblock${fam}" "{ $ip }"
+		exp=0
+	else
+		nft add element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip timeout ${sec}s }"
+		now="$(date +%s)"; exp="$((now + sec))"
+	fi
 	mkdir -p "$STATE_DIR"; touch "$DYN_STATE"
 	awk -F"$TAB" -v ip="$ip" '$1!=ip' "$DYN_STATE" > "${DYN_STATE}.n" 2>/dev/null || true
 	mv "${DYN_STATE}.n" "$DYN_STATE"
 	printf '%s\t%s\t%s\n' "$ip" "$fam" "$exp" >> "$DYN_STATE"
-	echo "blocked ${ip} for ${ttl} (until $(date -d "@${exp}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "@${exp}"))"
+	if [ "$permanent" = 1 ]; then
+		echo "blocked ${ip} permanently"
+	else
+		echo "blocked ${ip} for ${ttl} (until $(date -d "@${exp}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "@${exp}"))"
+	fi
 }
 
 cmd_unblock() {
-	ip="${1:-}"; [ -n "$ip" ] || { echo "usage: nftgeo unblock <ip>" >&2; exit 2; }
-	case "$ip" in
-		*:*) fam=6; printf '%s' "$ip" | grep -Eiq "$IPV6_RE" || { echo "invalid IPv6: ${ip}" >&2; exit 2; } ;;
-		*)   fam=4; printf '%s' "$ip" | grep -Eq "$IPV4_RE" || { echo "invalid IPv4: ${ip}" >&2; exit 2; } ;;
-	esac
+	ip="${1:-}"; [ -n "$ip" ] || { echo "usage: nftgeo unblock <ip|cidr>" >&2; exit 2; }
+	valid_block_target "$ip" || { echo "invalid IP/CIDR: ${ip}" >&2; exit 2; }
 	nft delete element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip }" 2>/dev/null || true
+	nft delete element "$FAM" "$DYN_TABLE" "permblock${fam}" "{ $ip }" 2>/dev/null || true
 	if [ -f "$DYN_STATE" ]; then
 		awk -F"$TAB" -v ip="$ip" '$1!=ip' "$DYN_STATE" > "${DYN_STATE}.n" 2>/dev/null || true
 		mv "${DYN_STATE}.n" "$DYN_STATE"
@@ -286,24 +362,23 @@ cmd_unblock() {
 }
 
 cmd_blocklist() {
-	if ! nft list table "$FAM" "$DYN_TABLE" >/dev/null 2>&1; then
-		echo "no dynamic blocks (table ${FAM} ${DYN_TABLE} not present)"; return 0
-	fi
-	echo "dynamic blocks (in-kernel, auto-expiring):"
-	found=0
-	for s in dynblock4 dynblock6; do
-		el="$(nft list set "$FAM" "$DYN_TABLE" "$s" 2>/dev/null | tr '\n' ' ' \
-			| sed -n 's/.*elements = {\([^}]*\)}.*/\1/p')"
-		[ -n "$el" ] || continue
-		printf '%s' "$el" | tr ',' '\n' \
-			| sed 's/^[[:space:]]*/  /; s/[[:space:]]*$//' | grep -v '^[[:space:]]*$' && found=1
-	done
+	echo "manual blocks (persisted; permanent or remaining TTL):"
+	[ -s "$DYN_STATE" ] || { echo "  (none)"; return 0; }
+	now="$(date +%s)"; found=0
+	while IFS="$TAB" read -r ip _fam exp; do
+		[ -n "$ip" ] || continue
+		case "$exp" in
+			0) printf '  %s  permanent\n' "$ip"; found=1 ;;
+			*[!0-9]*|'') : ;;
+			*) rem=$((exp - now)); [ "$rem" -gt 0 ] && { printf '  %s  %ss remaining\n' "$ip" "$rem"; found=1; } ;;
+		esac
+	done < "$DYN_STATE"
 	[ "$found" = 1 ] || echo "  (none)"
 }
 
 cmd_restore_dyn() {
-	# Re-create the dynamic block table from persisted state after a reboot,
-	# dropping entries whose TTL has passed. Idempotent; wired to run after each
+	# Re-create manual blocks from persisted state after a reboot, dropping entries
+	# whose TTL has passed. Idempotent; wired to run after each
 	# engine start (incl. boot) via the service.
 	#
 	# Also clean up a stale sentinel from an interrupted "apply --confirm":
@@ -312,16 +387,7 @@ cmd_restore_dyn() {
 	rm -f "$SENTINEL" 2>/dev/null || true
 	[ -s "$DYN_STATE" ] || return 0
 	ensure_dyn
-	now="$(date +%s)"
-	: > "${DYN_STATE}.n"
-	while IFS="$TAB" read -r ip fam exp; do
-		[ -n "$ip" ] || continue
-		case "$exp" in ''|*[!0-9]*) continue ;; esac
-		rem=$((exp - now)); [ "$rem" -gt 0 ] || continue
-		nft add element "$FAM" "$DYN_TABLE" "dynblock${fam}" "{ $ip timeout ${rem}s }" 2>/dev/null || true
-		printf '%s\t%s\t%s\n' "$ip" "$fam" "$exp" >> "${DYN_STATE}.n"
-	done < "$DYN_STATE"
-	mv "${DYN_STATE}.n" "$DYN_STATE"
+	restore_dyn_state
 }
 
 snapshot_current() {

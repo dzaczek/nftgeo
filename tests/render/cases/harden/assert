@@ -1,2 +1,5 @@
 + iifname "lo" counter accept
 + ct state invalid counter drop
++ tcp flags & (fin|syn) == fin|syn counter drop
++ tcp flags syn ct state new add @dos_guard_syn4 { ip saddr limit rate over 30/second burst 60 packets } counter drop
++ ct state new add @dos_guard_conn4 { ip saddr ct count over 100 } counter drop

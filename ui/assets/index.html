@@ -284,6 +284,7 @@
         </div>
         <div>
           <div class="card"><h3>System</h3><div id="health"></div></div>
+          <div class="card" style="margin-top:14px"><h3>Capacity &amp; services <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— traffic-exhaustible resources</span></h3><div id="capacity"></div></div>
           <div class="card" style="margin-top:14px"><h3>Drops over time (24h)</h3><div id="spark"></div></div>
           <div class="card" style="margin-top:14px"><h3>Top destination countries (egress)</h3><div id="cc-out"></div></div>
           <div class="card" style="margin-top:14px;display:none" id="iferrcard"><h3>Interface errors <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— since boot (Δ 1h)</span></h3><div id="iferr"></div></div>
@@ -313,6 +314,8 @@
     <section class="view" id="v-policy">
       <!-- Whitelist summary card -->
       <div id="wl-card" class="card" style="padding:10px 14px;margin-bottom:10px;display:none"></div>
+      <div id="manual-blocks-card" class="card" style="padding:10px 14px;margin-bottom:10px"></div>
+      <div class="card" style="padding:10px 14px;margin-bottom:10px"><h3>Protection <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— kernel and firewall guards</span></h3><div id="protection"></div></div>
       <div class="filters" style="justify-content:space-between">
         <input id="pf" placeholder="filter rules…" oninput="renderPolicy()">
         <span style="display:flex;gap:10px;align-items:center">
@@ -468,10 +471,37 @@
 <script>
 const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const esc=s=>String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const formatRelativeAgeJS=seconds=>{
+  if (seconds < 0) return 'just now';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h ago`;
+  if (hours > 0) return `${hours}h ${minutes}m ago`;
+  if (minutes > 0) return `${minutes}m ago`;
+  return '< 1m ago';
+};
+const formatAbsoluteLocalJS=epochSeconds=>{
+  const d = new Date(epochSeconds * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const min = pad(d.getMinutes());
+  const ss = pad(d.getSeconds());
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+};
 const j=async u=>{const r=await fetch(u);if(r.status===401||r.status===403){showLock('Session expired — generate a new token on the host.');throw new Error('unauth');}return r.json();};
 const LOG_PAGE_SIZE=200;
 let map=null, DROPS={recent:[]}, RULES=[], MODE='rw', REFRESHER=null, LOG_LOADING=false;
 let PENDTIMER=null;
+let LAST_SESSION_TOUCH=0;
+function touchSession(){
+  const now=Date.now();if(now-LAST_SESSION_TOUCH<30000)return;LAST_SESSION_TOUCH=now;
+  fetch('/api/session_touch',{method:'POST'}).then(r=>{if(r.status===401||r.status===403)showLock('Session expired — generate a new token on the host.');}).catch(()=>{});
+}
+['pointerdown','keydown','touchstart'].forEach(ev=>document.addEventListener(ev,touchSession,{passive:true}));
 function clearPend(){if(PENDTIMER){clearInterval(PENDTIMER);PENDTIMER=null;}}
 function showLock(m){$('#lock').style.display='flex';clearPend();$('#lockentry').style.display='';$('#lockspin').style.display='none';const el=$('#lockmsg');el.textContent=m||'';el.style.color='var(--drop)';if(REFRESHER){clearInterval(REFRESHER);REFRESHER=null;}}
 function hideLock(){$('#lock').style.display='none';clearPend();}
@@ -580,25 +610,120 @@ function initMap(){try{map=new jsVectorMap({selector:'#map',map:'world',backgrou
 function bars(el,obj,cls){const rows=Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]).slice(0,10);const max=rows[0]?rows[0][1]:1;
   el.innerHTML=rows.map(([k,v])=>`<div class="row"><span>${esc(k.toUpperCase())}</span><span>${v}</span></div><div class="bar ${cls||''}" style="width:${Math.max(3,100*v/max)}%"></div>`).join('')||'<span class="muted">none</span>';}
 function renderHealth(h){h=h||{};
-  const feeds=(h.feeds||[]).map(f=>`<span class="pill ${f.fresh?'allow':'deny'}" title="${(f.count||0).toLocaleString()} IPs · ${f.ageHours}h old">${esc(f.name)}</span>`).join(' ')||'<span class="muted">none</span>';
-  $('#health').innerHTML=`<div class="row"><span class="muted">Next scheduled run</span><span>${esc(h.nextRun||'—')}</span></div>
-    <div class="row"><span class="muted">Established (pkts)</span><span>${(h.established||0).toLocaleString()}</span></div>
-    <div class="row"><span class="muted">Abuse feeds</span><span>${feeds}</span></div>
-    <div class="row"><span class="muted">Geo data</span><span id="h-geo-status" class="muted">—</span></div>
-    <div class="muted mono" style="font-size:11px;margin-top:8px">${esc(h.lastRun||'no run logged')}</div>`;
-  // Update geo freshness from status.json
   const st=h.status||{};
   const geo=st.geo||{};
-  const gs=$('#h-geo-status');
-  if(gs){
-    if(geo.fetched_at){
-      const d=new Date(geo.fetched_at*1000);
-      const ageH=Math.floor((Date.now()-d.getTime())/3600000);
-      gs.innerHTML=`<span class="dot" style="background:${ageH<24?'var(--ok)':'var(--drop)'};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px"></span>${d.toLocaleDateString()} <span class="muted">(${ageH}h ago)</span>`;
+  const abuse=st.abuse||{};
+  const nowSecs=Math.floor(Date.now()/1000);
+  const runTs=st.timestamp||nowSecs;
+
+  const cacheHours=parseInt(h.zoneCacheHours||'20');
+  const retentionDays=parseInt(h.abuseRetentionDays||'30');
+
+  const warns = st.warnings || [];
+  const hasGeoFail = warns.some(w => w.includes("Zone refresh failed") || w.includes("Zone unavailable"));
+  const hasAbuseFail = warns.some(w => w.includes("AbuseIPDB download failed") || w.includes("download failed") || w.includes("using cached copy"));
+
+  // --- Geolocation Data ---
+  let geoState='Disabled';
+  let geoLastSuccess='—';
+  let geoAge='—';
+  if(h.geoActive){
+    if(!geo.fetched_at){
+      geoState='Never fetched';
     }else{
-      gs.innerHTML='<span class="muted">not yet fetched</span>';
+      geoLastSuccess=formatAbsoluteLocalJS(geo.fetched_at);
+      const ageSecs=nowSecs-geo.fetched_at;
+      geoAge=formatRelativeAgeJS(ageSecs);
+
+      const isStale=ageSecs>(cacheHours*3600);
+      const isFresh=(runTs-geo.fetched_at<=60);
+
+      if(hasGeoFail){
+        geoState='<span style="color:var(--drop);font-weight:bold">Stale (using cache after failure)</span>';
+      }else if(isFresh){
+        geoState='<span style="color:var(--ok)">Freshly downloaded</span>';
+      }else if(isStale){
+        geoState='<span style="color:var(--warnc)">Stale</span>';
+      }else{
+        geoState='<span style="color:var(--ok)">OK</span>';
+      }
     }
+  }else{
+    geoState='Disabled (no geo rules configured)';
   }
+
+  // --- Bad-IP / Abuse Data ---
+  let abuseState='Disabled';
+  let abuseLastSuccess='—';
+  let abuseAge='—';
+  const customFeedsCount=(h.feeds||[]).filter(f=>f.name!=='AbuseIPDB').length;
+  const isAbuseConfigured=abuse.api_key_present||customFeedsCount>0;
+
+  if(abuse.rule_active){
+    if(!isAbuseConfigured){
+      abuseState='Not configured (no API key and no custom feeds)';
+    }else if(!abuse.fetched_at){
+      abuseState='Never fetched';
+    }else{
+      abuseLastSuccess=formatAbsoluteLocalJS(abuse.fetched_at);
+      const ageSecs=nowSecs-abuse.fetched_at;
+      abuseAge=formatRelativeAgeJS(ageSecs);
+
+      const isStale=ageSecs>(26*3600); // 26h because run twice daily
+      const isFresh=(runTs-abuse.fetched_at<=60);
+
+      if(hasAbuseFail){
+        abuseState='<span style="color:var(--drop);font-weight:bold">Stale (using cache after failure)</span>';
+      }else if(isFresh){
+        abuseState='<span style="color:var(--ok)">Freshly downloaded</span>';
+      }else if(isStale){
+        abuseState='<span style="color:var(--warnc)">Stale</span>';
+      }else{
+        abuseState='<span style="color:var(--ok)">OK</span>';
+      }
+    }
+  }else{
+    abuseState='Disabled (no active rule targets "abuse")';
+  }
+
+  // Render individual custom bad-IP feeds
+  const feeds=(h.feeds||[]).map(f=>{
+    let ageSecs=f.ageHours*3600;
+    if(f.modTime){
+      ageSecs=nowSecs-f.modTime;
+    }
+    const relativeText=formatRelativeAgeJS(ageSecs);
+    const absoluteText=f.modTime?formatAbsoluteLocalJS(f.modTime):'—';
+    return `<div style="margin-left:10px;font-size:11.5px;padding:2px 0;display:flex;justify-content:space-between">
+      <span><span class="dot" style="background:${f.fresh?'var(--ok)':'var(--drop)'}"></span>${esc(f.name)} (${(f.count||0).toLocaleString()} IPs)</span>
+      <span class="muted">${relativeText} (${absoluteText})</span>
+    </div>`;
+  }).join('')||'<div style="margin-left:10px;" class="muted">none</div>';
+
+  $('#health').innerHTML=`
+    <div class="row"><span class="muted">Next scheduled run</span><span>${esc(h.nextRun||'—')}</span></div>
+    <div class="row"><span class="muted">Established (pkts)</span><span>${(h.established||0).toLocaleString()}</span></div>
+
+    <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+      <b style="font-size:11px;text-transform:uppercase;color:var(--mut);display:block;margin-bottom:6px">Geolocation Data</b>
+      <div class="row"><span class="muted">Cadence / Cache</span><span>Twice daily / Cache: ${cacheHours}h</span></div>
+      <div class="row"><span class="muted">Last Success</span><span>${geoLastSuccess}</span></div>
+      <div class="row"><span class="muted">Relative Age</span><span>${geoAge}</span></div>
+      <div class="row"><span class="muted">State</span><span>${geoState}</span></div>
+    </div>
+
+    <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+      <b style="font-size:11px;text-transform:uppercase;color:var(--mut);display:block;margin-bottom:6px">Bad-IP / Abuse Data</b>
+      <div class="row"><span class="muted">Cadence / Cache</span><span>Twice daily / Retention: ${retentionDays}d</span></div>
+      <div class="row"><span class="muted">Last Success</span><span>${abuseLastSuccess}</span></div>
+      <div class="row"><span class="muted">Relative Age</span><span>${abuseAge}</span></div>
+      <div class="row"><span class="muted">State</span><span>${abuseState}</span></div>
+
+      <div style="margin-top:8px;font-size:11px;color:var(--mut)"><b>Per-feed Freshness:</b></div>
+      ${feeds}
+    </div>
+
+    <div class="muted mono" style="font-size:11px;margin-top:10px;border-top:1px solid var(--line);padding-top:6px">${esc(h.lastRun||'no run logged')}</div>`;
 }
 // ---- SOC area charts (pure SVG, no deps) ----
 function fmtBits(v){if(!isFinite(v)||v<1)return '0 b/s';const u=['b/s','Kb/s','Mb/s','Gb/s','Tb/s'];let i=0;while(v>=1000&&i<u.length-1){v/=1000;i++;}return (v>=100?Math.round(v):v.toFixed(1))+' '+u[i];}
@@ -848,6 +973,62 @@ async function clearAbuseIPDBKey(){
     else{alert(d.error||'Failed to clear');}
   }catch(e){alert('Error: '+e.message);}
 }
+function protectionState(on,label){return `<span class="pill" style="background:${on?'#173a2a':'#3a1720'};color:${on?'#2ecc71':'#ff8a9c'}">${on?'ON':'OFF'}</span> <span>${label}</span>`;}
+function protectionCount(n,label){return `<span class="muted">${esc(label)}: <b style="color:${n?'var(--warnc)':'var(--fg)'}">${Number(n||0).toLocaleString()}</b></span>`;}
+async function loadProtection(){
+  const el=$('#protection');if(!el)return;
+  // Do not overwrite a form while an operator is changing a threshold. The
+  // normal five-second dashboard refresh resumes when focus leaves the card.
+  if(document.activeElement&&el.contains(document.activeElement))return;
+  try{renderProtection(await j('/api/protection'));}catch(e){el.innerHTML='<span class="muted">Protection status unavailable.</span>';}
+}
+function renderProtection(p){
+  const el=$('#protection');if(!el)return;
+  const c=p.configured||{}, k=p.kernel||{}, hit=p.counters||{};
+  const connMax=Number(k.conntrackMax||0), connCount=Number(k.conntrackCount||0), connPct=connMax?Math.round(connCount*100/connMax):0;
+  const live=p.live?'<span class="pill" style="background:#173a2a;color:#2ecc71">LIVE</span>':'<span class="pill" style="background:#3a1720;color:#ff8a9c">NOT APPLIED</span>';
+  const configuration=MODE==='ro'?'':`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px">
+    <label class="fld"><span><input id="prot-harden" type="checkbox" ${c.harden?'checked':''}> Baseline hardening</span></label>
+    <label class="fld"><span><input id="prot-dos" type="checkbox" ${c.dosGuard?'checked':''}> DoS guard</span></label>
+    <label class="fld"><span>Anti-spoof interfaces</span><input id="prot-antispoof" value="${esc(c.antispoof||'')}" placeholder="eth0"></label>
+    <label class="fld"><span>SYN rate / source</span><input id="prot-syn-rate" value="${esc(c.dosSynRate||'30/second')}" placeholder="30/second"></label>
+    <label class="fld"><span>SYN burst</span><input id="prot-syn-burst" value="${esc(c.dosSynBurst||'60')}" inputmode="numeric"></label>
+    <label class="fld"><span>Concurrent connections / source</span><input id="prot-conn-limit" value="${esc(c.dosConnLimit||'100')}" inputmode="numeric"></label>
+  </div><div style="display:flex;align-items:center;gap:8px;margin-top:8px"><button class="btn-ghost" style="color:var(--fg)" onclick="saveProtection(false)">Save</button><button class="btn-go" onclick="saveProtection(true)">Save &amp; Apply</button><span class="muted" style="font-size:11px">Apply uses a 90-second deadman; then confirm Keep changes in the deploy bar.</span></div>`;
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${live}
+    ${protectionState(!!c.harden,'baseline')}${protectionState(!!c.antispoof,'anti-spoof')}${protectionState(!!c.dosGuard,'DoS guard')}
+    ${protectionState(Number(k.synCookies)===1,'SYN cookies')}</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:12px">
+      ${protectionCount(hit.antispoof,'anti-spoof drops')}${protectionCount(hit.tcpFlags,'bad TCP flags')}${protectionCount(hit.synRate,'SYN-rate drops')}${protectionCount(hit.connLimit,'connection-cap drops')}${protectionCount(hit.synproxy,'SYNPROXY handshakes')}
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:7px">Conntrack: ${connCount.toLocaleString()} / ${connMax.toLocaleString()} (${connPct}%) · SYN-RECV timeout ${Number(k.synRecvTimeout||0)}s · established timeout ${Number(k.establishedTimeout||0)/86400}d</div>${configuration}`;
+}
+async function saveProtection(apply){
+  if(apply&&!confirm('Apply protection settings now? A 90-second deadman will roll them back unless you confirm Keep changes.'))return;
+  const body={harden:$('#prot-harden').checked,antispoof:$('#prot-antispoof').value.trim(),dosGuard:$('#prot-dos').checked,dosSynRate:$('#prot-syn-rate').value.trim(),dosSynBurst:$('#prot-syn-burst').value.trim(),dosConnLimit:$('#prot-conn-limit').value.trim(),apply:!!apply};
+  try{const r=await fetch('/api/protection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok){toast(d.error||'Cannot save protection settings.');return;}renderProtection(d);if(apply)refreshCommitBar();toast(d.message||'Protection settings saved.');}catch(e){toast('Cannot save protection settings.');}
+}
+let CAPACITY_UPDATED=0;
+function capacityRow(label,used,total,detail){
+  const pct=total>0?Math.max(0,Math.min(100,100*used/total)):0;
+  const color=pct>=90?'var(--drop)':pct>=75?'var(--warnc)':'var(--ok)';
+  const value=total>0?`${esc(fmtBytes(used))} / ${esc(fmtBytes(total))} (${pct.toFixed(0)}%)`:esc(detail||fmtNum(used));
+  return `<div style="display:grid;grid-template-columns:130px 1fr auto;gap:8px;align-items:center;margin:5px 0;font-size:12px"><span>${esc(label)}</span><span style="height:6px;background:var(--line);border-radius:4px;overflow:hidden"><i style="display:block;height:100%;width:${pct}%;background:${color}"></i></span><span class="muted" style="white-space:nowrap">${value}</span></div>`;
+}
+async function loadCapacity(){
+  const el=$('#capacity');if(!el||Date.now()-CAPACITY_UPDATED<15000)return;
+  try{const d=await j('/api/capacity');CAPACITY_UPDATED=Date.now();renderCapacity(d);}catch(e){el.innerHTML='<span class="muted">Capacity status unavailable.</span>';}
+}
+function renderCapacity(d){
+  const el=$('#capacity');if(!el)return;
+  const mem=d.memory||{}, ct=d.conntrack||{}, files=d.files||{}, disk=d.disk||{}, sockets=d.sockets||{}, soft=d.softnet||{}, tcp=sockets.tcp||{}, tcp6=sockets.tcp6||{}, udp=sockets.udp||{}, udp6=sockets.udp6||{};
+  const swapTotal=Number(mem.swapTotal||0), swapUsed=Math.max(0,Number(mem.swapTotal||0)-Number(mem.swapFree||0));
+  const services=(d.services||[]).map(s=>{const completed=s.ActiveState==='inactive'&&s.Type==='oneshot'&&s.Result==='success',active=s.ActiveState==='active'||completed;const name=(s.unit||'').replace('.service','').replace('.timer','');const memNow=Number(s.MemoryCurrent||0);const tasks=s.TasksCurrent&&s.TasksCurrent!=='infinity'?` · ${esc(s.TasksCurrent)} tasks`:'';const label=completed?'completed':active?'active':s.ActiveState||'unknown';return `<span class="pill" style="background:${active?'#173a2a':'#3a1720'};color:${active?'#2ecc71':'#ff8a9c'}" title="${esc(s.ActiveState||'unknown')} / ${esc(s.SubState||'')} · ${esc(s.Result||'')} · ${memNow?fmtBytes(memNow):'no memory metric'}${tasks}">${esc(name)}: ${esc(label)}</span>`;}).join(' ');
+  const load=(d.load||[]).slice(0,3).join(' / ')||'—';
+  el.innerHTML=`${capacityRow('Memory',Number(mem.used||0),Number(mem.total||0))}${swapTotal?capacityRow('Swap',swapUsed,swapTotal):'<div class="muted" style="font-size:12px;margin:5px 0">Swap: disabled</div>'}${capacityRow('Disk',Number(disk.used||0),Number(disk.total||0))}${capacityRow('Conntrack',Number(ct.count||0),Number(ct.max||0),fmtNum(ct.count||0))}${capacityRow('File handles',Number(files.allocated||0),Number(files.max||0),fmtNum(files.allocated||0))}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:12px"><span>TCP: <b>${fmtNum((tcp.inuse||0)+(tcp6.inuse||0))}</b> in use · ${fmtNum((tcp.tw||0)+(tcp6.tw||0))} TIME_WAIT · ${fmtNum((tcp.orphan||0)+(tcp6.orphan||0))} orphan</span><span>UDP: <b>${fmtNum((udp.inuse||0)+(udp6.inuse||0))}</b> in use</span><span>SoftNet: <b style="color:${soft.squeezedPerSecond>0?'var(--warnc)':'var(--fg)'}">${fmtNum(soft.squeezed||0)} squeezed</b> (${Number(soft.squeezedPerSecond||0).toFixed(2)}/s) · ${fmtNum(soft.dropped||0)} dropped (${Number(soft.droppedPerSecond||0).toFixed(2)}/s)</span><span>Load: <b>${esc(load)}</b></span></div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:9px">${services||'<span class="muted">systemd status unavailable</span>'}</div>`;
+}
 async function refresh(){
   try{
     const s=await j('/api/status');
@@ -856,6 +1037,7 @@ async function refresh(){
     $('#loadtxt').textContent=s.loaded?'table loaded':'not loaded';
     $('#upd').textContent=new Date().toLocaleTimeString();
     renderHealth(s.health);
+    loadCapacity();
     const logLimit=Math.max(LOG_PAGE_SIZE,(DROPS.recent||[]).length);
     const d=await j('/api/drops?since=-24h&limit='+logLimit); DROPS=d;
     updateLogWarn(d);
@@ -932,6 +1114,8 @@ function baselineAcceptsFor(dir){
   return (c.whitelist||0)+(c.established||0);
 }
 let WL_DATA=null; // cached whitelist summary for the policy-top card
+let MANUAL_BLOCKS=[]; // persistent entries created by `nftgeo block`
+let MANUAL_BLOCKS_EXPANDED=false;
 async function loadPolicy(){
   try{const o=await j('/api/objects');OBJMAP={};ZONES=o.zones||[];
     [...(o.groups||[]),...(o.regions||[])].forEach(g=>OBJMAP[(g.name||'').toUpperCase()]=(g.value||'').split(/[ ,]+/).filter(Boolean));}catch(e){}
@@ -948,6 +1132,9 @@ async function loadPolicy(){
   // Load whitelist summary for the card at the top of the policy view.
   try{WL_DATA=await j('/api/whitelist/draft');}catch(e){WL_DATA=null;}
   renderWhitelistCard();
+  try{const blocks=await j('/api/manual-blocks');MANUAL_BLOCKS=blocks.blocks||[];}catch(e){MANUAL_BLOCKS=[];}
+  renderManualBlocks();
+  loadProtection();
   const d=await j('/api/rules/draft'); RULES=d.rules||[]; FILES=d.files||[{name:'rules.conf'}]; renderPolicy();
 }
 // Implicit accepts that run before your policy (no editable row of their own):
@@ -997,6 +1184,41 @@ function renderWhitelistCard(){
   </div>`;
   const editBtn=$('#wl-edit');
   if(editBtn)editBtn.addEventListener('click',whitelistDrawer);
+}
+function blockRemaining(seconds){
+  seconds=Math.max(0,Number(seconds)||0);
+  const days=Math.floor(seconds/86400), hours=Math.floor((seconds%86400)/3600), minutes=Math.floor((seconds%3600)/60);
+  if(days)return `${days}d ${hours}h`;
+  if(hours)return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+function renderManualBlocks(){
+  const el=$('#manual-blocks-card');if(!el)return;
+  const blocks=MANUAL_BLOCKS||[];
+  const count=blocks.length;
+  const shown=MANUAL_BLOCKS_EXPANDED?blocks:blocks.slice(0,10);
+  const rows=shown.map(b=>{
+    const expiry=b.permanent
+      ? '<span class="chip" style="background:var(--drop);color:#fff">Permanent</span>'
+      : `<span>${esc(new Date(b.expiresAt).toLocaleString())}<br><span class="muted" style="font-size:11px">${esc(blockRemaining(b.remainingSeconds))} remaining</span></span>`;
+    const action=MODE==='ro'?'':`<button class="btn-ghost" style="color:var(--fg);padding:3px 8px;font-size:11px" onclick="unblockManualBlock('${esc(b.target)}')">Unblock</button>`;
+    return `<tr><td><code>${esc(b.target)}</code></td><td class="muted">IPv${b.family}</td><td>${expiry}</td><td style="text-align:right">${action}</td></tr>`;
+  }).join('');
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span class="chip" style="background:var(--drop);color:#fff;font-weight:600">⊘ Manual blocks</span>
+    <span class="muted" style="font-size:12px">${count?`${count} active block${count!==1?'s':''}`:'No active manual blocks'}</span>
+    <span class="muted" style="font-size:11px">Created by <code>nftgeo block</code> or the log action</span>
+    ${count>10?`<button class="btn-ghost" style="margin-left:auto;color:var(--fg);white-space:nowrap" onclick="toggleManualBlocks()">${MANUAL_BLOCKS_EXPANDED?'Collapse':'Show all '+count}</button>`:''}
+  </div>${count?`<div class="tablewrap" style="margin-top:8px"><table class="poltable"><thead><tr><th>IP / CIDR</th><th>Family</th><th>Blocked until</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${!MANUAL_BLOCKS_EXPANDED&&count>10?`<div class="muted" style="font-size:11px;margin-top:6px">Showing 10 of ${count} active blocks.</div>`:''}`:''}`;
+}
+function toggleManualBlocks(){MANUAL_BLOCKS_EXPANDED=!MANUAL_BLOCKS_EXPANDED;renderManualBlocks();}
+async function unblockManualBlock(target){
+  if(MODE==='ro'||!confirm(`Unblock ${target}?`))return;
+  try{
+    const res=await post('/api/manual-blocks',{target});
+    if(res&&res.error){toast(res.error);return;}
+    await loadPolicy();toast(res.message||`${target} unblocked.`);
+  }catch(e){if(e.message!=='unauth')toast('Cannot unblock address.');}
 }
 // Whitelist editor drawer: GET drafts, POST saves draft, deploy via Commit.
 async function whitelistDrawer(){
@@ -1907,11 +2129,41 @@ applyTheme(localStorage.getItem('nftgeo-theme')||'dark');
 function closeModal(){$('#modal').style.display='none';}
 async function lookup(ip){const m=$('#modal'),b=$('#modalbody');m.style.display='flex';b.innerHTML='Looking up '+esc(ip)+' …';
   try{const r=await j('/api/lookup?ip='+encodeURIComponent(ip));let h=`<h3>${esc(ip)}</h3>`;
+	const w=r.rdap||{};
+	if(MODE==='rw')h+=`<div style="margin:0 0 14px"><button onclick="showBlockForm('${esc(ip)}','${esc(w.cidr||'')}')" style="background:#ff5568;color:#2a0810;border:0;border-radius:7px;padding:7px 12px;font-weight:600;cursor:pointer">Block IP / range…</button></div>`;
     h+=`<div class="lk"><b>Reverse DNS (PTR)</b><div class="mono">${(r.ptr||['—']).map(esc).join('<br>')}</div></div>`;
-    const w=r.rdap||{};h+='<div class="lk"><b>Whois (RDAP)</b><table>';
+    h+='<div class="lk"><b>Whois (RDAP)</b><table>';
     [['name','Network'],['org','Org'],['country','Country'],['cidr','Range'],['handle','Handle'],['type','Type']].forEach(([k,l])=>{if(w[k])h+=`<tr><td>${l}</td><td>${esc(w[k])}</td></tr>`;});
     if(!Object.keys(w).length)h+='<tr><td colspan="2" class="muted">no RDAP data</td></tr>';h+='</table></div>';b.innerHTML=h;
   }catch(e){b.innerHTML='lookup failed';}}
+function showBlockForm(ip,network){
+  const b=$('#modalbody');
+  b.innerHTML=`<h3>Block address or range</h3>
+    <label class="fld"><span>What to block</span><select id="block-scope" data-ip="${esc(ip)}" data-network="${esc(network||'')}" onchange="setBlockScope()"><option value="ip">Only this IP — ${esc(ip)}</option>${network?`<option value="network">Provider-reported network — ${esc(network)}</option>`:''}<option value="custom">A custom CIDR range…</option></select></label>
+    <label class="fld"><span>IP address or CIDR</span><input id="block-target" value="${esc(ip)}" spellcheck="false" autocomplete="off"></label>
+    <label class="fld"><span>Duration</span><select id="block-ttl" onchange="toggleBlockCustom()"><option value="1h">1 hour</option><option value="24h">24 hours</option><option value="7d" selected>7 days</option><option value="30d">30 days</option><option value="custom">Custom…</option><option value="forever">Permanent</option></select></label>
+    <label class="fld" id="block-custom-wrap" style="display:none"><span>Custom duration</span><input id="block-custom" placeholder="e.g. 90m, 12h, 14d" spellcheck="false"></label>
+    <label class="fld" id="block-force-wrap" style="display:none"><span><input id="block-force" type="checkbox"> I understand that blocking a CIDR can affect many hosts, including my access.</span></label>
+    <p class="muted" style="font-size:12px;margin:0">The selector above states whether you block one IP or the network returned by RDAP. The block takes effect immediately, persists across reloads and restarts, and can be removed with <code>nftgeo unblock</code>.</p>
+    <div style="display:flex;gap:8px;margin-top:6px"><button onclick="submitBlock()" style="background:#ff5568;color:#2a0810;border:0;border-radius:7px;padding:7px 12px;font-weight:600;cursor:pointer">Block</button><button onclick="closeModal()" class="btn-ghost" style="border-radius:7px;padding:7px 12px;cursor:pointer">Cancel</button></div>`;
+  const target=$('#block-target');target.addEventListener('input',toggleBlockCIDR);toggleBlockCIDR();
+}
+function setBlockScope(){const s=$('#block-scope'),t=$('#block-target');if(s.value==='ip')t.value=s.dataset.ip;else if(s.value==='network')t.value=s.dataset.network;else{t.value='';t.focus();}toggleBlockCIDR();}
+function toggleBlockCustom(){$('#block-custom-wrap').style.display=$('#block-ttl').value==='custom'?'flex':'none';}
+function toggleBlockCIDR(){const range=$('#block-target').value.includes('/');$('#block-force-wrap').style.display=range?'flex':'none';}
+async function submitBlock(){
+  const target=$('#block-target').value.trim(),choice=$('#block-ttl').value;
+  const ttl=choice==='custom'?$('#block-custom').value.trim():choice;
+  const force=!!($('#block-force')&&$('#block-force').checked);
+  if(!target||!ttl){toast('Enter an address and duration.');return;}
+  if(target.includes('/')&&!force){toast('Confirm the CIDR-range warning first.');return;}
+  try{
+    const r=await fetch('/api/blocks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target,ttl,force})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Block failed.');return;}
+    closeModal();toast(d.message||'Blocked.');
+  }catch(e){toast('Block request failed.');}
+}
 document.addEventListener('click',e=>{const t=e.target.closest('.ipl');if(t&&t.dataset.ip)lookup(t.dataset.ip);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeDrawer();}});
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});

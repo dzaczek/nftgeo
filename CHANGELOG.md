@@ -8,6 +8,102 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.12] - 2026-07-20
+
+### Fixed
+- Dashboard background refreshes no longer keep an unattended session alive.
+  Only real browser activity renews the configured idle session TTL.
+
+## [1.74.0-beta.11] - 2026-07-20
+
+### Added
+- Dashboard SoftNet pressure counters: cumulative dropped/squeezed packets and
+  their per-second rates.
+
+## [1.74.0-beta.10] - 2026-07-20
+
+### Added
+- Dashboard Capacity & services monitoring for memory, swap, disk, conntrack,
+  kernel file handles, TCP/UDP socket pressure, load averages, and nftgeo
+  systemd-unit state.
+
+## [1.74.0-beta.9] - 2026-07-20
+
+### Changed
+- Moved dashboard Protection controls into a dedicated section at the top of
+  the Policy view.
+
+## [1.74.0-beta.8] - 2026-07-20
+
+### Added
+- Dashboard **Protection** card: configured/live state, kernel SYN-cookie and
+  conntrack state, live protection counters, editable anti-spoof/DoS settings,
+  and deadman-protected Save & Apply.
+
+## [1.74.0-beta.7] - 2026-07-19
+
+### Added
+- Optional `DOS_GUARD` baseline: malformed TCP-flag drops, per-source SYN
+  metering, and a per-source concurrent-connection cap for input/forward.
+
+### Changed
+- Anti-spoofing and SYNPROXY can be enabled independently as before; the new
+  DoS guard is opt-in and validates all configured thresholds before rendering.
+
+## [1.74.0-beta.6] - 2026-07-19
+
+### Changed
+- Manual blocks in the dashboard Policy view are collapsed after the first 10
+  entries. The full active count remains visible and **Show all** expands them.
+
+## [1.74.0-beta.5] - 2026-07-19
+
+### Added
+- The dashboard Policy view now lists active manual blocks with their target,
+  expiry or permanent status, remaining time, and an Unblock action.
+
+### Fixed
+- Creating a manual block no longer loses its target while restoring existing
+  persistent blocks, which previously made dashboard and CLI block requests
+  fail with an nftables `unexpected timeout` error.
+
+## [1.74.0-beta.4] - 2026-07-19
+
+### Fixed
+- CLI now uses the same local-address check as the dashboard, rejecting any
+  IPv4/IPv6 CIDR that contains this host's WAN, LAN, or loopback address.
+
+## [1.74.0-beta.3] - 2026-07-19
+
+### Fixed
+- Manual blocks now refuse this host's own WAN, LAN, and loopback addresses.
+  The dashboard also rejects a CIDR that would contain any local address.
+- The block dialog explicitly distinguishes a single IP from the
+  provider-reported network returned by RDAP.
+
+## [1.74.0-beta.2] - 2026-07-19
+
+### Added
+- Dashboard action to block a logged IP or CIDR for 1 hour, 24 hours, 7 days
+  (default), 30 days, a custom duration, or permanently.
+- CLI manual blocks now support CIDR ranges and permanent entries (`forever`),
+  with persisted restoration after reloads and reboots.
+
+## [1.74.0-beta.1] - 2026-07-19
+
+### Added
+- Dashboard and console freshness status for geo and bad-IP data: configured
+  cadence, last successful refresh, relative age, explicit stale/fallback
+  states, and per-feed source freshness.
+
+## [1.73.0] - 2026-07-19
+
+### Added
+- `nftgeo-ui cli`: an interactive terminal console with Dashboard, Logs,
+  Policy, Objects, and System views. It uses the existing draft and deadman
+  deployment path. This console is currently a demonstration preview; its UI
+  and keyboard workflow are not yet a stable interface.
+
 ## [1.72.10] - 2026-07-12
 
 ### Changed

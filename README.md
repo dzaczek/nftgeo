@@ -82,11 +82,11 @@ to everyone else when the chain policy is `accept`. Add a catch-all `deny ...
 any` below a geo/IP-restricted allow, or use `DEFAULT_INPUT="drop"` once your
 policy is ready.
 
-## Dashboard
+## Dashboard and console
 
-The optional `nftgeo-ui` dashboard binds to `127.0.0.1:8787` by default and
-provides drop maps, counters, interface monitoring, a visual policy editor,
-object editors, templates, and a draft-to-commit deploy flow.
+The optional `nftgeo-ui` web dashboard binds to `127.0.0.1:8787` by default
+and provides drop maps, counters, interface monitoring, a visual policy
+editor, object editors, templates, and a draft-to-commit deploy flow.
 
 ```sh
 sudo systemctl enable --now nftgeo-ui.service
@@ -98,6 +98,18 @@ For remote access, forward it over SSH:
 ```sh
 ssh -L 8787:127.0.0.1:8787 user@host
 ```
+
+It also includes an interactive terminal console:
+
+```sh
+sudo nftgeo-ui cli
+```
+
+The console has Dashboard, Logs, Policy, Objects, and System views, and uses
+the same draft and deadman deployment path as the web editor. **It is a
+demonstration/preview interface for now**: its layout, keys, and editing flow
+may change. For routine or scripted administration, use `nftgeo` and the web
+dashboard.
 
 ## Documentation
 

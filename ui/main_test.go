@@ -2,11 +2,13 @@ package main
 
 import (
 	"crypto/tls"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +107,86 @@ func TestSessionAuthFlow(t *testing.T) {
 	}
 	if response := postSession(rwToken); response.Code != http.StatusUnauthorized {
 		t.Errorf("reused read-write token status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestNormalizeBlockRequest(t *testing.T) {
+	cases := []struct {
+		name      string
+		req       blockRequest
+		wantIP    string
+		wantTTL   string
+		wantCIDR  bool
+		wantError bool
+	}{
+		{name: "default seven days", req: blockRequest{Target: "203.0.113.7"}, wantIP: "203.0.113.7", wantTTL: "7d"},
+		{name: "normalizes range", req: blockRequest{Target: "203.0.113.7/24", TTL: "24h", Force: true}, wantIP: "203.0.113.0/24", wantTTL: "24h", wantCIDR: true},
+		{name: "permanent alias", req: blockRequest{Target: "2001:db8::1", TTL: "infinity"}, wantIP: "2001:db8::1", wantTTL: "forever"},
+		{name: "range needs confirmation", req: blockRequest{Target: "203.0.113.0/24", TTL: "7d"}, wantError: true},
+		{name: "rejects invalid duration", req: blockRequest{Target: "203.0.113.7", TTL: "never"}, wantError: true},
+		{name: "rejects invalid address", req: blockRequest{Target: "not-an-ip", TTL: "7d"}, wantError: true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			gotIP, gotTTL, gotCIDR, err := normalizeBlockRequest(tt.req)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("error = %v, want error=%t", err, tt.wantError)
+			}
+			if tt.wantError {
+				return
+			}
+			if gotIP != tt.wantIP || gotTTL != tt.wantTTL || gotCIDR != tt.wantCIDR {
+				t.Errorf("got (%q, %q, %t), want (%q, %q, %t)", gotIP, gotTTL, gotCIDR, tt.wantIP, tt.wantTTL, tt.wantCIDR)
+			}
+		})
+	}
+}
+
+func TestBlockTargetContainsAddress(t *testing.T) {
+	v4 := net.ParseIP("192.0.2.10")
+	v6 := net.ParseIP("2001:db8:1::10")
+	cases := []struct {
+		target  string
+		address net.IP
+		want    bool
+	}{
+		{"192.0.2.10", v4, true},
+		{"192.0.2.11", v4, false},
+		{"192.0.2.0/24", v4, true},
+		{"192.0.3.0/24", v4, false},
+		{"2001:db8:1::/64", v6, true},
+		{"2001:db8:2::/64", v6, false},
+	}
+	for _, tt := range cases {
+		if got := blockTargetContainsAddress(tt.target, tt.address); got != tt.want {
+			t.Errorf("blockTargetContainsAddress(%q, %s) = %t, want %t", tt.target, tt.address, got, tt.want)
+		}
+	}
+}
+
+func TestManualBlocksReadsActivePersistentState(t *testing.T) {
+	previous := dynStateFile
+	dynStateFile = filepath.Join(t.TempDir(), "dynblock.tsv")
+	defer func() { dynStateFile = previous }()
+
+	expires := time.Now().Add(time.Hour).Unix()
+	state := "203.0.113.7\t4\t" + strconv.FormatInt(expires, 10) + "\n" +
+		"2001:db8:bad::/48\t6\t0\n" +
+		"198.51.100.9\t4\t1\n" + // expired
+		"not-a-valid-entry\t4\tbad\n"
+	if err := os.WriteFile(dynStateFile, []byte(state), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	blocks := manualBlocks()
+	if len(blocks) != 2 {
+		t.Fatalf("manualBlocks() returned %d entries, want 2: %#v", len(blocks), blocks)
+	}
+	if blocks[0].Target != "203.0.113.7" || blocks[0].Permanent || blocks[0].RemainingSeconds <= 0 {
+		t.Errorf("unexpected timed block: %#v", blocks[0])
+	}
+	if blocks[1].Target != "2001:db8:bad::/48" || !blocks[1].Permanent || blocks[1].ExpiresAt != "" {
+		t.Errorf("unexpected permanent block: %#v", blocks[1])
 	}
 }
 

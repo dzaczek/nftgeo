@@ -137,7 +137,7 @@ sudo nftgeo block 203.0.113.7          # block for 1h (default)
 sudo nftgeo block 203.0.113.7 2d       # block for 2 days (30m, 1h, 2d, 3600s...)
 sudo nftgeo block --force 10.0.0.5 1h  # override whitelist/own-SSH-source guard
 sudo nftgeo unblock 203.0.113.7        # remove a dynamic block
-sudo nftgeo blocklist                  # list dynamic blocks + remaining TTL
+sudo nftgeo blocklist                  # list manual blocks + remaining TTL
 ```
 
 ### Blocklist sources (config → apply)
@@ -176,7 +176,7 @@ RESOLVERS="1.1.1.1 8.8.8.8 local"      # resolve via public DNS first
 ```sh
 nftgeo status                          # one screen: version, sets, drop counters, next run
 nftgeo check 203.0.113.7               # what happens to this IP (whitelist/abuse/geo + verdict)
-nftgeo blocklist                       # current dynamic blocks
+nftgeo blocklist                       # current manual blocks
 
 nft list table inet nftgeo             # full ruleset with per-rule counters
 nft list chain inet nftgeo input       # one chain (or output / forward)

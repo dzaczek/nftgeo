@@ -47,6 +47,7 @@ var (
 	table              = env("TABLE_NAME", "nftgeo")
 	zoneDir            = env("ZONE_DIR", "/var/lib/nftgeo/zones")
 	engine             = env("NFTGEO_UPDATE", "/usr/sbin/nftgeo-update")
+	operatorCLI        = env("NFTGEO_CLI", "/usr/sbin/nftgeo")
 	configFile         = env("CONFIG_FILE", "/etc/nftgeo/config")
 	rulesFile          = env("RULES_FILE", "/etc/nftgeo/rules.conf")
 	rulesDir           = env("RULES_DIR", "/etc/nftgeo/rules.d")
@@ -304,6 +305,315 @@ func setConfigValue(key, val string) error {
 	return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
 }
 
+type configSetting struct{ key, value string }
+
+// setConfigValues updates related protection settings in one write, avoiding a
+// half-configured guard if a dashboard save is interrupted.
+func setConfigValues(values []configSetting) error {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	found := make(map[string]bool, len(values))
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		for _, setting := range values {
+			if strings.HasPrefix(trimmed, setting.key+"=") {
+				lines[i] = setting.key + "=\"" + setting.value + "\""
+				found[setting.key] = true
+			}
+		}
+	}
+	for _, setting := range values {
+		if !found[setting.key] {
+			lines = append(lines, setting.key+"=\""+setting.value+"\"")
+		}
+	}
+	return os.WriteFile(configFile, []byte(strings.Join(lines, "\n")), 0600)
+}
+
+func configEnabled(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(configValue(key)))
+	return v != "" && v != "0" && v != "false" && v != "no"
+}
+
+var (
+	protectionRateRe   = regexp.MustCompile(`^[1-9][0-9]*/(second|minute|hour)$`)
+	protectionNumberRe = regexp.MustCompile(`^[1-9][0-9]*$`)
+)
+
+// protectionStatus combines declared configuration with the current ruleset and
+// kernel state. Counters are live nftables counters, so an operator can tell
+// whether a guard merely exists or has actually rejected traffic.
+func protectionStatus() map[string]interface{} {
+	counters := map[string]uint64{"antispoof": 0, "tcpFlags": 0, "synRate": 0, "connLimit": 0, "synproxy": 0}
+	loaded := tableLoaded()
+	if loaded {
+		for _, hook := range []string{"input", "forward"} {
+			out, err := run("nft", "list", "chain", fam, table, hook)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(out, "\n") {
+				m := reCounter.FindStringSubmatch(line)
+				if m == nil {
+					continue
+				}
+				packets, _ := strconv.ParseUint(m[1], 10, 64)
+				switch {
+				case strings.Contains(line, ":antispoof "):
+					counters["antispoof"] += packets
+				case strings.Contains(line, "dos_guard_syn"):
+					counters["synRate"] += packets
+				case strings.Contains(line, "dos_guard_conn"):
+					counters["connLimit"] += packets
+				case strings.Contains(line, "synproxy"):
+					counters["synproxy"] += packets
+				case strings.Contains(line, "tcp flags"):
+					counters["tcpFlags"] += packets
+				}
+			}
+		}
+	}
+	return map[string]interface{}{
+		"configured": map[string]interface{}{
+			"harden": configEnabled("HARDEN"), "antispoof": configValue("ANTISPOOF"),
+			"dosGuard": configEnabled("DOS_GUARD"), "dosSynRate": configValue("DOS_SYN_RATE"),
+			"dosSynBurst": configValue("DOS_SYN_BURST"), "dosConnLimit": configValue("DOS_CONN_LIMIT"),
+		},
+		"live": loaded, "counters": counters,
+		"kernel": map[string]uint64{
+			"synCookies":         procUint("/proc/sys/net/ipv4/tcp_syncookies"),
+			"conntrackCount":     procUint("/proc/sys/net/netfilter/nf_conntrack_count"),
+			"conntrackMax":       procUint("/proc/sys/net/netfilter/nf_conntrack_max"),
+			"synRecvTimeout":     procUint("/proc/sys/net/netfilter/nf_conntrack_tcp_timeout_syn_recv"),
+			"establishedTimeout": procUint("/proc/sys/net/netfilter/nf_conntrack_tcp_timeout_established"),
+		},
+	}
+}
+
+func handleProtection(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, protectionStatus())
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"GET or POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Harden       bool   `json:"harden"`
+		AntiSpoof    string `json:"antispoof"`
+		DOSGuard     bool   `json:"dosGuard"`
+		DOSSynRate   string `json:"dosSynRate"`
+		DOSSynBurst  string `json:"dosSynBurst"`
+		DOSConnLimit string `json:"dosConnLimit"`
+		Apply        bool   `json:"apply"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	antiSpoof := strings.Join(strings.Fields(strings.ReplaceAll(req.AntiSpoof, ",", " ")), " ")
+	for _, iface := range strings.Fields(antiSpoof) {
+		if !regexp.MustCompile(`^[A-Za-z0-9._@:-]+$`).MatchString(iface) {
+			http.Error(w, `{"error":"invalid anti-spoof interface"}`, http.StatusBadRequest)
+			return
+		}
+	}
+	if req.DOSGuard && (!protectionRateRe.MatchString(req.DOSSynRate) || !protectionNumberRe.MatchString(req.DOSSynBurst) || !protectionNumberRe.MatchString(req.DOSConnLimit)) {
+		http.Error(w, `{"error":"DoS limits require rate N/second|minute|hour and positive numeric burst/connection values"}`, http.StatusBadRequest)
+		return
+	}
+	boolValue := func(v bool) string {
+		if v {
+			return "1"
+		}
+		return ""
+	}
+	settings := []configSetting{
+		{"HARDEN", boolValue(req.Harden)}, {"ANTISPOOF", antiSpoof}, {"DOS_GUARD", boolValue(req.DOSGuard)},
+		{"DOS_SYN_RATE", strings.TrimSpace(req.DOSSynRate)}, {"DOS_SYN_BURST", strings.TrimSpace(req.DOSSynBurst)}, {"DOS_CONN_LIMIT", strings.TrimSpace(req.DOSConnLimit)},
+	}
+	for _, setting := range settings {
+		if strings.ContainsAny(setting.value, "\"\n\r$`\\;") {
+			http.Error(w, `{"error":"invalid configuration value"}`, http.StatusBadRequest)
+			return
+		}
+	}
+	if err := setConfigValues(settings); err != nil {
+		http.Error(w, `{"error":"cannot write config"}`, http.StatusInternalServerError)
+		return
+	}
+	status := protectionStatus()
+	if req.Apply {
+		out, err := runEnv(nil, operatorCLI, "apply", "--confirm", "90")
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, strings.TrimSpace(out)), http.StatusBadRequest)
+			return
+		}
+		status = protectionStatus()
+		status["message"] = "Protection applied with a 90-second deadman. Confirm Keep changes in the deploy bar."
+	} else {
+		status["message"] = "Protection configuration saved. Use Save & Apply to activate it with the deadman."
+	}
+	writeJSON(w, status)
+}
+
+var (
+	geoActiveCache     bool
+	geoActiveCheckTime time.Time
+	geoActiveMu        sync.Mutex
+)
+
+func isGeoActiveCached() bool {
+	geoActiveMu.Lock()
+	defer geoActiveMu.Unlock()
+
+	var latest time.Time
+	checkFile := func(path string) {
+		if fi, err := os.Stat(path); err == nil {
+			if fi.ModTime().After(latest) {
+				latest = fi.ModTime()
+			}
+		}
+	}
+
+	checkFile(configFile)
+	checkFile(rulesFile)
+	checkFile(objLiveFile)
+	checkFile(objDraftFile)
+
+	if ents, err := os.ReadDir(rulesDir); err == nil {
+		for _, e := range ents {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".conf") {
+				checkFile(filepath.Join(rulesDir, e.Name()))
+			}
+		}
+	}
+
+	if ents, err := os.ReadDir(draftDir); err == nil {
+		for _, e := range ents {
+			checkFile(filepath.Join(draftDir, e.Name()))
+		}
+	}
+
+	if !latest.IsZero() && latest.Equal(geoActiveCheckTime) {
+		return geoActiveCache
+	}
+
+	geoActiveCache = calculateGeoActive()
+	geoActiveCheckTime = latest
+	return geoActiveCache
+}
+
+func calculateGeoActive() bool {
+	builtInRegions := map[string]bool{
+		"EUROPE": true, "ASIA": true, "AFRICA": true, "NORTH_AMERICA": true,
+		"SOUTH_AMERICA": true, "MIDDLE_EAST": true, "OCEANIA": true, "CARIBBEAN": true,
+	}
+
+	isGeoToken := func(tok string) bool {
+		u := strings.ToUpper(tok)
+		if len(u) == 2 && u != "IN" && u != "ON" && u != "ST" && u != "LO" && u != "WL" && u != "SP" {
+			return true
+		}
+		return builtInRegions[u]
+	}
+
+	objText := readFileStr(objLiveFile)
+	if _, err := os.Stat(objDraftFile); err == nil {
+		objText = readFileStr(objDraftFile)
+	}
+	groups, regions, _, _, _, _, _ := parseObjects(objText)
+
+	customGeoRegions := map[string]bool{}
+	for _, r := range regions {
+		for _, m := range r.Members {
+			if isGeoToken(m) {
+				customGeoRegions[strings.ToUpper(r.Name)] = true
+				break
+			}
+		}
+	}
+
+	customGeoGroups := map[string]bool{}
+	for _, g := range groups {
+		for _, m := range g.Members {
+			if isGeoToken(m) || customGeoRegions[strings.ToUpper(m)] {
+				customGeoGroups[strings.ToUpper(g.Name)] = true
+				break
+			}
+		}
+	}
+
+	isTargetGeo := func(target string) bool {
+		for _, part := range strings.Split(target, ",") {
+			u := strings.ToUpper(strings.TrimSpace(part))
+			if isGeoToken(u) {
+				return true
+			}
+			if customGeoRegions[u] || customGeoGroups[u] {
+				return true
+			}
+		}
+		return false
+	}
+
+	filesToScan := []string{}
+	for _, rf := range ruleFiles() {
+		rel := rf
+		if strings.HasPrefix(rf, rulesDir+"/") {
+			rel = "rules.d/" + strings.TrimPrefix(rf, rulesDir+"/")
+		}
+		draftPath := filepath.Join(draftDir, rel)
+		if _, err := os.Stat(draftPath); err == nil {
+			filesToScan = append(filesToScan, draftPath)
+		} else {
+			filesToScan = append(filesToScan, rf)
+		}
+	}
+
+	for _, path := range filesToScan {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if idx := strings.Index(line, "#"); idx >= 0 {
+				line = strings.TrimSpace(line[:idx])
+			}
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+
+			if strings.Contains(line, "->") || strings.Contains(line, "from") {
+				return true
+			}
+
+			kind := ruleKind(fields)
+			if kind == "filter" && len(fields) >= 5 {
+				if isTargetGeo(fields[4]) {
+					return true
+				}
+			}
+			if kind == "ingress" && len(fields) >= 2 {
+				if isTargetGeo(fields[1]) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 // health gathers the status widgets: next scheduled run, last load, feed
 // freshness, and the established-connection counter.
 func health(ch []Chain) map[string]interface{} {
@@ -339,6 +649,23 @@ func health(ch []Chain) map[string]interface{} {
 	h["feeds"] = abuseSources()
 	h["abuseLoaded"] = abuseLoadedCount()
 	h["status"] = runStatus()
+
+	zoneCacheHours := configValue("ZONE_CACHE_HOURS")
+	if zoneCacheHours == "" {
+		zoneCacheHours = "20"
+	}
+	h["zoneCacheHours"] = zoneCacheHours
+
+	abuseRetentionDays := configValue("ABUSEIPDB_RETENTION_DAYS")
+	if abuseRetentionDays == "" {
+		abuseRetentionDays = configValue("ABUSEIPDB_DAYS")
+	}
+	if abuseRetentionDays == "" {
+		abuseRetentionDays = "30"
+	}
+	h["abuseRetentionDays"] = abuseRetentionDays
+	h["geoActive"] = isGeoActiveCached()
+
 	return h
 }
 
@@ -1854,7 +2181,8 @@ func abuseSources() []map[string]interface{} {
 	add := func(name, path string, fi os.FileInfo) {
 		age := time.Since(fi.ModTime())
 		out = append(out, map[string]interface{}{"name": name, "count": countLines(path),
-			"ageHours": int(age.Hours()), "fresh": age < 26*time.Hour})
+			"ageHours": int(age.Hours()), "fresh": age < 26*time.Hour,
+			"modTime": fi.ModTime().Unix()})
 	}
 	stateFile := env("ABUSEIPDB_STATE_FILE", filepath.Join(stateDir, "abuseipdb.tsv"))
 	if fi, err := os.Stat(stateFile); err == nil {
@@ -2233,12 +2561,30 @@ func requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, `{"error":"read-only session"}`, http.StatusForbidden)
 			return
 		}
-		s.last = time.Now()
 		mode := s.mode
 		sessMu.Unlock()
 		w.Header().Set("X-Nftgeo-Mode", mode)
 		next(w, r)
 	}
+}
+
+// handleSessionTouch is the only way a browser renews its idle session. Keeping
+// this separate from requireAuth prevents the dashboard's background polling
+// from silently extending a session on an unattended laptop forever.
+func handleSessionTouch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if authOn {
+		c, _ := r.Cookie("nftgeo_sess")
+		sessMu.Lock()
+		if s := sessions[c.Value]; s != nil {
+			s.last = time.Now()
+		}
+		sessMu.Unlock()
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func sweepSessions() {
@@ -2336,6 +2682,91 @@ var (
 	wlHostsDraftFile  = filepath.Join(draftDir, "whitelist-hosts")
 	wlHostsBackupFile = filepath.Join(backupDir, "whitelist-hosts")
 )
+
+var dynStateFile = env("DYN_STATE", filepath.Join(stateDir, "dynblock.tsv"))
+
+// ManualBlock mirrors the persistent state owned by `nftgeo block`. Expired
+// entries are intentionally omitted: they may remain in the state file only
+// until the next restore/reconcile pass, but are no longer active in nftables.
+type ManualBlock struct {
+	Target           string `json:"target"`
+	Family           int    `json:"family"`
+	Permanent        bool   `json:"permanent"`
+	ExpiresAt        string `json:"expiresAt,omitempty"`
+	RemainingSeconds int64  `json:"remainingSeconds,omitempty"`
+}
+
+func manualBlocks() []ManualBlock {
+	b, err := os.ReadFile(dynStateFile)
+	if err != nil {
+		return []ManualBlock{}
+	}
+	var out []ManualBlock
+	for _, line := range strings.Split(string(b), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 || strings.TrimSpace(fields[0]) == "" {
+			continue
+		}
+		family, err := strconv.Atoi(fields[1])
+		if err != nil || (family != 4 && family != 6) {
+			continue
+		}
+		expiry, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || expiry < 0 {
+			continue
+		}
+		block := ManualBlock{Target: fields[0], Family: family, Permanent: expiry == 0}
+		if expiry != 0 {
+			expires := time.Unix(expiry, 0)
+			remaining := time.Until(expires)
+			if remaining <= 0 {
+				continue
+			}
+			block.ExpiresAt = expires.UTC().Format(time.RFC3339)
+			block.RemainingSeconds = int64(remaining.Seconds())
+		}
+		out = append(out, block)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Permanent != out[j].Permanent {
+			return !out[i].Permanent
+		}
+		return out[i].Target < out[j].Target
+	})
+	return out
+}
+
+func handleManualBlocks(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, map[string]interface{}{"blocks": manualBlocks()})
+	case http.MethodPost:
+		var req struct {
+			Target string `json:"target"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+			return
+		}
+		target := strings.TrimSpace(req.Target)
+		if net.ParseIP(target) == nil {
+			if _, _, err := net.ParseCIDR(target); err != nil {
+				http.Error(w, `{"error":"invalid IP or CIDR"}`, http.StatusBadRequest)
+				return
+			}
+		}
+		out, err := runEnv(nil, operatorCLI, "unblock", target)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]string{"error": strings.TrimSpace(out)})
+			return
+		}
+		writeJSON(w, map[string]string{"message": strings.TrimSpace(out)})
+	default:
+		http.Error(w, `{"error":"GET or POST only"}`, http.StatusMethodNotAllowed)
+	}
+}
 
 // A stage is one file the UI drafts and commits: the operator edits `draft`,
 // Commit backs up `live`, promotes `draft` -> `live`, and the pipeline can
@@ -2474,6 +2905,139 @@ func runEnv(extra []string, name string, args ...string) (string, error) {
 	cmd.Env = append(os.Environ(), extra...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// blockRequest is deliberately small: the UI delegates the actual change to
+// nftgeo's operator CLI, which keeps the CLI and web safety checks identical.
+type blockRequest struct {
+	Target string `json:"target"`
+	TTL    string `json:"ttl"`
+	Force  bool   `json:"force"`
+}
+
+func normalizeBlockRequest(req blockRequest) (target, ttl string, isCIDR bool, err error) {
+	target = strings.TrimSpace(req.Target)
+	if ip := net.ParseIP(target); ip != nil {
+		target = ip.String()
+	} else if _, network, parseErr := net.ParseCIDR(target); parseErr == nil {
+		target, isCIDR = network.String(), true
+	} else {
+		return "", "", false, fmt.Errorf("invalid IP or CIDR")
+	}
+	if isCIDR && !req.Force {
+		return "", "", false, fmt.Errorf("blocking a CIDR requires confirmation")
+	}
+	ttl = strings.ToLower(strings.TrimSpace(req.TTL))
+	if ttl == "" {
+		ttl = "7d"
+	}
+	if ttl == "infinity" || ttl == "permanent" {
+		ttl = "forever"
+	}
+	if ttl != "forever" && !regexp.MustCompile(`^[1-9][0-9]*(?:[smhd])?$`).MatchString(ttl) {
+		return "", "", false, fmt.Errorf("invalid duration; use 1h, 7d, seconds, or forever")
+	}
+	return target, ttl, isCIDR, nil
+}
+
+// blockTargetContainsAddress is kept separate from interface discovery so the
+// critical "never block this host" rule is independently testable for IPv4,
+// IPv6, and CIDR ranges.
+func blockTargetContainsAddress(target string, address net.IP) bool {
+	if ip := net.ParseIP(target); ip != nil {
+		return ip.Equal(address)
+	}
+	_, network, err := net.ParseCIDR(target)
+	return err == nil && network.Contains(address)
+}
+
+func blockTargetIncludesLocalAddress(target string) (bool, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return false, err
+	}
+	for _, iface := range interfaces {
+		addresses, err := iface.Addrs()
+		if err != nil {
+			return false, err
+		}
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err == nil && blockTargetContainsAddress(target, ip) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// checkLocalCmd is a small, non-mutating helper for the shell CLI. It lets the
+// CLI apply the exact same IPv4/IPv6/CIDR local-address safety rule as the web
+// API without reimplementing IPv6 CIDR math in POSIX shell.
+// Exit 0: target contains a local address; exit 1: safe; exit 2: bad input.
+func checkLocalCmd(args []string) {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: nftgeo-ui check-local <ip|cidr>")
+		os.Exit(2)
+	}
+	target := strings.TrimSpace(args[0])
+	if net.ParseIP(target) == nil {
+		if _, _, err := net.ParseCIDR(target); err != nil {
+			fmt.Fprintln(os.Stderr, "invalid IP or CIDR")
+			os.Exit(2)
+		}
+	}
+	local, err := blockTargetIncludesLocalAddress(target)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot inspect local interface addresses:", err)
+		os.Exit(2)
+	}
+	if local {
+		os.Exit(0)
+	}
+	os.Exit(1)
+}
+
+func handleBlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req blockRequest
+	dec := json.NewDecoder(io.LimitReader(r.Body, 16<<10))
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	target, ttl, isCIDR, err := normalizeBlockRequest(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	if local, err := blockTargetIncludesLocalAddress(target); err != nil {
+		http.Error(w, `{"error":"cannot verify local interface addresses"}`, http.StatusServiceUnavailable)
+		return
+	} else if local {
+		http.Error(w, `{"error":"refusing to block an address or range that contains this host's WAN, LAN, or loopback address"}`, http.StatusBadRequest)
+		return
+	}
+	args := []string{"block"}
+	if req.Force || isCIDR {
+		args = append(args, "--force")
+	}
+	args = append(args, target, ttl)
+	out, err := runEnv(nil, operatorCLI, args...)
+	if err != nil {
+		message := strings.TrimSpace(out)
+		if message == "" {
+			message = "block command failed"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]string{"error": message})
+		return
+	}
+	writeJSON(w, map[string]string{"message": strings.TrimSpace(out), "target": target, "ttl": ttl})
 }
 
 func copyFile(src, dst string) error {
@@ -4553,6 +5117,9 @@ func main() {
 		case "reconcile-boot":
 			reconcileBoot()
 			return
+		case "check-local":
+			checkLocalCmd(os.Args[2:])
+			return
 		}
 	}
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address (keep it local)")
@@ -4625,6 +5192,7 @@ func main() {
 	// token exchange is the only API reachable without a session
 	http.HandleFunc("/api/session", handleSession)
 	http.HandleFunc("/api/session_poll", handleSessionPoll)
+	http.HandleFunc("/api/session_touch", requireAuth(handleSessionTouch))
 
 	api := func(pattern string, h http.HandlerFunc) { http.HandleFunc(pattern, requireAuth(h)) }
 
@@ -4751,6 +5319,7 @@ func main() {
 		st["api_key_present"] = keyPresent
 		writeJSON(w, st)
 	})
+	api("/api/protection", handleProtection)
 	api("/api/top-ips", func(w http.ResponseWriter, r *http.Request) {
 		fromStr := r.URL.Query().Get("from")
 		toStr := r.URL.Query().Get("to")
@@ -4767,6 +5336,9 @@ func main() {
 	// /proc/net/dev ring, plus the conntrack gauge.
 	api("/api/ifstats", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, ifStats())
+	})
+	api("/api/capacity", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, capacityStatus())
 	})
 	// SOC overview: top source IPs with time-bucketed drop counts.
 	api("/api/ip-histogram", func(w http.ResponseWriter, r *http.Request) {
@@ -4865,6 +5437,8 @@ func main() {
 		}
 		writeJSON(w, doLookup(ip))
 	})
+	api("/api/blocks", handleBlock)
+	api("/api/manual-blocks", handleManualBlocks)
 
 	// Draft + commit pipeline (mutations are POST/PUT -> read-write sessions only).
 	api("/api/draft", handleDraft)
