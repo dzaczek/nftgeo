@@ -8,6 +8,15 @@ All notable changes to `nftgeo` are documented here. Versions follow
 
 Remaining ideas are tracked in [ROADMAP.md](ROADMAP.md).
 
+## [1.74.0-beta.13] - 2026-07-21
+
+### Added
+- Usable egress QoS beta: `nftgeo-qos` validates and applies a one-interface
+  HTB/fq_codel profile, maps nftgeo rule marks to traffic classes, supports
+  plan/status/clear, records qdisc ownership, and ships with an optional
+  `nftgeo-qos.service`. Ingress/download shaping is explicitly out of scope
+  for this first beta.
+
 ## [1.74.0-beta.12] - 2026-07-20
 
 ### Fixed

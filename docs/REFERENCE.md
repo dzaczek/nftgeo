@@ -380,7 +380,7 @@ deny, so you don't leave a port open by accident.
 ### Rule syntax
 
 ```
-<action> <dir> <proto> <port> <target> [on <iface>] [log] [# comment]
+<action> <dir> <proto> <port> <target> [on <iface>] [log] [mark <number>] [# comment]
 ```
 
 | Field | Values | Notes |
@@ -392,6 +392,7 @@ deny, so you don't leave a port open by accident.
 | `target` | country `pl` · region `europe` · IP `203.0.113.5` · CIDR `10.0.0.0/8` · group `office` · host `db1` · `any` · `abuse` | Comma-separated mix allowed; `abuse` is deny-only |
 | `on <iface>` | optional | Scope to one interface (`iifname` for `in`/`fwd-in`, `oifname` for `out`/`fwd-out`) |
 | `log` | optional | Log connections this rule matches (independent of `LOG_DROPS`) |
+| `mark <number>` | optional | Mark an accepted packet (`1..65535`) for an `nftgeo-qos` egress class |
 
 **Built-in service names** resolve in the port field without configuration:
 `ssh`, `http`, `https`, `dns`, `smtp`, `rdp`, `postgres`, `wireguard`,
@@ -472,6 +473,7 @@ Everything lives in `/etc/nftgeo`:
   config            # settings: AbuseIPDB key, WHITELIST, regions, groups, logging
   rules.conf        # rules (optional if you only use rules.d)
   rules.d/*.conf    # rule fragments, included in sorted filename order
+  qos.conf          # optional egress QoS profile (disabled by default)
   groups.d/*.conf   # GROUP_*/REGION_* definitions, sourced after config
   whitelist.conf    # always-allow IPs (one per line, comments allowed)
   whitelist-hosts.conf  # always-allow hostnames (re-resolved each run)
@@ -503,6 +505,43 @@ order.
 | `DOS_GUARD` | `""` (off) | Drop malformed TCP flags, meter new SYNs per source, and cap concurrent new connections per source |
 | `THROTTLE_BAN` | `1h` | Default ban duration for `throttle` rules; a rule may override it with `ban <duration>`. |
 | `INGRESS_DEV` | auto-detect | Space- or comma-separated devices carrying ingress-hook rules. |
+
+### Egress QoS (beta)
+
+`/etc/nftgeo/qos.conf` is a separate, non-shell profile for optional traffic
+shaping. It is disabled by default and manages only one outbound interface.
+The first beta deliberately does not shape download/ingress traffic, which
+requires an IFB device. It creates an HTB root qdisc with `fq_codel` queues and
+maps nftgeo packet marks to classes.
+
+```text
+enabled yes
+interface eth0
+bandwidth 100mbit
+default standard
+class voice    mark 10 rate 20% ceil 100% priority 0
+class standard mark 20 rate 50% ceil 100% priority 3
+class bulk     mark 30 rate 10% ceil 80% priority 7
+```
+
+Mark accepted egress rules in `rules.conf`, then use the safe normal firewall
+deployment flow before enabling QoS:
+
+```text
+allow out udp 5060-5070 any mark 10 # voice
+allow out tcp 443 any mark 20        # interactive
+```
+
+```sh
+sudo nftgeo qos validate
+sudo nftgeo qos plan
+sudo systemctl enable --now nftgeo-qos.service
+sudo nftgeo qos status
+```
+
+QoS replaces the root `tc` qdisc of the selected interface; use it only where
+nftgeo may own traffic control. `nftgeo qos clear` removes only a qdisc state
+recorded by nftgeo. See `nftgeo-qos(8)` for the full safety scope.
 | `ZONE_CACHE_HOURS` | `20` | How long downloaded country zones are reused |
 | `SEGMENT_DEFAULT` | `""` | `deny` = default-deny between zones (micro-segmentation) |
 

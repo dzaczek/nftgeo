@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-NFTGEO_VERSION="1.74.0~beta.12"
+NFTGEO_VERSION="1.74.0~beta.13"
 
 # Built-in well-known services usable in the port field by name (e.g. "https").
 # Bare port lists (no /proto), so a name takes the rule's proto: "allow in udp dns"
@@ -17,6 +17,7 @@ case "${1:-}" in
 esac
 
 CONFIG_FILE="${CONFIG_FILE:-/etc/nftgeo/config}"
+QOS_FILE="${QOS_FILE:-/etc/nftgeo/qos.conf}"
 RULES_FILE="${RULES_FILE:-/etc/nftgeo/rules.conf}"
 RULES_DIR="${RULES_DIR:-/etc/nftgeo/rules.d}"
 # Ingress hook (stateless, pre-routing early drop). Source-based accept/drop.
@@ -590,6 +591,10 @@ emit_set_match() {
 	else
 		mpfx="${ifc}$1 $2 $3 @$4"
 	fi
+	_ext_matches="${12:-}"
+	if [ -n "$_ext_matches" ]; then
+		mpfx="${mpfx}${_ext_matches}"
+	fi
 	# Log when the rule carries "log" ($9), or (for a drop) when LOG_DROPS is set.
 	if [ "${9:-0}" = 1 ] || { [ "$5" = drop ] && [ -n "$LOG_DROPS" ]; }; then
 		# Log label: the rule's name if it has one, else the policy category.
@@ -602,10 +607,19 @@ emit_set_match() {
 		_hook="${10:-unknown}"
 		printf '\t\t%s %s log prefix "%s@%s:%s "%s\n' "$mpfx" "$LOG_LIMIT" "$_pfx" "$_hook" "$_lr" "$NFLOG_SUFFIX"
 	fi
+	# QoS marks belong only on accepted packets. The mark is carried separately
+	# from the source comment, so dashboard counter lookups stay stable.
+	_em_mark="${11:--}"
+
+	_mark_str=""
+	if [ "$_em_mark" != "-" ] && [ "$5" = "accept" ]; then
+		_mark_str=" meta mark set ${_em_mark}"
+	fi
+
 	if [ -n "${7:-}" ]; then
-		printf '\t\t%s counter %s comment "%s"\n' "$mpfx" "$5" "$7"
+		printf '\t\t%s counter%s %s comment "%s"\n' "$mpfx" "$_mark_str" "$5" "$7"
 	else
-		printf '\t\t%s counter %s\n' "$mpfx" "$5"
+		printf '\t\t%s counter%s %s\n' "$mpfx" "$_mark_str" "$5"
 	fi
 }
 
@@ -925,10 +939,11 @@ parse_rules_file() {
 		fi
 
 		# Optional qualifiers after the target, in any order (inline # comment
-		# allowed after them): "on <iface>" and "log". "on" maps to iifname on the
-		# source side (in/fwd-in) and oifname on the destination side (out/fwd-out);
+		# allowed after them): "on <iface>", "log", "mark <value>", "uid <uid>", "gid <gid>", "cgroup <cgroup>", "dscp <dscp>".
+		# "on" maps to iifname on the source side (in/fwd-in) and oifname on the destination side (out/fwd-out);
 		# "log" emits a per-rule log prefix (nftgeo-accept:/nftgeo-drop:<name>).
-		iface="-"; _rlog=0
+		# "mark" applies a QoS meta mark.
+		iface="-"; _rlog=0; _rmark="-"; _ruid="-"; _rgid="-"; _rcgroup="-"; _rdscp="-"
 		set -- ${_rest%%#*}
 		while [ -n "${1:-}" ]; do
 			case "$1" in
@@ -946,19 +961,43 @@ parse_rules_file() {
 					fi
 					shift 2 ;;
 				log) _rlog=1; shift ;;
-				*) echo "${rf}:${lineno}: unexpected '${1}' after target (only 'on <iface>' and 'log' allowed)" >&2; exit 1 ;;
+				mark)
+					_rmark="${2:-}"
+					_resolved_mark=""
+					eval "_resolved_mark=\"\${QOS_MARK_${_rmark}:-}\""
+					if [ -n "$_resolved_mark" ]; then
+						_rmark="$_resolved_mark"
+					fi
+					case "$_rmark" in
+						''|*[!0-9]*) echo "${rf}:${lineno}: 'mark' needs a valid numeric value or class name" >&2; exit 1 ;;
+					esac
+					shift 2 ;;
+				uid)
+					_ruid="${2:-}"
+					shift 2 ;;
+				gid)
+					_rgid="${2:-}"
+					shift 2 ;;
+				cgroup)
+					_rcgroup="${2:-}"
+					shift 2 ;;
+				dscp)
+					_rdscp="${2:-}"
+					shift 2 ;;
+				*) echo "${rf}:${lineno}: unexpected '${1}' after target" >&2; exit 1 ;;
 			esac
 		done
 
 		# Metadata carried per rule: the rule's name (trailing # comment, used in
 		# drop logs) and the source stamp (counter comment for the UI). Packed as
 		# "<name>|<src>" into one trailing field; emit_chain splits on the first '|'.
+		# Carry QoS mark separately from the counter source stamp.
 		_src="$(rule_comment "$action" "$dir" "$proto" "$port" "$geo" "$iface")"
 		_name=""
 		case "$_rest" in
 			*"#"*) _name="$(printf '%s' "${_rest#*#}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/|//g')" ;;
 		esac
-		_meta="${_name}|${_src}"
+		_meta="${_name}|${_src}|${_rmark}|${_ruid}|${_rgid}|${_rcgroup}|${_rdscp}"
 		if [ -n "$_portless" ]; then
 			# proto any/icmp/icmpv6/esp/ah/gre with no port
 			emit_norm "$action" "$hook" "$side" "$proto" "$port" "$geosan" "$iface" "$_rlog" "$_meta"
@@ -1012,7 +1051,7 @@ parse_ingress_file() {
 			add_geo_members "$igeo" "$itgt" || { echo "${rf}:${lineno}: bad target '${itgt}'" >&2; exit 1; }
 		fi
 		_isrc="$(rule_comment "$iact" ingress "$iproto" "$iport" "$itgt" -)"
-		_imeta="${_iname}|${_isrc}"
+		_imeta="${_iname}|${_isrc}|-"
 		# Resolve proto/port into buckets (or a portless line), reusing the filter path.
 		case "$iproto" in
 			tcp|udp|sctp|all)
@@ -1031,7 +1070,20 @@ parse_ingress_file() {
 	done < "$rf"
 }
 
+_parse_qos_classes() {
+	if [ -r "$QOS_FILE" ]; then
+		while IFS=" ${TAB}" read -r _directive _name _mark_kw _mark _rest || [ -n "${_directive}" ]; do
+			case "$_directive" in ''|\#*) continue ;; esac
+			if [ "$_directive" = "class" ] && [ "$_mark_kw" = "mark" ]; then
+				# Map class name to mark
+				eval "QOS_MARK_${_name}=\"\${_mark}\""
+			fi
+		done < "$QOS_FILE"
+	fi
+}
+
 parse_rules() {
+	_parse_qos_classes
 	: > "$RULES_NORM"
 	: > "$INGRESS_NORM"
 	: > "$THROTTLE_NORM"
@@ -1607,6 +1659,9 @@ emit_chain() {
 		printf '\t\toifname "lo" counter accept\n'
 	fi
 	# Stateful: replies to connections you initiated are always allowed.
+	if [ -s "$QOS_FILE" ] && grep -Eq '^enabled yes' "$QOS_FILE" 2>/dev/null; then
+		printf '\t\tct mark 0 != ct mark meta mark set ct mark\n'
+	fi
 	printf '\t\tct state established,related counter accept\n'
 	# HARDEN: rate-limit inbound ping so a flood can't drown the host. Drops only
 	# the excess (over the rate); NDP/essential ICMPv6 below stay unlimited.
@@ -1703,7 +1758,30 @@ emit_chain() {
 	# deny-by-default: a port is closed only by an explicit "deny ... any" or by
 	# DEFAULT_INPUT="drop".
 	awk -v h="$hook" '($1=="allow" || $1=="deny") && $2==h' "$RULES_NORM" | while read -r _act _h side proto port geosan iface _rlog meta; do
-		lname="${meta%%|*}"; src="${meta#*|}"
+		lname="${meta%%|*}"
+		_rest_meta="${meta#*|}"
+		src="${_rest_meta%%|*}"
+		_rest_meta2="${_rest_meta#*|}"
+		_rmark="${_rest_meta2%%|*}"
+
+		# Pull extra selectors
+		_ruid="-"; _rgid="-"; _rcgroup="-"; _rdscp="-"
+		if [ "$_rest_meta2" != "$_rmark" ]; then
+			_rest_meta3="${_rest_meta2#*|}"
+			_ruid="${_rest_meta3%%|*}"
+			if [ "$_rest_meta3" != "$_ruid" ]; then
+				_rest_meta4="${_rest_meta3#*|}"
+				_rgid="${_rest_meta4%%|*}"
+				if [ "$_rest_meta4" != "$_rgid" ]; then
+					_rest_meta5="${_rest_meta4#*|}"
+					_rcgroup="${_rest_meta5%%|*}"
+					if [ "$_rest_meta5" != "$_rcgroup" ]; then
+						_rdscp="${_rest_meta5#*|}"
+					fi
+				fi
+			fi
+		fi
+
 		ifc="$(if_match "$side" "$iface")"
 		m4="$(l4_match "$proto" "$port" 4)"
 		m6="$(l4_match "$proto" "$port" 6)"
@@ -1722,12 +1800,50 @@ emit_chain() {
 				case "$printed" in *"|${m}|"*) continue ;; esac
 				printed="${printed}|${m}|"
 				mm=""; [ "$m" != any ] && mm="$m "
-				[ "$_dolog" = 1 ] && printf '\t\t%s%s%s log prefix "%s@%s:%s "%s\n' "$pre" "$mm" "$LOG_LIMIT" "$_pfx" "$hook" "$_lr" "$NFLOG_SUFFIX"
-				printf '\t\t%s%scounter %s comment "%s"\n' "$pre" "$mm" "$_vd" "$src"
+
+				_fam=4; [ "$m" = "$m6" ] && _fam=6
+				_extra_matches=""
+				[ "$_ruid" != "-" ] && [ -n "$_ruid" ] && _extra_matches="${_extra_matches} meta skuid ${_ruid}"
+				[ "$_rgid" != "-" ] && [ -n "$_rgid" ] && _extra_matches="${_extra_matches} meta skgid ${_rgid}"
+				[ "$_rcgroup" != "-" ] && [ -n "$_rcgroup" ] && _extra_matches="${_extra_matches} meta cgroup \"${_rcgroup}\""
+				if [ "$_rdscp" != "-" ] && [ -n "$_rdscp" ]; then
+					if [ "$_fam" = "4" ]; then
+						_extra_matches="${_extra_matches} ip dscp ${_rdscp}"
+					else
+						_extra_matches="${_extra_matches} ip6 dscp ${_rdscp}"
+					fi
+				fi
+
+				_mark_str=""
+				if [ "$_rmark" != "-" ] && [ "$_vd" = "accept" ]; then
+					_mark_str=" meta mark set ${_rmark} ct mark set ${_rmark}"
+				fi
+
+				[ "$_dolog" = 1 ] && printf '\t\t%s%s%s%s log prefix "%s@%s:%s "%s\n' "$pre" "$mm" "${_extra_matches# }" "$LOG_LIMIT" "$_pfx" "$hook" "$_lr" "$NFLOG_SUFFIX"
+				printf '\t\t%s%s%scounter%s %s comment "%s"\n' "$pre" "$mm" "${_extra_matches# }" "$_mark_str" "$_vd" "$src"
 			done
 		else
-			emit_set_match "$m4" ip  "$side" "$(set_name "$geosan" 4)" "$_vd" "$ifc" "$src" "$lname" "$_rlog" "$hook"
-			emit_set_match "$m6" ip6 "$side" "$(set_name "$geosan" 6)" "$_vd" "$ifc" "$src" "$lname" "$_rlog" "$hook"
+			# Build _extra_matches for IPv4
+			_extra_matches_v4=""
+			[ "$_ruid" != "-" ] && [ -n "$_ruid" ] && _extra_matches_v4="${_extra_matches_v4} meta skuid ${_ruid}"
+			[ "$_rgid" != "-" ] && [ -n "$_rgid" ] && _extra_matches_v4="${_extra_matches_v4} meta skgid ${_rgid}"
+			[ "$_rcgroup" != "-" ] && [ -n "$_rcgroup" ] && _extra_matches_v4="${_extra_matches_v4} meta cgroup \"${_rcgroup}\""
+			[ "$_rdscp" != "-" ] && [ -n "$_rdscp" ] && _extra_matches_v4="${_extra_matches_v4} ip dscp ${_rdscp}"
+
+			# Build _extra_matches for IPv6
+			_extra_matches_v6=""
+			[ "$_ruid" != "-" ] && [ -n "$_ruid" ] && _extra_matches_v6="${_extra_matches_v6} meta skuid ${_ruid}"
+			[ "$_rgid" != "-" ] && [ -n "$_rgid" ] && _extra_matches_v6="${_extra_matches_v6} meta skgid ${_rgid}"
+			[ "$_rcgroup" != "-" ] && [ -n "$_rcgroup" ] && _extra_matches_v6="${_extra_matches_v6} meta cgroup \"${_rcgroup}\""
+			[ "$_rdscp" != "-" ] && [ -n "$_rdscp" ] && _extra_matches_v6="${_extra_matches_v6} ip6 dscp ${_rdscp}"
+
+			_rmark_ct="-"
+			if [ "$_rmark" != "-" ] && [ "$_vd" = "accept" ]; then
+				_rmark_ct="${_rmark} ct mark set ${_rmark}"
+			fi
+
+			emit_set_match "$m4" ip  "$side" "$(set_name "$geosan" 4)" "$_vd" "$ifc" "$src" "$lname" "$_rlog" "$hook" "$_rmark_ct" "$_extra_matches_v4"
+			emit_set_match "$m6" ip6 "$side" "$(set_name "$geosan" 6)" "$_vd" "$ifc" "$src" "$lname" "$_rlog" "$hook" "$_rmark_ct" "$_extra_matches_v6"
 		fi
 	done
 
@@ -1814,8 +1930,8 @@ emit_ingress() {
 				printf '\t\t%scounter %s comment "%s"\n' "$mm" "$_act" "$src"
 			done
 		else
-			emit_set_match "$m4" ip  saddr "$(set_name "$geosan" 4)" "$_act" "" "$src" "$lname" "$_ilog" ingress
-			emit_set_match "$m6" ip6 saddr "$(set_name "$geosan" 6)" "$_act" "" "$src" "$lname" "$_ilog" ingress
+			emit_set_match "$m4" ip  saddr "$(set_name "$geosan" 4)" "$_act" "" "$src" "$lname" "$_ilog" ingress "-"
+			emit_set_match "$m6" ip6 saddr "$(set_name "$geosan" 6)" "$_act" "" "$src" "$lname" "$_ilog" ingress "-"
 		fi
 	done < "$INGRESS_NORM"
 	printf '\t}\n'

@@ -38,7 +38,7 @@ jobs:
       - name: checksums
         run: |
           cd dist
-          sha256sum nftgeo-ui-linux-* nftgeo-*.tar.gz *.deb *.rpm > SHA256SUMS
+          sha256sum nftgeo-ui-linux-* nftgeo-qos-linux-* nftgeo-*.tar.gz *.deb *.rpm > SHA256SUMS
           cat SHA256SUMS
 
       - name: publish release
@@ -52,6 +52,8 @@ jobs:
           files: |
             dist/nftgeo-ui-linux-amd64
             dist/nftgeo-ui-linux-arm64
+            dist/nftgeo-qos-linux-amd64
+            dist/nftgeo-qos-linux-arm64
             dist/nftgeo-*.tar.gz
             dist/*.deb
             dist/*.rpm

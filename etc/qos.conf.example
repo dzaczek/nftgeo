@@ -1,0 +1,20 @@
+# nftgeo egress QoS profile. Disabled by default; it never changes tc until you
+# set enabled yes and run: nftgeo qos validate && sudo systemctl start nftgeo-qos
+#
+# This beta shapes packets LEAVING one interface. Download/ingress shaping needs
+# an IFB device and is intentionally not enabled here.
+enabled no
+
+# interface eth0
+# bandwidth 100mbit
+# default standard
+#
+# Marks are assigned in rules.conf, for example:
+#   allow out udp 5060-5070 any mark 10 # VoIP
+#   allow out tcp 443 any mark 20        # Interactive web
+#
+# class NAME mark NUMBER rate MINIMUM ceil MAXIMUM [priority 0-7]
+# Rates can be percentages of bandwidth or absolute tc rates.
+# class voice    mark 10 rate 20% ceil 100% priority 0
+# class standard mark 20 rate 50% ceil 100% priority 3
+# class bulk     mark 30 rate 10% ceil 80%  priority 7

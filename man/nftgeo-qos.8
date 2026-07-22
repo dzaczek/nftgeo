@@ -1,0 +1,108 @@
+.\" nftgeo-qos(8) manual page
+.TH NFTGEO-QOS 8 "2026-07-21" "nftgeo" "System Administration"
+.SH NAME
+nftgeo-qos \- apply nftgeo egress traffic shaping with Linux tc
+.SH SYNOPSIS
+.B nftgeo qos
+.I command
+.br
+.B nftgeo-qos
+.RB [ --config " " file ]
+.RB [ --state " " file ]
+.I command
+.SH DESCRIPTION
+.B nftgeo-qos
+turns packet marks emitted by nftgeo filter rules into Linux traffic-control
+classes. It manages one egress interface with an HTB root qdisc, one
+.B fq_codel
+leaf qdisc per class, and a firewall-mark filter for every class.
+.PP
+The configuration is
+.IR /etc/nftgeo/qos.conf .
+It is disabled by default. This beta intentionally shapes only traffic leaving
+the selected interface. It does not claim to shape downloads or other ingress
+traffic: reliable ingress shaping requires an IFB device and is outside this
+profile.
+.PP
+Applying QoS replaces the root qdisc on the configured interface. Use it only
+on an interface whose existing traffic-control configuration nftgeo may manage.
+The tool records its ownership in
+.IR /run/nftgeo/qos.json ;
+.B clear
+only removes a qdisc with that recorded ownership.
+.SH COMMANDS
+.TP
+.B validate
+Parse and validate the configuration without changing the host.
+.TP
+.B plan
+Print the exact
+.B tc
+commands that would be run.
+.TP
+.B apply
+Install the HTB classes, fq_codel leaves, and mark filters. Requires root and
+the
+.B tc
+program from iproute2.
+.TP
+.B clear
+Remove a qdisc previously installed by nftgeo-qos. Requires root.
+.TP
+.B status
+Show the configured profile and live tc qdisc, class, and filter state.
+.SH CONFIGURATION
+.nf
+enabled yes
+interface eth0
+bandwidth 100mbit
+default standard
+class voice    mark 10 rate 20% ceil 100% priority 0
+class standard mark 20 rate 50% ceil 100% priority 3
+class bulk     mark 30 rate 10% ceil 80%  priority 7
+.fi
+.PP
+.B bandwidth
+is the interface egress capacity. Rates may be absolute values accepted by tc
+(for example
+.BR 20mbit )
+or percentages of bandwidth. Each class's ceiling must be at least its rate
+and no greater than bandwidth. Marks and class names must be unique. The
+default class is used for unmarked traffic.
+.PP
+Set the corresponding mark on an accepted nftgeo rule, for example:
+.nf
+allow out udp 5060-5070 any mark 10 # voice
+allow out tcp 443 any mark 20        # interactive web
+.fi
+.PP
+Rules must be deployed through the normal nftgeo deadman workflow before the
+matching QoS profile is enabled.
+.SH SYSTEMD
+After validating a profile, enable it at boot and apply it now with:
+.nf
+systemctl enable --now nftgeo-qos.service
+.fi
+.PP
+Stopping the unit clears only the qdisc recorded as managed by nftgeo-qos.
+.SH EXAMPLES
+.nf
+# Verify the profile and inspect the generated tc commands first.
+nftgeo qos validate
+nftgeo qos plan
+
+# After deploying the matching nftgeo rules, apply QoS now and at boot.
+systemctl enable --now nftgeo-qos.service
+nftgeo qos status
+.fi
+.SH FILES
+.TP
+.I /etc/nftgeo/qos.conf
+QoS profile.
+.TP
+.I /run/nftgeo/qos.json
+Runtime ownership state for the managed qdisc.
+.SH SEE ALSO
+.BR nftgeo (8),
+.BR nftgeo.conf (5),
+.BR tc (8)

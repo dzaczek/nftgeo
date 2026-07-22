@@ -1,0 +1,42 @@
+table inet nftgeo
+delete table inet nftgeo
+table inet nftgeo {
+	set whitelist4 {
+		type ipv4_addr
+		flags interval
+		auto-merge
+	}
+
+	set whitelist6 {
+		type ipv6_addr
+		flags interval
+		auto-merge
+	}
+
+	set abuse4 {
+		type ipv4_addr
+		flags interval
+		auto-merge
+	}
+
+	set abuse6 {
+		type ipv6_addr
+		flags interval
+		auto-merge
+	}
+
+	chain input {
+		type filter hook input priority -100; policy accept;
+		ct state established,related counter accept
+		tcp dport 22 counter accept comment "nftgeo:allow in tcp 22 any"
+		tcp dport 23 counter drop comment "nftgeo:deny in tcp 23 any"
+		tcp dport 80 counter meta mark set 100 accept comment "nftgeo:allow in tcp 80 any"
+		tcp dport 443 limit rate 10/second log prefix "nftgeo-accept@input:allow " group 5
+		tcp dport 443 counter meta mark set 200 accept comment "nftgeo:allow in tcp 443 any"
+	}
+	chain output {
+		type filter hook output priority -100; policy accept;
+		ct state established,related counter accept
+		tcp dport 443 counter accept comment "nftgeo:allow out tcp 443 any"
+	}
+}
