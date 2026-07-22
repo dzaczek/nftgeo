@@ -27,10 +27,11 @@ jobs:
         with:
           go-version: stable
       - name: gofmt
-        run: test -z "$(gofmt -l ui/)" || { gofmt -l ui/; exit 1; }
-      - run: go vet ./ui/
-      - run: go test -race ./ui/
+        run: test -z "$(gofmt -l ui/ qos/)" || { gofmt -l ui/ qos/; exit 1; }
+      - run: go vet ./...
+      - run: go test -race ./...
       - run: go build -o /tmp/nftgeo-ui ./ui/
+      - run: go build -o /tmp/nftgeo-qos ./qos/
 
   render:
     runs-on: ubuntu-latest

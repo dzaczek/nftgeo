@@ -55,6 +55,8 @@ var (
 	ingressDir         = env("INGRESS_DIR", "/etc/nftgeo/ingress.d")
 	whitelistFile      = env("WHITELIST_FILE", "/etc/nftgeo/whitelist.conf")
 	whitelistHostsFile = env("WHITELIST_HOSTS_FILE", "/etc/nftgeo/whitelist-hosts.conf")
+	qosFile            = env("QOS_FILE", "/etc/nftgeo/qos.conf")
+	qosBin             = env("NFTGEO_QOS", "/usr/sbin/nftgeo-qos")
 	feedsDir           = env("ABUSE_FEEDS_CACHE_DIR", "/var/lib/nftgeo/feeds")
 	// Optional full offline geo dataset (GEO_FULL=1): fetch every ipdeny country
 	// zone into a UI-owned cache so the drop map covers all sources.
@@ -459,6 +461,72 @@ func handleProtection(w http.ResponseWriter, r *http.Request) {
 		status["message"] = "Protection configuration saved. Use Save & Apply to activate it with the deadman."
 	}
 	writeJSON(w, status)
+}
+
+func handleQoS(w http.ResponseWriter, r *http.Request) {
+	status := func(message string) map[string]interface{} {
+		b, _ := os.ReadFile(qosFile)
+		out := map[string]interface{}{"text": string(b), "service": systemdUnit("nftgeo-qos.service")}
+		if message != "" {
+			out["message"] = message
+		}
+		return out
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, status(""))
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"GET or POST only"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Text  string `json:"text"`
+		Apply bool   `json:"apply"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		http.Error(w, `{"error":"QoS configuration cannot be empty"}`, http.StatusBadRequest)
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(qosFile), ".qos-validate-")
+	if err != nil {
+		http.Error(w, `{"error":"cannot stage QoS config"}`, http.StatusInternalServerError)
+		return
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err = tmp.WriteString(req.Text); err == nil {
+		err = tmp.Close()
+	}
+	if err != nil {
+		http.Error(w, `{"error":"cannot stage QoS config"}`, http.StatusInternalServerError)
+		return
+	}
+	out, err := run(qosBin, "--config", tmpName, "validate")
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, strings.TrimSpace(out)), http.StatusBadRequest)
+		return
+	}
+	old, _ := os.ReadFile(qosFile)
+	if err := os.WriteFile(qosFile, []byte(req.Text), 0600); err != nil {
+		http.Error(w, `{"error":"cannot write QoS config"}`, http.StatusInternalServerError)
+		return
+	}
+	if req.Apply {
+		out, err = run("systemctl", "start", "nftgeo-qos.service")
+		if err != nil {
+			_ = os.WriteFile(qosFile, old, 0600)
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, strings.TrimSpace(out)), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, status("QoS applied."))
+		return
+	}
+	writeJSON(w, status("QoS configuration saved."))
 }
 
 var (
@@ -3626,6 +3694,7 @@ type draftRule struct {
 	Target   string   `json:"target"`
 	Iface    string   `json:"iface"`
 	Log      bool     `json:"log"`               // per-rule connection logging
+	Mark     string   `json:"mark,omitempty"`    // QoS packet mark (allow rules only)
 	Rate     string   `json:"rate,omitempty"`    // throttle only
 	Ban      string   `json:"ban,omitempty"`     // throttle only
 	Src      string   `json:"src,omitempty"`     // zone: source zone
@@ -3757,6 +3826,8 @@ func mkDraftRule(id int, disabled bool, f []string, body, comment, kind string, 
 				r.Iface = f[i+1]
 			} else if f[i] == "log" {
 				r.Log = true
+			} else if f[i] == "mark" && i+1 < len(f) {
+				r.Mark = f[i+1]
 			}
 		}
 	}
@@ -4554,7 +4625,7 @@ func sanitizeComment(s string) string {
 
 // buildRuleBody assembles and field-validates a rule line; the engine's own
 // validate is still the final gate at preview/deploy.
-func buildRuleBody(action, dir, proto, port, target, iface string) (string, error) {
+func buildRuleBody(action, dir, proto, port, target, iface, mark string) (string, error) {
 	action, dir = strings.ToLower(strings.TrimSpace(action)), strings.TrimSpace(dir)
 	proto, port = strings.ToLower(strings.TrimSpace(proto)), strings.TrimSpace(port)
 	target, iface = strings.TrimSpace(target), strings.TrimSpace(iface)
@@ -4591,6 +4662,14 @@ func buildRuleBody(action, dir, proto, port, target, iface string) (string, erro
 			return "", fmt.Errorf("invalid interface name")
 		}
 		parts = append(parts, "on", iface)
+	}
+	mark = strings.TrimSpace(mark)
+	if mark != "" {
+		n, err := strconv.Atoi(mark)
+		if action != "allow" || err != nil || n < 1 || n > 65535 {
+			return "", fmt.Errorf("QoS mark requires an allow rule and a number from 1 to 65535")
+		}
+		parts = append(parts, "mark", strconv.Itoa(n))
 	}
 	return strings.Join(parts, " "), nil
 }
@@ -4735,14 +4814,14 @@ func buildNatBody(natType, proto, port, target, geo, iface, lan string) (string,
 // console TUI's rule forms build the same struct so both paths share
 // saveRuleDraft. ID nil = append a new rule, else edit that rule in place.
 type ruleSaveReq struct {
-	File                                    string
-	ID                                      *int
-	Kind                                    string
-	Action, Dir, Proto, Port, Target, Iface string
-	Src, Dst, Geo, NatType, Lan             string
-	Rate, Ban                               string
-	Name                                    string
-	Log                                     bool
+	File                                          string
+	ID                                            *int
+	Kind                                          string
+	Action, Dir, Proto, Port, Target, Iface, Mark string
+	Src, Dst, Geo, NatType, Lan                   string
+	Rate, Ban                                     string
+	Name                                          string
+	Log                                           bool
 }
 
 // saveRuleDraft builds the rule body for the request's kind (via the same
@@ -4768,7 +4847,7 @@ func saveRuleDraft(req ruleSaveReq) (errMsg string, code int) {
 	case req.Action == "throttle":
 		body, err = buildThrottleBody(req.Dir, req.Proto, req.Port, req.Rate, req.Ban, req.Iface)
 	default:
-		body, err = buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface)
+		body, err = buildRuleBody(req.Action, req.Dir, req.Proto, req.Port, req.Target, req.Iface, req.Mark)
 		if err == nil && req.Log {
 			body += " log"
 		}
@@ -5320,6 +5399,7 @@ func main() {
 		writeJSON(w, st)
 	})
 	api("/api/protection", handleProtection)
+	api("/api/qos", handleQoS)
 	api("/api/top-ips", func(w http.ResponseWriter, r *http.Request) {
 		fromStr := r.URL.Query().Get("from")
 		toStr := r.URL.Query().Get("to")

@@ -231,6 +231,7 @@
     <nav class="nav" id="nav">
       <a data-v="dashboard" class="active"><span class="ic">▚</span>Dashboard</a>
       <a data-v="policy"><span class="ic">▤</span>Policy</a>
+      <a data-v="qos"><span class="ic">⇅</span>QoS</a>
       <a data-v="logs"><span class="ic">≣</span>Logs &amp; Drops</a>
       <a data-v="objects"><span class="ic">◈</span>Objects</a>
     </nav>
@@ -341,6 +342,11 @@
       <div class="card" style="display:none"><div class="tablewrap"><table class="poltable">
         <thead><tr><th style="width:64px">№</th><th style="width:58px">On</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th style="width:96px">Action</th><th style="width:70px;text-align:right">Hits</th><th id="th-file" style="width:130px">File</th></tr></thead>
         <tbody id="policy"></tbody></table></div></div>
+    </section>
+
+    <!-- QOS -->
+    <section class="view" id="v-qos">
+      <div class="card"><h3>Traffic shaping <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">— optional egress QoS</span></h3><div id="qos"></div></div>
     </section>
 
     <!-- LOGS -->
@@ -512,6 +518,7 @@ function nav(v){
   $('#v-'+v).classList.add('active');
   $('#title').textContent=$(`#nav a[data-v="${v}"]`).textContent.trim();
   if(v==='policy') loadPolicy();
+  if(v==='qos') loadQoS();
   if(v==='objects') loadObjects();
 }
 $('#nav').addEventListener('click',e=>{const a=e.target.closest('a[data-v]'); if(a) nav(a.dataset.v);});
@@ -1007,6 +1014,20 @@ async function saveProtection(apply){
   if(apply&&!confirm('Apply protection settings now? A 90-second deadman will roll them back unless you confirm Keep changes.'))return;
   const body={harden:$('#prot-harden').checked,antispoof:$('#prot-antispoof').value.trim(),dosGuard:$('#prot-dos').checked,dosSynRate:$('#prot-syn-rate').value.trim(),dosSynBurst:$('#prot-syn-burst').value.trim(),dosConnLimit:$('#prot-conn-limit').value.trim(),apply:!!apply};
   try{const r=await fetch('/api/protection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok){toast(d.error||'Cannot save protection settings.');return;}renderProtection(d);if(apply)refreshCommitBar();toast(d.message||'Protection settings saved.');}catch(e){toast('Cannot save protection settings.');}
+}
+async function loadQoS(){
+  const el=$('#qos');if(!el)return;
+  if(document.activeElement&&el.contains(document.activeElement))return;
+  try{renderQoS(await j('/api/qos'));}catch(e){el.innerHTML='<span class="muted">QoS status unavailable.</span>';}
+}
+function renderQoS(d){
+  const el=$('#qos');if(!el)return; const s=d.service||{}, active=s.ActiveState==='active';
+  const controls=MODE==='ro'?'':`<textarea id="qos-text" spellcheck="false" style="width:100%;min-height:180px;margin-top:8px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:8px;font:12px ui-monospace,monospace">${esc(d.text||'enabled no\n')}</textarea><div style="display:flex;gap:8px;margin-top:8px"><button class="btn-ghost" style="color:var(--fg)" onclick="saveQoS(false)">Save</button><button class="btn-go" onclick="saveQoS(true)">Save &amp; Apply</button></div>`;
+  el.innerHTML=`<div><span class="pill" style="background:${active?'#173a2a':'#3a1720'};color:${active?'#2ecc71':'#ff8a9c'}">${active?'ACTIVE':'INACTIVE'}</span> <span class="muted">Egress only; marks on accepted <code>out</code>/<code>fwd-out</code> rules map to HTB/fq_codel classes. Ingress/download shaping is not in this beta.</span></div>${controls}`;
+}
+async function saveQoS(apply){
+  if(apply&&!confirm('Apply QoS now? This replaces the selected interface root qdisc.'))return;
+  const text=$('#qos-text').value; try{const r=await fetch('/api/qos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,apply:!!apply})});const d=await r.json();if(!r.ok){toast(d.error||'Cannot save QoS.');return;}renderQoS(d);toast(d.message||'QoS saved.');}catch(e){toast('Cannot save QoS.');}
 }
 let CAPACITY_UPDATED=0;
 function capacityRow(label,used,total,detail){
@@ -1778,8 +1799,8 @@ async function saveTpl(){const name=$('#tpl-name').value.trim();if(!name){toast(
 function ruleDrawer(file,id){
   if(MODE==='ro')return;
   const r=id!=null?findRule(file,id):null;
-  const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name,log:!!r.log}
-           :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:'',log:false};
+  const v=r?{action:r.action,dir:r.dir,proto:r.proto,port:r.port==='-'?'':r.port,target:r.target,iface:r.iface,name:r.name,log:!!r.log,mark:r.mark||''}
+           :{action:'allow',dir:'in',proto:'tcp',port:'',target:'any',iface:'',name:'',log:false,mark:''};
   const opt=(arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
   $('#drawertitle').textContent=id!=null?'Edit rule':'New rule';
   $('#drawerbody').innerHTML=`
@@ -1795,6 +1816,7 @@ function ruleDrawer(file,id){
     </div>
     <label class="fld"><span>Target</span><input id="r-target" list="tgtlist" value="${esc(v.target)}" placeholder="any / abuse / country / region / group / IP" autocomplete="off"></label>
     ${ifaceFieldHTML('r-iface',v.iface,'Interface (optional)')}
+    <label class="fld"><span>QoS packet mark (optional)</span><input id="r-mark" value="${esc(v.mark)}" inputmode="numeric" placeholder="1–65535; only for allow"></label>
     <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="r-log" style="width:auto"${v.log?' checked':''}><span style="margin:0">Log connections matching this rule (nftgeo-accept/nftgeo-drop:&lt;name&gt;)</span></label>
     <p class="muted" style="font-size:12px"><b>Direction</b> sets what the target means: <b>in</b> = source, <b>out</b> = destination, <b>fwd-*</b> = forwarded. Saved to the draft — deploy via Commit.</p>
     <div style="display:flex;gap:8px;margin-top:auto">
@@ -1810,7 +1832,7 @@ function rProtoChange(){const p=$('#r-proto').value,pt=$('#r-port');
 async function saveRule(file,id){
   const b={file:($('#r-file')?$('#r-file').value:file),action:$('#r-action').value,dir:$('#r-dir').value,proto:$('#r-proto').value,port:$('#r-port').value,
     target:$('#r-target').value.trim(),iface:$('#r-iface').value.trim(),name:$('#r-name').value,
-    log:$('#r-log')?$('#r-log').checked:false};
+    log:$('#r-log')?$('#r-log').checked:false,mark:$('#r-mark').value.trim()};
   if(id!=null)b.id=id;
   const res=await post('/api/rules/draft/save',b);
   if(res&&res.error){toast('Rejected: '+res.error);return;}

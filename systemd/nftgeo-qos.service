@@ -1,0 +1,13 @@
+[Unit]
+Description=nftgeo egress QoS traffic shaping
+Wants=network-online.target
+After=network-online.target nftgeo.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nftgeo-qos apply
+ExecStop=/usr/sbin/nftgeo-qos clear
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

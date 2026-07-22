@@ -19,13 +19,14 @@ docker run --rm \
 	apt-get update
 	apt-get install -y "/packages/$PACKAGE_FILE"
 	test "$(dpkg-query -W -f="\${Version}" nftgeo)" = "$PACKAGE_VERSION"
-	test -x /usr/sbin/nftgeo && test -x /usr/sbin/nftgeo-update && test -x /usr/sbin/nftgeo-ui
-	test -f /usr/share/man/man8/nftgeo.8.gz && test -f /usr/share/man/man5/nftgeo.conf.5.gz
+	test -x /usr/sbin/nftgeo && test -x /usr/sbin/nftgeo-update && test -x /usr/sbin/nftgeo-ui && test -x /usr/sbin/nftgeo-qos
+	test -f /usr/share/man/man8/nftgeo.8.gz && test -f /usr/share/man/man8/nftgeo-qos.8.gz && test -f /usr/share/man/man5/nftgeo.conf.5.gz
 	printf "TEST_PRESERVE=1\n" >/etc/nftgeo/config
 	printf "allow in tcp 12345 any\n" >/etc/nftgeo/rules.conf
 	dpkg -i "/packages/$PACKAGE_FILE"
 	grep -qx "TEST_PRESERVE=1" /etc/nftgeo/config
 	grep -qx "allow in tcp 12345 any" /etc/nftgeo/rules.conf
+	test -f /etc/nftgeo/qos.conf
 	/usr/sbin/nftgeo-ui -h >/dev/null
 '
 
@@ -34,13 +35,14 @@ docker run --rm \
 	-v "$dist:/packages:ro" fedora:latest sh -ec '
 	dnf -y install "/packages/$PACKAGE_FILE"
 	test "$(rpm -q --qf "%{VERSION}" nftgeo)" = "$PACKAGE_VERSION"
-	test -x /usr/sbin/nftgeo && test -x /usr/sbin/nftgeo-update && test -x /usr/sbin/nftgeo-ui
-	test -f /usr/share/man/man8/nftgeo.8.gz && test -f /usr/share/man/man5/nftgeo.conf.5.gz
+	test -x /usr/sbin/nftgeo && test -x /usr/sbin/nftgeo-update && test -x /usr/sbin/nftgeo-ui && test -x /usr/sbin/nftgeo-qos
+	test -f /usr/share/man/man8/nftgeo.8.gz && test -f /usr/share/man/man8/nftgeo-qos.8.gz && test -f /usr/share/man/man5/nftgeo.conf.5.gz
 	printf "TEST_PRESERVE=1\n" >/etc/nftgeo/config
 	printf "allow in tcp 12345 any\n" >/etc/nftgeo/rules.conf
 	dnf -y reinstall "/packages/$PACKAGE_FILE"
 	grep -qx "TEST_PRESERVE=1" /etc/nftgeo/config
 	grep -qx "allow in tcp 12345 any" /etc/nftgeo/rules.conf
+	test -f /etc/nftgeo/qos.conf
 	/usr/sbin/nftgeo-ui -h >/dev/null
 '
 

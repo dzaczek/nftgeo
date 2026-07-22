@@ -228,7 +228,7 @@ func TestBuildRuleBody(t *testing.T) {
 		{"inject_iface", "allow", "in", "tcp", "22", "any", "eth0;x", "", true},
 	}
 	for _, c := range cases {
-		got, err := buildRuleBody(c.action, c.dir, c.proto, c.port, c.target, c.iface)
+		got, err := buildRuleBody(c.action, c.dir, c.proto, c.port, c.target, c.iface, "")
 		if c.wantErr {
 			if err == nil {
 				t.Errorf("%s: expected error, got %q", c.name, got)
@@ -1089,7 +1089,7 @@ func TestSaveRuleDraftKinds(t *testing.T) {
 		want func() (string, error)
 	}{
 		{"filter", ruleSaveReq{File: "rules.conf", Action: "allow", Dir: "in", Proto: "tcp", Port: "22", Target: "any", Name: "ssh"},
-			func() (string, error) { return buildRuleBody("allow", "in", "tcp", "22", "any", "") }},
+			func() (string, error) { return buildRuleBody("allow", "in", "tcp", "22", "any", "", "") }},
 		{"throttle", ruleSaveReq{File: "rules.conf", Action: "throttle", Dir: "in", Proto: "tcp", Port: "22", Rate: "5/minute", Name: "tt"},
 			func() (string, error) { return buildThrottleBody("in", "tcp", "22", "5/minute", "", "") }},
 		{"synproxy", ruleSaveReq{File: "rules.conf", Kind: "synproxy", Dir: "in", Port: "443", Name: "sp"},

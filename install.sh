@@ -15,7 +15,7 @@ if ! command -v apt-get >/dev/null 2>&1; then
 fi
 
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y curl nftables ca-certificates
+DEBIAN_FRONTEND=noninteractive apt-get install -y curl nftables ca-certificates iproute2
 # iprange collapses abuse feeds into CIDRs (ABUSE_FEEDS_AGGREGATE); best-effort,
 # the engine falls back to kernel set auto-merge if it is unavailable.
 DEBIAN_FRONTEND=noninteractive apt-get install -y iprange || true
@@ -24,6 +24,9 @@ install -d -m 0755 /etc/nftgeo /etc/nftgeo/rules.d /etc/nftgeo/groups.d \
 	/etc/nftables.d /var/lib/nftgeo /var/lib/nftgeo/zones /usr/sbin
 install -m 0755 "${BASE_DIR}/bin/nftgeo-update" /usr/sbin/nftgeo-update
 install -m 0755 "${BASE_DIR}/bin/nftgeo" /usr/sbin/nftgeo
+if [ -f "${BASE_DIR}/dist/nftgeo-qos-linux-amd64" ]; then
+	install -m 0755 "${BASE_DIR}/dist/nftgeo-qos-linux-amd64" /usr/sbin/nftgeo-qos
+fi
 
 for page in "${BASE_DIR}"/man/*.[1-9]; do
 	[ -f "$page" ] || continue
@@ -44,9 +47,17 @@ if [ ! -f /etc/nftgeo/rules.conf ]; then
 else
 	echo "Keeping existing /etc/nftgeo/rules.conf"
 fi
+if [ ! -f /etc/nftgeo/qos.conf ]; then
+	install -m 0600 "${BASE_DIR}/etc/qos.conf.example" /etc/nftgeo/qos.conf
+else
+	echo "Keeping existing /etc/nftgeo/qos.conf"
+fi
 
 install -m 0644 "${BASE_DIR}/systemd/nftgeo.service" /etc/systemd/system/nftgeo.service
 install -m 0644 "${BASE_DIR}/systemd/nftgeo.timer" /etc/systemd/system/nftgeo.timer
+if [ -f /usr/sbin/nftgeo-qos ]; then
+	install -m 0644 "${BASE_DIR}/systemd/nftgeo-qos.service" /etc/systemd/system/nftgeo-qos.service
+fi
 
 # Install the web UI if the binary ships alongside the engine (make build / release tarball).
 if [ -f "${BASE_DIR}/dist/nftgeo-ui-linux-amd64" ]; then
