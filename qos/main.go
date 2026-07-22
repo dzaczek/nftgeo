@@ -274,7 +274,7 @@ func parseConfig(path string) (config, error) {
 
 		case "bandwidth":
 			if err := ensureDirContext(); err != nil {
-				return c, bad(err.Error())
+				return c, bad("%s", err.Error())
 			}
 			if len(fields) != 2 {
 				return c, bad("bandwidth needs one value")
@@ -283,7 +283,7 @@ func parseConfig(path string) (config, error) {
 
 		case "default":
 			if err := ensureDirContext(); err != nil {
-				return c, bad(err.Error())
+				return c, bad("%s", err.Error())
 			}
 			if len(fields) != 2 {
 				return c, bad("default needs a class name")
@@ -292,7 +292,7 @@ func parseConfig(path string) (config, error) {
 
 		case "qdisc":
 			if err := ensureDirContext(); err != nil {
-				return c, bad(err.Error())
+				return c, bad("%s", err.Error())
 			}
 			if len(fields) != 2 || (fields[1] != "htb" && fields[1] != "cake" && fields[1] != "fq_codel") {
 				return c, bad("qdisc must be htb, cake, or fq_codel")
@@ -301,7 +301,7 @@ func parseConfig(path string) (config, error) {
 
 		case "overhead":
 			if err := ensureDirContext(); err != nil {
-				return c, bad(err.Error())
+				return c, bad("%s", err.Error())
 			}
 			if len(fields) != 2 {
 				return c, bad("overhead needs one value")
@@ -310,7 +310,7 @@ func parseConfig(path string) (config, error) {
 
 		case "class":
 			if err := ensureDirContext(); err != nil {
-				return c, bad(err.Error())
+				return c, bad("%s", err.Error())
 			}
 			if (len(fields) != 8 && len(fields) != 10) || fields[2] != "mark" || fields[4] != "rate" || fields[6] != "ceil" || (len(fields) == 10 && fields[8] != "priority") {
 				return c, bad("class syntax: class NAME mark NUMBER rate RATE ceil RATE [priority 0-7]")
