@@ -41,8 +41,8 @@ type class struct {
 }
 
 type directionConfig struct {
-	Direction string  `json:"direction"` // "upload" (egress) or "download" (ingress)
-	Bandwidth string  `json:"bandwidth"`
+	Direction string `json:"direction"` // "upload" (egress) or "download" (ingress)
+	Bandwidth string `json:"bandwidth"`
 	bps       int64
 	Default   string  `json:"default"`
 	Qdisc     string  `json:"qdisc"`    // "htb", "cake", "fq_codel"
@@ -57,12 +57,12 @@ type interfaceConfig struct {
 }
 
 type config struct {
-	Enabled   bool   `json:"enabled"`
-	Interface string `json:"interface"` // Legacy single-interface fallback
-	Bandwidth string `json:"bandwidth"` // Legacy single-interface fallback
-	bps       int64  // Legacy single-interface fallback
-	Default   string `json:"default"`   // Legacy single-interface fallback
-	Classes   []class `json:"classes"`  // Legacy single-interface fallback
+	Enabled   bool    `json:"enabled"`
+	Interface string  `json:"interface"` // Legacy single-interface fallback
+	Bandwidth string  `json:"bandwidth"` // Legacy single-interface fallback
+	bps       int64   // Legacy single-interface fallback
+	Default   string  `json:"default"` // Legacy single-interface fallback
+	Classes   []class `json:"classes"` // Legacy single-interface fallback
 
 	Interfaces []interfaceConfig `json:"interfaces"`
 }
@@ -100,7 +100,7 @@ type LiveDirectionTelemetry struct {
 }
 
 type LiveInterfaceTelemetry struct {
-	Name       string                    `json:"name"`
+	Name       string                   `json:"name"`
 	Directions []LiveDirectionTelemetry `json:"directions"`
 }
 

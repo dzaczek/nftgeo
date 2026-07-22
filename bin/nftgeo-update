@@ -17,6 +17,7 @@ case "${1:-}" in
 esac
 
 CONFIG_FILE="${CONFIG_FILE:-/etc/nftgeo/config}"
+QOS_FILE="${QOS_FILE:-/etc/nftgeo/qos.conf}"
 RULES_FILE="${RULES_FILE:-/etc/nftgeo/rules.conf}"
 RULES_DIR="${RULES_DIR:-/etc/nftgeo/rules.d}"
 # Ingress hook (stateless, pre-routing early drop). Source-based accept/drop.
